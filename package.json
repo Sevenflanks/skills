@@ -1,0 +1,11 @@
+{
+  "name": "sevenflanks-skills",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Personal agent skills collection for OpenCode and Claude-style skills.",
+  "type": "module",
+  "scripts": {
+    "validate": "node scripts/validate-skills.mjs"
+  },
+  "license": "MIT"
+}

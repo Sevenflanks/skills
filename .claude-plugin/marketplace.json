@@ -1,0 +1,20 @@
+{
+  "name": "sevenflanks-skills",
+  "description": "Sevenflanks 的個人 Agent Skills collection。",
+  "version": "0.1.0",
+  "skills": [
+    {
+      "name": "gh-body-file",
+      "source": "skills/gh-body-file",
+      "description": "在 Windows、PowerShell、OpenCode shell 環境中，安全使用支援 --body-file 的 GitHub CLI 指令。",
+      "version": "0.1.0",
+      "keywords": [
+        "github-cli",
+        "powershell",
+        "windows",
+        "opencode",
+        "body-file"
+      ]
+    }
+  ]
+}

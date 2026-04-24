@@ -1,6 +1,10 @@
 ---
 name: gh-body-file
 description: Use when working in Windows/PowerShell/OpenCode shell with supported `gh` commands that accept `--body-file`, so body content must be written to a temp `.md` file and passed with `--body-file`.
+license: MIT
+metadata:
+  author: sevenflankse
+  version: 0.1.0
 ---
 
 ## GitHub CLI `--body-file` workaround pattern (Windows / PowerShell / OpenCode shell)
