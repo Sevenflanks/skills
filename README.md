@@ -1,4 +1,12 @@
-# gh-body-file
+# skills
+
+Personal agent skills repository for reusable OpenCode / Claude-style skills.
+
+This repository is intended to grow over time. Each skill lives in its own folder under [`skills/`](skills/), with its own `SKILL.md` and optional evaluation files.
+
+## Available skills
+
+### gh-body-file
 
 Agent skill for safely using GitHub CLI commands that support `--body-file` from Windows, PowerShell, and OpenCode shell sessions.
 
@@ -22,11 +30,19 @@ Representative supported commands include:
 
 Always confirm the target `gh` subcommand supports `--body-file` before applying the workaround.
 
-## Skill file
+## Repository layout
 
-The skill definition is in [`SKILL.md`](SKILL.md).
+```text
+skills/
+└── gh-body-file/
+    ├── SKILL.md
+    └── evals/
+        └── evals.json
+```
 
-Evaluation prompts are in [`evals/evals.json`](evals/evals.json).
+The `gh-body-file` skill definition is in [`skills/gh-body-file/SKILL.md`](skills/gh-body-file/SKILL.md).
+
+Evaluation prompts are in [`skills/gh-body-file/evals/evals.json`](skills/gh-body-file/evals/evals.json).
 
 ## License
 
@@ -34,9 +50,9 @@ MIT. See [`LICENSE`](LICENSE).
 
 ## Installation
 
-Copy this repository's skill folder into your agent skills directory, or install it with the mechanism your agent runtime provides for GitHub-hosted skills.
+Copy the skill folder you want into your agent skills directory, or install it with the mechanism your agent runtime provides for GitHub-hosted skills.
 
-For a local OpenCode-style setup, the resulting folder should contain at least:
+For a local OpenCode-style setup, copy `skills/gh-body-file/` so the resulting folder contains at least:
 
 ```text
 gh-body-file/
