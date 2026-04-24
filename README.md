@@ -1,22 +1,20 @@
 # skills
 
-Personal agent skills repository for reusable OpenCode / Claude-style skills.
+這是個人維護的 Agent Skills 倉庫，用來集中管理可重用的 OpenCode／Claude-style skills。
 
-This repository is intended to grow over time. Each skill lives in its own folder under [`skills/`](skills/), with its own `SKILL.md` and optional evaluation files.
+此倉庫會隨時間加入更多 skills。每個 skill 都放在 [`skills/`](skills/) 底下獨立的資料夾中，並以 `SKILL.md` 作為主要定義檔；若有測試或評估案例，則放在該 skill 自己的 `evals/` 目錄中。
 
-## Available skills
+## 目前收錄的 skills
 
-### gh-body-file
+| Skill | 說明 | 路徑 |
+| --- | --- | --- |
+| `gh-body-file` | 在 Windows、PowerShell、OpenCode shell 環境中，安全使用 GitHub CLI 支援 `--body-file` 的指令。 | [`skills/gh-body-file/`](skills/gh-body-file/) |
 
-Agent skill for safely using GitHub CLI commands that support `--body-file` from Windows, PowerShell, and OpenCode shell sessions.
+## gh-body-file
 
-The skill guides agents to write Markdown bodies to a temporary `.md` file with UTF-8 no BOM encoding, pass that file to supported `gh` commands, and clean up the temporary file in a `finally` block.
+`gh-body-file` 會引導 agent 將 Markdown 內容先寫入暫存 `.md` 檔，再透過 `gh ... --body-file` 傳給 GitHub CLI，最後在 `finally` 區塊中清理暫存檔。這可避免 Windows／PowerShell／OpenCode shell 在多行 Markdown、引號或特殊字元上的命令列 quoting 問題。
 
-## When to use
-
-Use this skill when working with supported GitHub CLI commands that accept `--body-file`, especially when command-line quoting or multiline Markdown bodies are fragile in Windows or OpenCode shell environments.
-
-Representative supported commands include:
+適用於支援 `--body-file` 的 GitHub CLI 指令，例如：
 
 - `gh issue create`
 - `gh issue comment`
@@ -28,9 +26,9 @@ Representative supported commands include:
 - `gh pr merge`
 - `gh pr revert`
 
-Always confirm the target `gh` subcommand supports `--body-file` before applying the workaround.
+使用前仍應先確認目標 `gh` 子指令確實支援 `--body-file`；若不支援，就不要套用此 workaround。
 
-## Repository layout
+## 倉庫結構
 
 ```text
 skills/
@@ -40,19 +38,14 @@ skills/
         └── evals.json
 ```
 
-The `gh-body-file` skill definition is in [`skills/gh-body-file/SKILL.md`](skills/gh-body-file/SKILL.md).
+- Skill 定義檔：[`skills/gh-body-file/SKILL.md`](skills/gh-body-file/SKILL.md)
+- 評估案例：[`skills/gh-body-file/evals/evals.json`](skills/gh-body-file/evals/evals.json)
 
-Evaluation prompts are in [`skills/gh-body-file/evals/evals.json`](skills/gh-body-file/evals/evals.json).
+## 安裝方式
 
-## License
+依照你的 agent runtime 支援的方式安裝 GitHub-hosted skill；或直接將需要的 skill 資料夾複製到本機 skills 目錄。
 
-MIT. See [`LICENSE`](LICENSE).
-
-## Installation
-
-Copy the skill folder you want into your agent skills directory, or install it with the mechanism your agent runtime provides for GitHub-hosted skills.
-
-For a local OpenCode-style setup, copy `skills/gh-body-file/` so the resulting folder contains at least:
+以 OpenCode-style 的本機安裝為例，可複製 [`skills/gh-body-file/`](skills/gh-body-file/) 到你的 skills 目錄，使目標資料夾至少包含：
 
 ```text
 gh-body-file/
@@ -60,3 +53,21 @@ gh-body-file/
 └── evals/
     └── evals.json
 ```
+
+## 新增 skill 的慣例
+
+未來新增 skill 時，請使用以下結構：
+
+```text
+skills/
+└── <skill-name>/
+    ├── SKILL.md
+    └── evals/
+        └── evals.json   # 選用
+```
+
+並同步更新本 README 的「目前收錄的 skills」表格。
+
+## 授權
+
+MIT。詳見 [`LICENSE`](LICENSE)。
