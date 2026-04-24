@@ -1,0 +1,45 @@
+{
+  "skill_name": "gh-body-file",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "PowerShell on Windows: run `gh issue create` in OpenCode shell with a 3-line markdown body that includes an apostrophe. Return the exact script that creates a temp .md file, assigns `$utf8NoBom = New-Object System.Text.UTF8Encoding($false)`, puts the body in a here-string variable first, writes with `[System.IO.File]::WriteAllText($tmpFile, $body, $utf8NoBom)`, calls `gh issue create --body-file $tmpFile`, and guarantees cleanup in `try/finally` with `Remove-Item`.",
+      "expected_output": "PowerShell-only answer that uses a here-string body variable, UTF-8 no BOM encoding object, WriteAllText to a temp .md file, `--body-file`, and cleanup in finally.",
+      "files": [],
+      "expectations": [
+        "Uses PowerShell syntax only and OpenCode shell style only.",
+        "Creates a temporary `.md` file path before building the command.",
+        "Defines `$utf8NoBom = New-Object System.Text.UTF8Encoding($false)`. ",
+        "Defines body text in a here-string variable before writing.",
+        "Calls `[System.IO.File]::WriteAllText($tmpFile, $body, $utf8NoBom)`.",
+        "Calls `gh issue create` with `--body-file $tmpFile`.",
+        "Uses `try/finally` and performs `Remove-Item` cleanup in `finally`."
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "PowerShell on Windows in OpenCode shell, provide a compliant body workflow for `gh pr merge` that includes a temp `.md` path, `$utf8NoBom = New-Object System.Text.UTF8Encoding($false)`, here-string body variable, `[System.IO.File]::WriteAllText($tmpFile, $body, $utf8NoBom)`, `gh pr merge --body-file $tmpFile`, and cleanup through `try/finally` using `Remove-Item`.",
+      "expected_output": "A strict PowerShell sequence using the recommended workaround pattern for `gh pr merge` with --body-file and cleanup in finally.",
+      "files": [],
+      "expectations": [
+        "Script is PowerShell and compatible with Windows/OpenCode shell style.",
+        "Body content is assigned to a variable using here-string syntax.",
+        "UTF-8 no BOM encoding object is assigned to `$utf8NoBom`.",
+        "Body is written with `[System.IO.File]::WriteAllText($tmpFile, $body, $utf8NoBom)`.",
+        "The command uses `gh pr merge --body-file $tmpFile`.",
+        "Cleanup is inside a `finally` block with `Remove-Item`."
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "User asks for a `gh issue close` example in PowerShell and wants the same temp-file `--body-file` workaround used above. Respond correctly.",
+      "expected_output": "Do not apply the body-file workaround; explain that `gh issue close` does not support `--body-file` (or requires confirming support first), and provide the standard usage instead.",
+      "files": [],
+      "expectations": [
+        "Rejects using `--body-file` because the command does not support it by default.",
+        "Does not provide a `--body-file` temp-file solution in the response.",
+        "Mentions an alternative standard command form and respects the out-of-scope rule."
+      ]
+    }
+  ]
+}
