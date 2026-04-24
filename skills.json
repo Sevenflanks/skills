@@ -16,6 +16,24 @@
         "opencode"
       ],
       "status": "stable"
+    },
+    {
+      "name": "playwright-server-lifecycle",
+      "path": "skills/playwright-server-lifecycle",
+      "summary": "管理 Playwright/browser 驗證所需的本機 dev server 背景啟動、PID/log、ready check 與 cleanup。",
+      "version": "0.1.0",
+      "license": "MIT",
+      "author": "sevenflankse",
+      "tags": [
+        "playwright",
+        "browser",
+        "dev-server",
+        "powershell",
+        "windows",
+        "opencode",
+        "cleanup"
+      ],
+      "status": "stable"
     }
   ]
 }

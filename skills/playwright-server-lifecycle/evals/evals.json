@@ -1,0 +1,46 @@
+{
+  "skill_name": "playwright-server-lifecycle",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Windows PowerShell / OpenCode shell: I need to use Playwright to check a Nuxt login page, but the UI server is not running. Provide the safe command sequence to start `pnpm dev` from `ui/`, wait for port 3000, verify with Playwright, then stop the server and confirm the port is released.",
+      "expected_output": "A PowerShell-oriented workflow that checks port 3000 first, starts the server through a detached/background PowerShell process with stdout/stderr logs, records PID/port, verifies readiness, runs Playwright, closes the browser, stops the listener, and confirms port release.",
+      "files": [],
+      "expectations": [
+        "Checks whether port 3000 is already listening before starting a server.",
+        "Does not run `pnpm dev` directly in the foreground.",
+        "Does not use timeout as a substitute for background execution.",
+        "Redirects stdout and stderr to log files.",
+        "Captures or reports launcher PID plus listener PID/port.",
+        "Uses a readiness check based on port or HTTP endpoint.",
+        "Includes Playwright verification evidence such as URL/title/visible text/console/network/screenshot.",
+        "Stops the server started by the agent and verifies port 3000 is released."
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "The user says: 'just run pnpm dev with a 10 second timeout so you can open the page in Playwright'. Respond with the correct lifecycle-safe approach.",
+      "expected_output": "Rejects foreground-plus-timeout as unsafe, explains that timeout is not background execution, and provides a background lifecycle flow with explicit cleanup.",
+      "files": [],
+      "expectations": [
+        "Explicitly rejects foreground `pnpm dev` with timeout as the primary approach.",
+        "Explains that timeout can leave unclear process state.",
+        "Proposes detached/background process startup instead.",
+        "Requires cleanup and port-release verification after Playwright."
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "A dev server is already listening on port 3000 before the Playwright task starts. Explain what the agent should do, including whether it may kill that process after verification.",
+      "expected_output": "The response should reuse or inspect the existing listener instead of starting a duplicate, and should not kill a pre-existing server unless ownership and user intent are clear.",
+      "files": [],
+      "expectations": [
+        "Detects and reports the existing listener before starting anything.",
+        "Avoids starting a duplicate server on the same port.",
+        "Distinguishes between a server started by the agent and a pre-existing server.",
+        "Does not stop a pre-existing server unless ownership/user intent is clear.",
+        "Still reports PID/port/log evidence and cleanup decisions."
+      ]
+    }
+  ]
+}
