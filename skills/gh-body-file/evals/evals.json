@@ -3,31 +3,31 @@
   "evals": [
     {
       "id": 1,
-      "prompt": "PowerShell on Windows: run `gh issue create` in OpenCode shell with a 3-line markdown body that includes an apostrophe. Return the exact script that creates a temp .md file, assigns `$utf8NoBom = New-Object System.Text.UTF8Encoding($false)`, puts the body in a here-string variable first, writes with `[System.IO.File]::WriteAllText($tmpFile, $body, $utf8NoBom)`, calls `gh issue create --body-file $tmpFile`, and guarantees cleanup in `try/finally` with `Remove-Item`.",
-      "expected_output": "PowerShell-only answer that uses a here-string body variable, UTF-8 no BOM encoding object, WriteAllText to a temp .md file, `--body-file`, and cleanup in finally.",
+      "prompt": "PowerShell on Windows: run `gh issue create` in OpenCode shell with a 3-line markdown body that includes an apostrophe. Return the exact script that creates a temp .md file, assigns `$utf8NoBom = New-Object System.Text.UTF8Encoding($false)`, puts the body in a single-quoted here-string variable first using `@' ... '@`, writes with `[System.IO.File]::WriteAllText($tmpFile, $body, $utf8NoBom)`, calls `gh issue create --body-file $tmpFile`, and guarantees cleanup in `try/finally` with `Remove-Item -LiteralPath`.",
+      "expected_output": "PowerShell-only answer that uses a single-quoted here-string body variable `@' ... '@`, UTF-8 no BOM encoding object, WriteAllText to a temp .md file, `--body-file`, and cleanup in finally with `Remove-Item -LiteralPath`.",
       "files": [],
       "expectations": [
         "Uses PowerShell syntax only and OpenCode shell style only.",
-        "Creates a temporary `.md` file path before building the command.",
+        "Creates a temporary `.md` file path directly under the temp directory without creating one temp file and then switching to a different extension/path.",
         "Defines `$utf8NoBom = New-Object System.Text.UTF8Encoding($false)`. ",
-        "Defines body text in a here-string variable before writing.",
+        "Defines body text in a single-quoted here-string variable using `@' ... '@` before writing, only when the body is known not to contain a standalone closing marker line `'@`.",
         "Calls `[System.IO.File]::WriteAllText($tmpFile, $body, $utf8NoBom)`.",
         "Calls `gh issue create` with `--body-file $tmpFile`.",
-        "Uses `try/finally` and performs `Remove-Item` cleanup in `finally`."
+        "Uses `try/finally` and performs `Remove-Item -LiteralPath` cleanup in `finally`."
       ]
     },
     {
       "id": 2,
-      "prompt": "PowerShell on Windows in OpenCode shell, provide a compliant body workflow for `gh pr merge` that includes a temp `.md` path, `$utf8NoBom = New-Object System.Text.UTF8Encoding($false)`, here-string body variable, `[System.IO.File]::WriteAllText($tmpFile, $body, $utf8NoBom)`, `gh pr merge --body-file $tmpFile`, and cleanup through `try/finally` using `Remove-Item`.",
-      "expected_output": "A strict PowerShell sequence using the recommended workaround pattern for `gh pr merge` with --body-file and cleanup in finally.",
+      "prompt": "PowerShell on Windows in OpenCode shell, provide a compliant body workflow for `gh pr merge` that includes a temp `.md` path, `$utf8NoBom = New-Object System.Text.UTF8Encoding($false)`, a single-quoted here-string body variable using `@' ... '@`, `[System.IO.File]::WriteAllText($tmpFile, $body, $utf8NoBom)`, `gh pr merge --body-file $tmpFile`, and cleanup through `try/finally` using `Remove-Item -LiteralPath`.",
+      "expected_output": "A strict PowerShell sequence using the recommended workaround pattern for `gh pr merge` with a single-quoted here-string body variable `@' ... '@`, --body-file, and cleanup in finally with `Remove-Item -LiteralPath`.",
       "files": [],
       "expectations": [
         "Script is PowerShell and compatible with Windows/OpenCode shell style.",
-        "Body content is assigned to a variable using here-string syntax.",
+        "Body content is assigned to a variable using single-quoted here-string syntax `@' ... '@`, only when the body is known not to contain a standalone closing marker line `'@`.",
         "UTF-8 no BOM encoding object is assigned to `$utf8NoBom`.",
         "Body is written with `[System.IO.File]::WriteAllText($tmpFile, $body, $utf8NoBom)`.",
         "The command uses `gh pr merge --body-file $tmpFile`.",
-        "Cleanup is inside a `finally` block with `Remove-Item`."
+        "Cleanup is inside a `finally` block with `Remove-Item -LiteralPath`."
       ]
     },
     {
@@ -39,6 +39,53 @@
         "Rejects using `--body-file` because the command does not support it by default.",
         "Does not provide a `--body-file` temp-file solution in the response.",
         "Mentions an alternative standard command form and respects the out-of-scope rule."
+      ]
+    },
+    {
+      "id": 4,
+      "prompt": "PowerShell on Windows: add a new PR comment with Markdown from a temp file. Return the compliant `gh pr comment` command form.",
+      "expected_output": "Use the temp-file body workflow and call `gh pr comment PR_NUMBER --body-file $tmpFile` for a new PR comment.",
+      "files": [],
+      "expectations": [
+        "Recognizes that `gh pr comment PR_NUMBER --body-file $tmpFile` is supported for new PR comments.",
+        "Uses a temporary Markdown body file rather than inline `--body` text.",
+        "Does not reject `--body-file` for `gh pr comment` new-comment usage."
+      ]
+    },
+    {
+      "id": 5,
+      "prompt": "PowerShell on Windows: edit my current user's last PR comment with Markdown from a temp file, but do not edit an arbitrary historical comment ID. Return the supported command form and boundary.",
+      "expected_output": "Use `gh pr comment PR_NUMBER --edit-last --body-file $tmpFile` only for the current user's last comment, and do not invent `gh pr comment --edit <comment-id>` for historical comments.",
+      "files": [],
+      "expectations": [
+        "Uses `gh pr comment PR_NUMBER --edit-last --body-file $tmpFile` for editing the current user's last PR comment.",
+        "States that `--edit-last` is limited to the current user's last comment.",
+        "Does not represent arbitrary historical comment ID edits as `gh pr comment --edit <comment-id>`."
+      ]
+    },
+    {
+      "id": 6,
+      "prompt": "PowerShell on Windows: edit an arbitrary issue or PR comment by COMMENT_ID using a temp Markdown file. Return the correct GitHub CLI approach.",
+      "expected_output": "After verifying the target repository and comment identity, use REST with `gh api --method PATCH repos/OWNER/REPO/issues/comments/COMMENT_ID`, passing the body with either `-F \"body=@$tmpFile\"` or JSON via `--input $payloadFile`.",
+      "files": [],
+      "expectations": [
+        "Verifies the target repository and comment identity before PATCHing, for example by fetching the comment or using a known GitHub URL/ID.",
+        "Uses `gh api --method PATCH repos/OWNER/REPO/issues/comments/COMMENT_ID` for arbitrary issue/PR comment ID edits.",
+        "Passes the body with `-F \"body=@$tmpFile\"` or with a JSON payload file via `--input $payloadFile`.",
+        "Does not use or suggest `gh pr comment --edit <comment-id>` for arbitrary historical comment edits."
+      ]
+    },
+    {
+      "id": 7,
+      "prompt": "PowerShell on Windows: post Markdown containing backtick sequences like `` `a ``, `` `f ``, and `` `r `` in a GitHub comment body. Explain the safe body transport.",
+      "expected_output": "Warn that PowerShell double-quoted strings and double-quoted here-strings interpret Markdown backtick sequences before `gh` receives them; require a single-quoted here-string `@' ... '@` only when the body cannot contain a standalone `'@` closing marker, or require already-literal external file/source content.",
+      "files": [],
+      "expectations": [
+        "Explains that PowerShell double-quoted strings or here-strings can interpret backtick sequences such as `` `a ``, `` `f ``, and `` `r ``.",
+        "States that this interpretation can corrupt the GitHub comment body before `gh` receives it.",
+        "Requires a single-quoted here-string `@' ... '@` only when the body is known not to contain a standalone closing marker line `'@`.",
+        "Does not treat temp file body transport alone as safe if the body was first constructed through PowerShell double-quoted strings or double-quoted here-strings.",
+        "Allows already-literal external file/source content as the safe alternative for arbitrary Markdown."
       ]
     }
   ]
