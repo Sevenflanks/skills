@@ -4,7 +4,7 @@ description: Use when working in Windows/PowerShell/OpenCode shell with supporte
 license: MIT
 metadata:
   author: sevenflankse
-  version: 0.1.0
+  version: 0.1.1
 ---
 
 ## GitHub CLI `--body-file` workaround pattern (Windows / PowerShell / OpenCode shell)

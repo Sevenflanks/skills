@@ -6,7 +6,7 @@
       "name": "gh-body-file",
       "path": "skills/gh-body-file",
       "summary": "在 Windows、PowerShell、OpenCode shell 環境中，安全使用支援 --body-file 的 GitHub CLI 指令。",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "license": "MIT",
       "author": "sevenflankse",
       "tags": [
