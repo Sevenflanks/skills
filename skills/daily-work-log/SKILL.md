@@ -17,7 +17,7 @@ Use this skill when:
 
 - The user asks for a daily work log, work journal, standup summary, or asks what was done today.
 - The user wants work summarized from OpenCode sessions, git commits, PRs, or issues.
-- The user needs repo-grouped bullets such as `machine-manager`, `softleader-erp-nex`, or similar folder-based sections.
+- The user needs repo-grouped bullets such as `repo-a`, `repo-b`, or similar folder-based sections.
 - The environment is Windows / PowerShell / OpenCode and repeatable local evidence collection matters.
 
 Do not use this skill when:
@@ -65,20 +65,20 @@ Do not hand-assemble repo, commit, or PR data from memory. Run the helper script
 
 ## PowerShell helper invocation
 
-Use PowerShell 7+ and pass absolute paths. Examples:
+Use PowerShell 7+ and pass an explicit script path. Examples:
 
 ```powershell
-pwsh -NoProfile -File "C:\develop\projects\@sevenflanks-skills\skills\daily-work-log\scripts\collect-daily-work-log.ps1"
+pwsh -NoProfile -File "<path-to-skill>\scripts\collect-daily-work-log.ps1"
 ```
 
 Override time range and source mode:
 
 ```powershell
-pwsh -NoProfile -File "C:\develop\projects\@sevenflanks-skills\skills\daily-work-log\scripts\collect-daily-work-log.ps1" `
+pwsh -NoProfile -File "<path-to-skill>\scripts\collect-daily-work-log.ps1" `
   -From "2026-05-29T00:00:00+08:00" `
   -To "2026-05-29T23:59:59+08:00" `
   -SourceMode mixed `
-  -ScanRoots "C:\develop\projects"
+  -ScanRoots "<scan-root>"
 ```
 
 ## Required checks
@@ -100,11 +100,11 @@ pwsh -NoProfile -File "C:\develop\projects\@sevenflanks-skills\skills\daily-work
 Use grouped bullets like this:
 
 ```text
-- **machine-manager**
+- **repo-a**
   - 修首建參數遺失，PR #49
   - 新增 skills 功能
 
-- **cardif-ifrs17-migrate**
+- **repo-b**
   - 修付款按鈕條件邏輯
   - 合併 PR #219，解 #217
 ```
@@ -123,8 +123,8 @@ Output: Run the PowerShell helper for today's range, inspect JSON warnings, then
 ```
 
 ```text
-Input: 我想補昨天的日報，範圍改成昨天 00:00 到 23:59，另外掃 C:\develop\projects 底下 repo 補強。
-Output: Run the helper with explicit From/To plus `-SourceMode mixed -ScanRoots "C:\develop\projects"`, then summarize the resulting JSON into grouped bullets.
+Input: 我想補昨天的日報，範圍改成昨天 00:00 到 23:59，另外掃我的專案根目錄底下 repo 補強。
+Output: Run the helper with explicit From/To plus `-SourceMode mixed -ScanRoots "<scan-root>"`, then summarize the resulting JSON into grouped bullets.
 ```
 
 ## Common mistakes

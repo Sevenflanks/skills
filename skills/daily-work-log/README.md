@@ -1,6 +1,6 @@
 # daily-work-log
 
-`daily-work-log` 是一個用來整理每日工作日誌的 skill。它先從本機 OpenCode 活動、git 跨 branch commit 與 GitHub PR / issue 關聯蒐集證據，再輸出適合直接貼上的分組日誌。
+`daily-work-log` 是一個用來整理每日工作日誌的 skill。它先從 OpenCode 活動、git 跨 branch commit 與 GitHub PR / issue 關聯蒐集證據，再輸出適合直接貼上的分組日誌。
 
 ## 解決的問題
 
@@ -20,7 +20,7 @@
 ## 主要流程
 
 1. 以 PowerShell helper 收集指定時間範圍內的 session-derived repo、git `--all` history、PR / issue 補充資料。
-2. 若未指定時間範圍，helper 會以預設 `Asia/Taipei` timezone 計算「今天」；若使用者需要其他 timezone 或日期範圍，應明確覆寫。
+2. 若未指定時間範圍，helper 會以預設 `Asia/Taipei` timezone 計算「今天」；若使用者需要其他 timezone、日期範圍、或掃描根目錄，應明確覆寫。
 3. 讓 helper 只輸出純 JSON，不混入說明文字。
 4. 由 skill 檢查 JSON 內的 warning / error / `ghAvailable` 狀態。
 5. 依 repo 資料夾名稱分組，將內容壓成簡短工作日誌條列。
@@ -29,5 +29,5 @@
 ## 檔案
 
 - [`SKILL.md`](SKILL.md)：skill runtime 指令。
-- [`scripts/collect-daily-work-log.ps1`](scripts/collect-daily-work-log.ps1)：本機資料蒐集 helper，輸出純 JSON。
+- [`scripts/collect-daily-work-log.ps1`](scripts/collect-daily-work-log.ps1)：資料蒐集 helper，輸出純 JSON。
 - [`evals/evals.json`](evals/evals.json)：評估案例。

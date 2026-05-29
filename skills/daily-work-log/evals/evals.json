@@ -27,7 +27,7 @@
     },
     {
       "id": 2,
-      "prompt": "我要補昨天的日報，時間改成昨天 00:00 到 23:59。OpenCode session 不一定完整，請連 `C:\\develop\\projects` 一起掃 repo 補強，但最後還是只回對話內容，不要寫檔。",
+      "prompt": "我要補昨天的日報，時間改成昨天 00:00 到 23:59。OpenCode session 不一定完整，請連我的專案根目錄一起掃 repo 補強，但最後還是只回對話內容，不要寫檔。",
       "expected_output": "使用 helper 的覆寫參數指定 From/To，並切到 mixed 或 scan 補強模式；最後只在對話中輸出最終日誌，不預設寫檔。",
       "files": [],
       "expectations": [
