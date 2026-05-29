@@ -3,6 +3,24 @@
   "repository": "Sevenflanks/skills",
   "skills": [
     {
+      "name": "daily-work-log",
+      "path": "skills/daily-work-log",
+      "summary": "從 OpenCode session、跨 branch git commit 與 GitHub PR / issue 關聯蒐集證據，整理成每日工作日誌。",
+      "version": "0.1.0",
+      "license": "MIT",
+      "author": "sevenflankse",
+      "tags": [
+        "work-log",
+        "daily-report",
+        "git",
+        "github-cli",
+        "powershell",
+        "windows",
+        "opencode"
+      ],
+      "status": "stable"
+    },
+    {
       "name": "gh-body-file",
       "path": "skills/gh-body-file",
       "summary": "在 Windows、PowerShell、OpenCode shell 環境中，安全使用支援 --body-file 的 GitHub CLI 指令。",

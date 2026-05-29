@@ -1,0 +1,137 @@
+{
+  "skill_name": "daily-work-log",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "幫我整理今天的工作日誌。來源請從 OpenCode session 實際進過的 repo 開始，commit 不要限制 branch，再用 gh 補 PR 跟 closing issue，最後按資料夾名稱分組，每條盡量 30 字內。",
+      "expected_output": "先要求使用 PowerShell helper 產出 pure JSON，再依 JSON 結果輸出按資料夾名稱分組的工作日誌，明確要求 git log --all 與 gh 補 PR / issue 關聯。",
+      "files": [],
+      "expectations": [
+        "使用 skill 內的 PowerShell helper，而不是手動拼湊資料來源。",
+        "明確要求 git commit 蒐集使用 `git log --all`，不限 branch。",
+        "最終輸出依 repo 資料夾名稱分組，而不是絕對路徑。",
+        "優先保留 PR / issue 編號。",
+        "在 helper 執行後先檢查 JSON warnings / errors，再產出最終摘要。",
+        "每條日誌單獨閱讀也能理解；若片段太碎，應合併或省略。",
+        "同一 repo 預設控制在 2–5 條，避免逐條照抄 commit。"
+      ],
+      "assertions": [
+        "Output contains grouped repo headings rather than a flat list.",
+        "Output mentions cross-branch collection or evidence consistent with `git log --all` behavior.",
+        "Output includes at least one PR or issue identifier when such context is available.",
+        "Output does not expose absolute filesystem paths in the final human-readable log.",
+        "Summary notes helper-based or evidence-based collection rather than pure guesswork.",
+        "Each bullet can be understood on its own rather than depending on adjacent bullets for meaning.",
+        "No repo expands into an excessive near-raw commit dump; bullets are theme-level and usually stay within 2–5 items per repo."
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "我要補昨天的日報，時間改成昨天 00:00 到 23:59。OpenCode session 不一定完整，請連我的專案根目錄一起掃 repo 補強，但最後還是只回對話內容，不要寫檔。",
+      "expected_output": "使用 helper 的覆寫參數指定 From/To，並切到 mixed 或 scan 補強模式；最後只在對話中輸出最終日誌，不預設寫檔。",
+      "files": [],
+      "expectations": [
+        "接受時間範圍覆寫，而不是硬套今天。",
+        "支援 `session` 以外的 repo 來源模式，至少能切到 `mixed` 或 `scan`。",
+        "若需要掃描 repo，會透過 `-ScanRoots` 傳入根目錄。",
+        "不會預設把日誌寫入檔案。",
+        "若同一組變更被拆成多條，條列仍需各自可單獨理解，否則應合併。",
+        "repo 條列應控制在主題摘要層級，而不是大段 commit dump。"
+      ],
+      "assertions": [
+        "Output reflects the overridden date range rather than implicitly using today.",
+        "Output or execution note indicates mixed or scan-assisted repo discovery.",
+        "Final answer remains in-chat content, not a file-output instruction by default.",
+        "Summary preserves grouped work-log bullets instead of returning raw JSON only.",
+        "Bullets are self-contained instead of fragmented commit dumps that require neighboring lines for context.",
+        "Per-repo bullet count stays reasonably bounded and avoids near-raw commit enumeration."
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "今天有些目錄只是 session 進去過，但不是 git repo；另外這台機器的 gh 沒登入。請還是整理日報，但要把資料缺口講清楚。",
+      "expected_output": "保留非 git repo 與 gh 未登入的缺口說明，不亂猜 PR / issue；最終輸出仍維持依資料夾分組的日誌。",
+      "files": [],
+      "expectations": [
+        "不會因為 gh 不可用就假裝沒有 PR / issue 關聯資料缺口。",
+        "會明講非 git repo 與 session-only 目錄狀態。",
+        "helper 仍需維持 pure JSON 輸出，由 skill 負責生成人類文字。",
+        "最終日誌格式仍維持分組條列，而不是回傳原始 JSON 給使用者。",
+        "缺口說明與工作條列都要能單獨理解，不使用殘缺片語。",
+        "即使 repo 工作很多，也應先主題化合併，避免整段列舉 commit。"
+      ],
+      "assertions": [
+        "Output explicitly states that PR / issue linkage could not be supplemented when GitHub CLI is unavailable.",
+        "Output explicitly calls out non-git or session-only directories instead of silently dropping them.",
+        "Final response remains a grouped work log, not raw JSON dumped to the user.",
+        "Gap reporting is explicit and honest rather than inferred away.",
+        "Gap notes and bullets are each understandable on their own.",
+        "Repo summaries stay theme-level rather than expanding into long commit-by-commit lists."
+      ]
+    },
+    {
+      "id": 4,
+      "prompt": "整理今日日報時，OpenCode 有兩份活躍中的 log 檔讀不到，但其他 log 仍可讀。請先從 session repo 起手，若 repo discovery 因此不完整，明講這個缺口，不要假裝資料完整。",
+      "expected_output": "helper 仍應輸出可解析 JSON；最終日誌可繼續產出，但要把活躍 log 讀取失敗與 repo discovery 可能不完整明講。",
+      "files": [],
+      "expectations": [
+        "遇到部分 OpenCode log 無法讀取時，不會直接中止整份日報。",
+        "會把 log 讀取失敗視為 repo discovery 缺口，而不是靜默忽略。",
+        "helper 仍維持 pure JSON 輸出，由 skill 負責把缺口轉成人類可讀說明。"
+      ],
+      "assertions": [
+        "Output explicitly reports partial log-read failure and its effect on repo discovery.",
+        "The report continues with remaining verified repos instead of failing closed.",
+        "Gap wording is specific enough that a reader understands which evidence is incomplete."
+      ]
+    },
+    {
+      "id": 5,
+      "prompt": "同一個 repo 今天有多個 PR 更新，其中只有一部分 PR 的 branch 或 commit 真正和今天的工作有關。另有一個 worktree repo 也在掃描根目錄下。請整理日報時避免把無關 PR 掛進來，並確保 worktree 也能被視為 repo 候選。",
+      "expected_output": "repo 掃描可涵蓋 worktree；PR 補證只保留和當日 commit / branch / hash 有關的候選，不把同 repo 但無關的更新 PR 全掛進日誌。",
+      "files": [],
+      "expectations": [
+        "repo 掃描不應只依賴 `.git` 目錄，需涵蓋 `.git` 檔案型態 worktree。",
+        "PR 關聯應收斂到 commit / branch / hash 等證據，而不是 repo 層級整包掛上。",
+        "若 PR 無法和今日工作證據建立關聯，就不應寫進最終日誌。"
+      ],
+      "assertions": [
+        "Worktree-backed repos are not silently excluded from scan-assisted discovery.",
+        "PR summaries are tied to commit/branch/hash evidence instead of all updated PRs in the repo.",
+        "Unrelated updated PRs are excluded from the final daily log."
+      ]
+    },
+    {
+      "id": 6,
+      "prompt": "這次不要提供 From/To，直接整理『今天』的日報，但要依 skill 的 configured timezone 計算日期範圍，而不是偷用執行機器當下的其他日界線。若使用者另外指定 Timezone，也要照指定時區理解『今天』。",
+      "expected_output": "未提供 From/To 時，應明確依 configured timezone 計算今天；若使用者指定 Timezone，回覆與執行摘要都應反映該時區語意，而不是只把 timezone 寫進 metadata。",
+      "files": [],
+      "expectations": [
+        "未指定 From/To 時，日期範圍應依 configured timezone 計算今天。",
+        "若使用者指定 Timezone，skill 應把它視為日期邊界的一部分，而不是只回填 metadata。",
+        "最終輸出若提到今天/昨日等自然語意，需與 configured timezone 一致。"
+      ],
+      "assertions": [
+        "Output treats default range semantics as timezone-aware rather than host-local by accident.",
+        "Configured timezone meaning is reflected in behavior, not metadata only.",
+        "Natural-language date scope matches the configured timezone boundary."
+      ]
+    },
+    {
+      "id": 7,
+      "prompt": "某個 repo 今天的 `git log --all` 混有 `refs/stash`、`index on ...`、`untracked files on ...` 這類暫存噪音。整理日報時，請忽略這些暫存項，只保留真正可摘要的工作 commit。",
+      "expected_output": "helper 或 skill 應排除 stash/index/untracked 類暫存紀錄，不把它們寫進最終日誌，也不把它們當成真正工作項目。",
+      "files": [],
+      "expectations": [
+        "stash/index/untracked 類 git 暫存紀錄不應進入最終日誌。",
+        "過濾噪音後，仍應保留真正的工作 commit 與其可理解摘要。",
+        "若噪音被排除，摘要可在機器可讀輸出中保留此處理策略，但不要把噪音當成工作項目。"
+      ],
+      "assertions": [
+        "Stash and index/untracked pseudo-commits are absent from the final daily log.",
+        "Remaining bullets summarize real work rather than temporary git state.",
+        "Noise filtering does not erase legitimate work commits from the report."
+      ]
+    }
+  ]
+}
