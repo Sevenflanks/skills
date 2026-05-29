@@ -14,8 +14,6 @@
 
 完整 catalog 可見 [`skills.json`](skills.json)。若需要 Claude plugin-style metadata，可見 [`.claude-plugin/marketplace.json`](.claude-plugin/marketplace.json)。新增、調整或移除 skill 時，請同步更新 catalog 並執行驗證。
 
-## gh-body-file
-
 ## daily-work-log
 
 `daily-work-log` 會先用固定 PowerShell helper 從本機 OpenCode 活動、`git log --all` 結果與 GitHub PR / issue 關聯蒐集證據，並要求 helper 只輸出純 JSON。之後 skill 再根據 JSON 內容，將工作內容壓成依資料夾名稱分組的每日工作日誌。

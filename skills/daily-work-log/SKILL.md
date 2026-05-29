@@ -46,6 +46,7 @@ Do not hand-assemble repo, commit, or PR data from memory. Run the helper script
    - Check `meta.ghAvailable`.
    - Check repo `warnings` and top-level `warnings` / `errors`.
    - Note repos that are not git repos, repos with session activity but no commits, and repos with commits but no PR/issue supplement.
+   - Treat PR supplement as relevant only when it can be tied back to the day's commit / branch / hash evidence; do not attach every updated PR from the same repo.
 
 4. **Summarize by folder name**
    - Group by repo folder name only, not absolute path.
@@ -83,8 +84,10 @@ pwsh -NoProfile -File "C:\develop\projects\@sevenflanks-skills\skills\daily-work
 
 - Helper script output is valid JSON only.
 - Git history collection uses `git log --all`; do not limit to current branch.
+- `scan` / `mixed` repo discovery must cover git worktrees as well as normal repos.
 - Stash noise such as `refs/stash`, `index on ...`, or `untracked files on ...` is excluded from summary-worthy commits.
 - GitHub supplement is attempted only when `gh` is available and authenticated.
+- GitHub supplement is filtered by commit / branch / hash relevance; do not attach unrelated updated PRs from the same repo.
 - Missing GitHub supplement is reported as a warning, not silently ignored.
 - Final output is grouped by folder name only.
 - Each repo defaults to 2–5 bullets unless there is a strong reason to exceed that.
