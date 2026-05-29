@@ -100,6 +100,38 @@
         "PR summaries are tied to commit/branch/hash evidence instead of all updated PRs in the repo.",
         "Unrelated updated PRs are excluded from the final daily log."
       ]
+    },
+    {
+      "id": 6,
+      "prompt": "這次不要提供 From/To，直接整理『今天』的日報，但要依 skill 的 configured timezone 計算日期範圍，而不是偷用執行機器當下的其他日界線。若使用者另外指定 Timezone，也要照指定時區理解『今天』。",
+      "expected_output": "未提供 From/To 時，應明確依 configured timezone 計算今天；若使用者指定 Timezone，回覆與執行摘要都應反映該時區語意，而不是只把 timezone 寫進 metadata。",
+      "files": [],
+      "expectations": [
+        "未指定 From/To 時，日期範圍應依 configured timezone 計算今天。",
+        "若使用者指定 Timezone，skill 應把它視為日期邊界的一部分，而不是只回填 metadata。",
+        "最終輸出若提到今天/昨日等自然語意，需與 configured timezone 一致。"
+      ],
+      "assertions": [
+        "Output treats default range semantics as timezone-aware rather than host-local by accident.",
+        "Configured timezone meaning is reflected in behavior, not metadata only.",
+        "Natural-language date scope matches the configured timezone boundary."
+      ]
+    },
+    {
+      "id": 7,
+      "prompt": "某個 repo 今天的 `git log --all` 混有 `refs/stash`、`index on ...`、`untracked files on ...` 這類暫存噪音。整理日報時，請忽略這些暫存項，只保留真正可摘要的工作 commit。",
+      "expected_output": "helper 或 skill 應排除 stash/index/untracked 類暫存紀錄，不把它們寫進最終日誌，也不把它們當成真正工作項目。",
+      "files": [],
+      "expectations": [
+        "stash/index/untracked 類 git 暫存紀錄不應進入最終日誌。",
+        "過濾噪音後，仍應保留真正的工作 commit 與其可理解摘要。",
+        "若噪音被排除，摘要可在機器可讀輸出中保留此處理策略，但不要把噪音當成工作項目。"
+      ],
+      "assertions": [
+        "Stash and index/untracked pseudo-commits are absent from the final daily log.",
+        "Remaining bullets summarize real work rather than temporary git state.",
+        "Noise filtering does not erase legitimate work commits from the report."
+      ]
     }
   ]
 }

@@ -98,7 +98,7 @@ skills/
 
 依照你的 agent runtime 支援的方式安裝 GitHub-hosted skill；或直接將需要的 skill 資料夾複製到本機 skills 目錄。
 
-以 OpenCode-style 的本機安裝為例，可複製需要的 skill 資料夾到你的 skills 目錄，使目標資料夾至少包含：
+以 OpenCode-style 的本機安裝為例，可複製需要的 skill 資料夾到你的 skills 目錄。一般 published skill 至少包含：
 
 ```text
 <skill-name>/
@@ -118,10 +118,10 @@ skills/
     ├── README.md
     ├── SKILL.md
     └── evals/
-        └── evals.json   # 選用
+        └── evals.json   # skill 有可驗證行為時建議加入
 ```
 
-並同步更新本 README 的「目前收錄的 skills」表格、[`skills.json`](skills.json)，以及 [`.claude-plugin/marketplace.json`](.claude-plugin/marketplace.json)。
+並同步更新本 README 的「目前收錄的 skills」表格、[`skills.json`](skills.json)，以及 [`.claude-plugin/marketplace.json`](.claude-plugin/marketplace.json)。若 skill 沒有可驗證行為，`evals/evals.json` 可省略；若有固定流程、轉換、驗證條件，建議提供 evals。
 
 你也可以從 [`templates/SKILL.template.md`](templates/SKILL.template.md) 與 [`templates/evals.template.json`](templates/evals.template.json) 開始建立新 skill。
 
