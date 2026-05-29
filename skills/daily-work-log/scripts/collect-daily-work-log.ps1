@@ -5,7 +5,8 @@ param(
   [ValidateSet('session', 'scan', 'mixed')]
   [string]$SourceMode = 'session',
   [string[]]$ScanRoots = @(),
-  [string]$Timezone = 'Asia/Taipei'
+  [string]$Timezone = 'Asia/Taipei',
+  [string]$OpenCodeLogRoot
 )
 
 Set-StrictMode -Version Latest
@@ -94,6 +95,16 @@ function Resolve-DateRange {
 }
 
 function Get-OpenCodeLogRoot {
+  param([string]$OverrideLogRoot)
+
+  if (-not [string]::IsNullOrWhiteSpace($OverrideLogRoot)) {
+    if (Test-Path -LiteralPath $OverrideLogRoot) {
+      return (Get-Item -LiteralPath $OverrideLogRoot).FullName
+    }
+
+    return $null
+  }
+
   $homePath = [Environment]::GetFolderPath('UserProfile')
   $candidate = Join-Path $homePath '.local\share\opencode\log'
   if (Test-Path -LiteralPath $candidate) {
@@ -127,14 +138,55 @@ function Read-SharedTextFile {
   }
 }
 
+function TryParse-LogLineTimestamp {
+  param([string]$Line)
+
+  $match = [regex]::Match($Line, '^INFO\s+(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})')
+  if (-not $match.Success) {
+    return $null
+  }
+
+  try {
+    return [datetime]::ParseExact(
+      $match.Groups[1].Value,
+      'yyyy-MM-ddTHH:mm:ss',
+      [System.Globalization.CultureInfo]::InvariantCulture
+    )
+  }
+  catch {
+    return $null
+  }
+}
+
+function Test-LogEventInRange {
+  param(
+    [AllowNull()]
+    [datetime]$EventTime,
+    [datetimeoffset]$FromRange,
+    [datetimeoffset]$ToRange,
+    [string]$TimezoneId
+  )
+
+  if ($null -eq $EventTime) {
+    return $false
+  }
+
+  $timeZoneInfo = Resolve-TimeZoneInfo -TimezoneId $TimezoneId
+  $offset = $timeZoneInfo.GetUtcOffset($EventTime)
+  $eventOffset = [datetimeoffset]::new($EventTime, $offset)
+  return $eventOffset -ge $FromRange -and $eventOffset -le $ToRange
+}
+
 function Get-SessionDirectoriesFromLogs {
   param(
     [datetimeoffset]$FromRange,
     [datetimeoffset]$ToRange,
+    [string]$TimezoneId,
+    [string]$OverrideLogRoot,
     [System.Collections.Generic.List[string]]$Warnings
   )
 
-  $logRoot = Get-OpenCodeLogRoot
+  $logRoot = Get-OpenCodeLogRoot -OverrideLogRoot $OverrideLogRoot
   if (-not $logRoot) {
     Add-WarningMessage -List $Warnings -Message 'OpenCode log directory not found; session-derived repo discovery unavailable.'
     return @()
@@ -143,10 +195,6 @@ function Get-SessionDirectoriesFromLogs {
   $paths = [System.Collections.Generic.List[string]]::new()
   $logFiles = Get-ChildItem -LiteralPath $logRoot -File -Filter '*.log' | Sort-Object Name
   foreach ($file in $logFiles) {
-    if ($file.LastWriteTime -lt $FromRange.LocalDateTime.AddDays(-1) -or $file.LastWriteTime -gt $ToRange.LocalDateTime.AddDays(1)) {
-      continue
-    }
-
     try {
       $content = Read-SharedTextFile -Path $file.FullName
     }
@@ -155,9 +203,17 @@ function Get-SessionDirectoriesFromLogs {
       continue
     }
 
-    $matches = [regex]::Matches($content, 'service=default directory=(.+?) creating instance')
-    foreach ($match in $matches) {
-      $candidate = $match.Groups[1].Value.Trim()
+    foreach ($line in ($content -split "`r?`n")) {
+      if ([string]::IsNullOrWhiteSpace($line) -or $line -notmatch 'service=default directory=(.+?) creating instance') {
+        continue
+      }
+
+      $eventTime = TryParse-LogLineTimestamp -Line $line
+      if (-not (Test-LogEventInRange -EventTime $eventTime -FromRange $FromRange -ToRange $ToRange -TimezoneId $TimezoneId)) {
+        continue
+      }
+
+      $candidate = $Matches[1].Trim()
       if ($candidate) {
         $paths.Add($candidate)
       }
@@ -186,11 +242,12 @@ function Get-ScanRepositories {
       }
 
       $gitMarkers = Get-ChildItem -LiteralPath $root -Force -Filter '.git' -Recurse -ErrorAction SilentlyContinue |
-        Where-Object { $_.Parent }
+        Where-Object { -not [string]::IsNullOrWhiteSpace($_.FullName) }
 
       foreach ($gitMarker in $gitMarkers) {
-        if ($gitMarker.Parent) {
-          $repos.Add($gitMarker.Parent.FullName)
+        $repoPath = Split-Path -Path $gitMarker.FullName -Parent
+        if (-not [string]::IsNullOrWhiteSpace($repoPath)) {
+          $repos.Add($repoPath)
         }
       }
     }
@@ -497,7 +554,7 @@ try {
   $resolvedTo = $range.To
 
   if ($SourceMode -in @('session', 'mixed')) {
-    foreach ($path in Get-SessionDirectoriesFromLogs -FromRange $resolvedFrom -ToRange $resolvedTo -Warnings $warnings) {
+    foreach ($path in Get-SessionDirectoriesFromLogs -FromRange $resolvedFrom -ToRange $resolvedTo -TimezoneId $Timezone -OverrideLogRoot $OpenCodeLogRoot -Warnings $warnings) {
       Add-PathItem -Map $repoMap -Path $path -Source 'session'
     }
   }
