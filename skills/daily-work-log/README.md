@@ -20,10 +20,11 @@
 ## 主要流程
 
 1. 以 PowerShell helper 收集指定時間範圍內的 session-derived repo、git `--all` history、PR / issue 補充資料。
-2. 讓 helper 只輸出純 JSON，不混入說明文字。
-3. 由 skill 檢查 JSON 內的 warning / error / `ghAvailable` 狀態。
-4. 依 repo 資料夾名稱分組，將內容壓成簡短工作日誌條列。
-5. 若 `gh` 不可用、repo 非 git、或今日有 session 但無 commit，要在最終輸出保留資料缺口說明。
+2. 若未指定時間範圍，helper 會以預設 `Asia/Taipei` timezone 計算「今天」；若使用者需要其他 timezone 或日期範圍，應明確覆寫。
+3. 讓 helper 只輸出純 JSON，不混入說明文字。
+4. 由 skill 檢查 JSON 內的 warning / error / `ghAvailable` 狀態。
+5. 依 repo 資料夾名稱分組，將內容壓成簡短工作日誌條列。
+6. 若 `gh` 不可用、repo 非 git、或今日有 session 但無 commit，要在最終輸出保留資料缺口說明。
 
 ## 檔案
 

@@ -33,7 +33,8 @@ Do not hand-assemble repo, commit, or PR data from memory. Run the helper script
 ## Workflow
 
 1. **Confirm scope and defaults**
-   - Default range is today in local timezone.
+   - Default range is today in the configured timezone.
+   - The helper defaults to `Asia/Taipei`; override `From`, `To`, or `Timezone` when the user needs another range or timezone.
    - Allow overrides for `From`, `To`, repo source mode, or scan roots when the user asks.
    - Default repo source mode is `session`; fallback or broader discovery can use `scan` or `mixed`.
 
