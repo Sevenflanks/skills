@@ -68,6 +68,38 @@
         "Gap notes and bullets are each understandable on their own.",
         "Repo summaries stay theme-level rather than expanding into long commit-by-commit lists."
       ]
+    },
+    {
+      "id": 4,
+      "prompt": "整理今日日報時，OpenCode 有兩份活躍中的 log 檔讀不到，但其他 log 仍可讀。請先從 session repo 起手，若 repo discovery 因此不完整，明講這個缺口，不要假裝資料完整。",
+      "expected_output": "helper 仍應輸出可解析 JSON；最終日誌可繼續產出，但要把活躍 log 讀取失敗與 repo discovery 可能不完整明講。",
+      "files": [],
+      "expectations": [
+        "遇到部分 OpenCode log 無法讀取時，不會直接中止整份日報。",
+        "會把 log 讀取失敗視為 repo discovery 缺口，而不是靜默忽略。",
+        "helper 仍維持 pure JSON 輸出，由 skill 負責把缺口轉成人類可讀說明。"
+      ],
+      "assertions": [
+        "Output explicitly reports partial log-read failure and its effect on repo discovery.",
+        "The report continues with remaining verified repos instead of failing closed.",
+        "Gap wording is specific enough that a reader understands which evidence is incomplete."
+      ]
+    },
+    {
+      "id": 5,
+      "prompt": "同一個 repo 今天有多個 PR 更新，其中只有一部分 PR 的 branch 或 commit 真正和今天的工作有關。另有一個 worktree repo 也在掃描根目錄下。請整理日報時避免把無關 PR 掛進來，並確保 worktree 也能被視為 repo 候選。",
+      "expected_output": "repo 掃描可涵蓋 worktree；PR 補證只保留和當日 commit / branch / hash 有關的候選，不把同 repo 但無關的更新 PR 全掛進日誌。",
+      "files": [],
+      "expectations": [
+        "repo 掃描不應只依賴 `.git` 目錄，需涵蓋 `.git` 檔案型態 worktree。",
+        "PR 關聯應收斂到 commit / branch / hash 等證據，而不是 repo 層級整包掛上。",
+        "若 PR 無法和今日工作證據建立關聯，就不應寫進最終日誌。"
+      ],
+      "assertions": [
+        "Worktree-backed repos are not silently excluded from scan-assisted discovery.",
+        "PR summaries are tied to commit/branch/hash evidence instead of all updated PRs in the repo.",
+        "Unrelated updated PRs are excluded from the final daily log."
+      ]
     }
   ]
 }
