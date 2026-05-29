@@ -44,20 +44,47 @@ function Add-PathItem {
   $null = $Map[$normalized].source.Add($Source)
 }
 
+function Resolve-TimeZoneInfo {
+  param([string]$TimezoneId)
+
+  $ianaToWindows = @{
+    'Asia/Taipei' = 'Taipei Standard Time'
+  }
+
+  foreach ($candidate in @($TimezoneId, $ianaToWindows[$TimezoneId])) {
+    if ([string]::IsNullOrWhiteSpace($candidate)) {
+      continue
+    }
+
+    try {
+      return [System.TimeZoneInfo]::FindSystemTimeZoneById($candidate)
+    }
+    catch {
+      continue
+    }
+  }
+
+  throw ("Unsupported timezone: {0}" -f $TimezoneId)
+}
+
 function Resolve-DateRange {
   param(
     [AllowNull()]
     [Nullable[datetimeoffset]]$FromInput,
     [AllowNull()]
-    [Nullable[datetimeoffset]]$ToInput
+    [Nullable[datetimeoffset]]$ToInput,
+    [string]$TimezoneId
   )
 
-  if ($PSBoundParameters.ContainsKey('FromInput') -and $PSBoundParameters.ContainsKey('ToInput') -and $FromInput -and $ToInput) {
+  if ($null -ne $FromInput -and $null -ne $ToInput) {
     return [ordered]@{ From = $FromInput; To = $ToInput }
   }
 
-  $now = [datetimeoffset]::Now
-  $start = [datetimeoffset]::new($now.Year, $now.Month, $now.Day, 0, 0, 0, $now.Offset)
+  $timeZoneInfo = Resolve-TimeZoneInfo -TimezoneId $TimezoneId
+  $now = [System.TimeZoneInfo]::ConvertTime([datetimeoffset]::UtcNow, $timeZoneInfo)
+  $startLocal = [datetime]::new($now.Year, $now.Month, $now.Day, 0, 0, 0, [System.DateTimeKind]::Unspecified)
+  $startOffset = $timeZoneInfo.GetUtcOffset($startLocal)
+  $start = [datetimeoffset]::new($startLocal, $startOffset)
   $end = $start.AddDays(1).AddTicks(-1)
 
   if ($FromInput) { $start = $FromInput }
@@ -74,6 +101,30 @@ function Get-OpenCodeLogRoot {
   }
 
   return $null
+}
+
+function Read-SharedTextFile {
+  param([string]$Path)
+
+  $fileStream = [System.IO.FileStream]::new(
+    $Path,
+    [System.IO.FileMode]::Open,
+    [System.IO.FileAccess]::Read,
+    [System.IO.FileShare]::ReadWrite -bor [System.IO.FileShare]::Delete
+  )
+
+  try {
+    $reader = [System.IO.StreamReader]::new($fileStream)
+    try {
+      return $reader.ReadToEnd()
+    }
+    finally {
+      $reader.Dispose()
+    }
+  }
+  finally {
+    $fileStream.Dispose()
+  }
 }
 
 function Get-SessionDirectoriesFromLogs {
@@ -97,7 +148,7 @@ function Get-SessionDirectoriesFromLogs {
     }
 
     try {
-      $content = [System.IO.File]::ReadAllText($file.FullName)
+      $content = Read-SharedTextFile -Path $file.FullName
     }
     catch {
       Add-WarningMessage -List $Warnings -Message ("Failed to read OpenCode log: {0}" -f $file.FullName)
@@ -130,10 +181,16 @@ function Get-ScanRepositories {
     }
 
     try {
-      $gitDirs = Get-ChildItem -LiteralPath $root -Directory -Filter '.git' -Recurse -ErrorAction Stop
-      foreach ($gitDir in $gitDirs) {
-        if ($gitDir.Parent) {
-          $repos.Add($gitDir.Parent.FullName)
+      if (Test-GitRepo -RepositoryPath $root) {
+        $repos.Add((Get-Item -LiteralPath $root).FullName)
+      }
+
+      $gitMarkers = Get-ChildItem -LiteralPath $root -Force -Filter '.git' -Recurse -ErrorAction SilentlyContinue |
+        Where-Object { $_.Parent }
+
+      foreach ($gitMarker in $gitMarkers) {
+        if ($gitMarker.Parent) {
+          $repos.Add($gitMarker.Parent.FullName)
         }
       }
     }
@@ -204,6 +261,32 @@ function Parse-GithubRepo {
   return $null
 }
 
+function Get-BranchHintsFromRefs {
+  param([string]$Refs)
+
+  $hints = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+  foreach ($fragment in ($Refs -split ',')) {
+    $token = $fragment.Trim()
+    if ([string]::IsNullOrWhiteSpace($token)) {
+      continue
+    }
+
+    if ($token -like 'HEAD -> *') {
+      $token = $token.Substring(8).Trim()
+    }
+
+    if ($token -like 'origin/*') {
+      $null = $hints.Add($token.Substring(7))
+    }
+
+    if ($token -notlike 'tag:*' -and $token -ne 'HEAD') {
+      $null = $hints.Add($token)
+    }
+  }
+
+  return @($hints | Sort-Object)
+}
+
 function Get-CommitData {
   param(
     [string]$RepositoryPath,
@@ -247,11 +330,79 @@ function Get-CommitData {
       author = $parts[3]
       subject = $subject
       refs = $refs
+      branchHints = (Get-BranchHintsFromRefs -Refs $refs)
       issuesMentioned = $issuesMentioned
     })
   }
 
   return $records
+}
+
+function Get-PrDetails {
+  param(
+    [string]$RepositoryPath,
+    [string]$GithubRepo,
+    [int]$PrNumber,
+    [System.Collections.Generic.List[string]]$Warnings
+  )
+
+  $args = @(
+    'pr', 'view', $PrNumber.ToString(), '--repo', $GithubRepo,
+    '--json', 'number,commits'
+  )
+  $result = Invoke-Native -FilePath 'gh' -Arguments $args -WorkingDirectory $RepositoryPath
+  if ($result.ExitCode -ne 0 -or [string]::IsNullOrWhiteSpace($result.StdOut)) {
+    Add-WarningMessage -List $Warnings -Message ("gh pr view failed for {0}#{1}: {2}" -f $GithubRepo, $PrNumber, $result.StdErr)
+    return $null
+  }
+
+  try {
+    return ($result.StdOut | ConvertFrom-Json)
+  }
+  catch {
+    Add-WarningMessage -List $Warnings -Message ("gh pr view output was not valid JSON for {0}#{1}" -f $GithubRepo, $PrNumber)
+    return $null
+  }
+}
+
+function Test-PrMatchesCommits {
+  param(
+    [object[]]$Commits,
+    [object]$Pr,
+    [object]$PrDetails
+  )
+
+  $commitHashes = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+  $branchHints = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+  foreach ($commit in $Commits) {
+    if ($commit.hash) {
+      $null = $commitHashes.Add([string]$commit.hash)
+    }
+    foreach ($hint in @($commit.branchHints)) {
+      if (-not [string]::IsNullOrWhiteSpace($hint)) {
+        $null = $branchHints.Add([string]$hint)
+      }
+    }
+    if ($commit.subject -match ("Merge pull request #{0}\b" -f $Pr.number)) {
+      return $true
+    }
+    if ($commit.subject -match ("\(#{0}\)" -f $Pr.number)) {
+      return $true
+    }
+  }
+
+  if ($Pr.headRefName -and $branchHints.Contains([string]$Pr.headRefName)) {
+    return $true
+  }
+
+  foreach ($prCommit in @($PrDetails.commits)) {
+    $oid = $prCommit.oid
+    if ($oid -and $commitHashes.Contains([string]$oid)) {
+      return $true
+    }
+  }
+
+  return $false
 }
 
 function Get-GhContext {
@@ -260,6 +411,7 @@ function Get-GhContext {
     [string]$GithubRepo,
     [datetimeoffset]$FromRange,
     [datetimeoffset]$ToRange,
+    [object[]]$Commits,
     [System.Collections.Generic.List[string]]$Warnings
   )
 
@@ -300,6 +452,15 @@ function Get-GhContext {
       continue
     }
 
+    $prDetails = Get-PrDetails -RepositoryPath $RepositoryPath -GithubRepo $GithubRepo -PrNumber ([int]$pr.number) -Warnings $Warnings
+    if (-not $prDetails) {
+      continue
+    }
+
+    if (-not (Test-PrMatchesCommits -Commits $Commits -Pr $pr -PrDetails $prDetails)) {
+      continue
+    }
+
     $issuesClosed = [System.Collections.Generic.List[int]]::new()
     foreach ($issue in @($pr.closingIssuesReferences)) {
       if ($null -ne $issue.number -and -not $issuesClosed.Contains([int]$issue.number)) {
@@ -331,7 +492,7 @@ $errors = [System.Collections.Generic.List[string]]::new()
 $repoMap = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
 
 try {
-  $range = Resolve-DateRange -FromInput $From -ToInput $To
+  $range = Resolve-DateRange -FromInput $From -ToInput $To -TimezoneId $Timezone
   $resolvedFrom = $range.From
   $resolvedTo = $range.To
 
@@ -341,7 +502,7 @@ try {
     }
   }
 
-  if ($SourceMode -in @('scan', 'mixed') -and $ScanRoots.Count -gt 0) {
+  if ($SourceMode -in @('scan', 'mixed') -and @($ScanRoots).Count -gt 0) {
     foreach ($path in Get-ScanRepositories -Roots $ScanRoots -Warnings $warnings) {
       Add-PathItem -Map $repoMap -Path $path -Source 'scan'
     }
@@ -399,17 +560,29 @@ try {
       Add-WarningMessage -List $repoWarnings -Message $_.Exception.Message
     }
 
+    if (@($commits).Count -eq 0) {
+      Add-WarningMessage -List $repoWarnings -Message 'No commits found in the selected range.'
+
+      $repos.Add([ordered]@{
+        name = $repoName
+        path = $repoPath
+        source = $sources
+        isGitRepo = $true
+        githubRepo = $null
+        commits = $commits
+        prs = $prs
+        warnings = $repoWarnings
+      })
+      continue
+    }
+
     $remoteResult = Invoke-Native -FilePath 'git' -Arguments @('remote', 'get-url', 'origin') -WorkingDirectory $repoPath
     if ($remoteResult.ExitCode -eq 0) {
       $githubRepo = Parse-GithubRepo -RemoteUrl $remoteResult.StdOut
     }
 
     if ($ghAvailable) {
-      $prs = Get-GhContext -RepositoryPath $repoPath -GithubRepo $githubRepo -FromRange $resolvedFrom -ToRange $resolvedTo -Warnings $repoWarnings
-    }
-
-    if ($commits.Count -eq 0) {
-      Add-WarningMessage -List $repoWarnings -Message 'No commits found in the selected range.'
+      $prs = Get-GhContext -RepositoryPath $repoPath -GithubRepo $githubRepo -FromRange $resolvedFrom -ToRange $resolvedTo -Commits $commits -Warnings $repoWarnings
     }
 
     $repos.Add([ordered]@{
