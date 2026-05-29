@@ -1,0 +1,73 @@
+{
+  "skill_name": "daily-work-log",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "幫我整理今天的工作日誌。來源請從 OpenCode session 實際進過的 repo 開始，commit 不要限制 branch，再用 gh 補 PR 跟 closing issue，最後按資料夾名稱分組，每條盡量 30 字內。",
+      "expected_output": "先要求使用 PowerShell helper 產出 pure JSON，再依 JSON 結果輸出按資料夾名稱分組的工作日誌，明確要求 git log --all 與 gh 補 PR / issue 關聯。",
+      "files": [],
+      "expectations": [
+        "使用 skill 內的 PowerShell helper，而不是手動拼湊資料來源。",
+        "明確要求 git commit 蒐集使用 `git log --all`，不限 branch。",
+        "最終輸出依 repo 資料夾名稱分組，而不是絕對路徑。",
+        "優先保留 PR / issue 編號。",
+        "在 helper 執行後先檢查 JSON warnings / errors，再產出最終摘要。",
+        "每條日誌單獨閱讀也能理解；若片段太碎，應合併或省略。",
+        "同一 repo 預設控制在 2–5 條，避免逐條照抄 commit。"
+      ],
+      "assertions": [
+        "Output contains grouped repo headings rather than a flat list.",
+        "Output mentions cross-branch collection or evidence consistent with `git log --all` behavior.",
+        "Output includes at least one PR or issue identifier when such context is available.",
+        "Output does not expose absolute filesystem paths in the final human-readable log.",
+        "Summary notes helper-based or evidence-based collection rather than pure guesswork.",
+        "Each bullet can be understood on its own rather than depending on adjacent bullets for meaning.",
+        "No repo expands into an excessive near-raw commit dump; bullets are theme-level and usually stay within 2–5 items per repo."
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "我要補昨天的日報，時間改成昨天 00:00 到 23:59。OpenCode session 不一定完整，請連 `C:\\develop\\projects` 一起掃 repo 補強，但最後還是只回對話內容，不要寫檔。",
+      "expected_output": "使用 helper 的覆寫參數指定 From/To，並切到 mixed 或 scan 補強模式；最後只在對話中輸出最終日誌，不預設寫檔。",
+      "files": [],
+      "expectations": [
+        "接受時間範圍覆寫，而不是硬套今天。",
+        "支援 `session` 以外的 repo 來源模式，至少能切到 `mixed` 或 `scan`。",
+        "若需要掃描 repo，會透過 `-ScanRoots` 傳入根目錄。",
+        "不會預設把日誌寫入檔案。",
+        "若同一組變更被拆成多條，條列仍需各自可單獨理解，否則應合併。",
+        "repo 條列應控制在主題摘要層級，而不是大段 commit dump。"
+      ],
+      "assertions": [
+        "Output reflects the overridden date range rather than implicitly using today.",
+        "Output or execution note indicates mixed or scan-assisted repo discovery.",
+        "Final answer remains in-chat content, not a file-output instruction by default.",
+        "Summary preserves grouped work-log bullets instead of returning raw JSON only.",
+        "Bullets are self-contained instead of fragmented commit dumps that require neighboring lines for context.",
+        "Per-repo bullet count stays reasonably bounded and avoids near-raw commit enumeration."
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "今天有些目錄只是 session 進去過，但不是 git repo；另外這台機器的 gh 沒登入。請還是整理日報，但要把資料缺口講清楚。",
+      "expected_output": "保留非 git repo 與 gh 未登入的缺口說明，不亂猜 PR / issue；最終輸出仍維持依資料夾分組的日誌。",
+      "files": [],
+      "expectations": [
+        "不會因為 gh 不可用就假裝沒有 PR / issue 關聯資料缺口。",
+        "會明講非 git repo 與 session-only 目錄狀態。",
+        "helper 仍需維持 pure JSON 輸出，由 skill 負責生成人類文字。",
+        "最終日誌格式仍維持分組條列，而不是回傳原始 JSON 給使用者。",
+        "缺口說明與工作條列都要能單獨理解，不使用殘缺片語。",
+        "即使 repo 工作很多，也應先主題化合併，避免整段列舉 commit。"
+      ],
+      "assertions": [
+        "Output explicitly states that PR / issue linkage could not be supplemented when GitHub CLI is unavailable.",
+        "Output explicitly calls out non-git or session-only directories instead of silently dropping them.",
+        "Final response remains a grouped work log, not raw JSON dumped to the user.",
+        "Gap reporting is explicit and honest rather than inferred away.",
+        "Gap notes and bullets are each understandable on their own.",
+        "Repo summaries stay theme-level rather than expanding into long commit-by-commit lists."
+      ]
+    }
+  ]
+}
