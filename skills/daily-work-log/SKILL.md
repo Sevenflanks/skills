@@ -4,7 +4,7 @@ description: Use when the user wants a daily work log, wants today's work summar
 license: MIT
 metadata:
   author: sevenflankse
-  version: 0.1.0
+  version: 0.1.1
 ---
 
 # Daily Work Log
@@ -33,7 +33,8 @@ Do not hand-assemble repo, commit, or PR data from memory. Run the helper script
 ## Workflow
 
 1. **Confirm scope and defaults**
-   - Default range is today in the configured timezone.
+   - If the user does not specify a clear time range, default range is today in the configured timezone.
+   - This default is about missing explicit time range, not about auto-triggering on completely blank input.
    - The helper defaults to `Asia/Taipei`; override `From`, `To`, or `Timezone` when the user needs another range or timezone.
    - Allow overrides for `From`, `To`, repo source mode, or scan roots when the user asks.
    - Default repo source mode is `session`; fallback or broader discovery can use `scan` or `mixed`.
@@ -42,6 +43,7 @@ Do not hand-assemble repo, commit, or PR data from memory. Run the helper script
    - Use `skills/daily-work-log/scripts/collect-daily-work-log.ps1`.
    - Keep the script output pure JSON on `stdout`.
    - Do not append human text, markdown, or logging noise to `stdout`.
+   - In `session` mode, treat session-derived repo discovery as including both session-start directories and touched external repo evidence that can be resolved to git repo or worktree roots from `permission=external_directory` or `permission=read` log entries.
 
 3. **Inspect collection gaps before writing the summary**
    - Check `meta.ghAvailable`.
@@ -84,8 +86,10 @@ pwsh -NoProfile -File "<path-to-skill>\scripts\collect-daily-work-log.ps1" `
 ## Required checks
 
 - Helper script output is valid JSON only.
+- When the user does not provide a clear time range, the helper resolves the range to today in the configured timezone.
 - Git history collection uses `git log --all`; do not limit to current branch.
 - `scan` / `mixed` repo discovery must cover git worktrees as well as normal repos.
+- `session` repo discovery includes both creating-instance directories and touched external repo evidence that can be resolved to git repo or worktree roots.
 - Stash noise such as `refs/stash`, `index on ...`, or `untracked files on ...` is excluded from summary-worthy commits.
 - GitHub supplement is attempted only when `gh` is available and authenticated.
 - GitHub supplement is filtered by commit / branch / hash relevance; do not attach unrelated updated PRs from the same repo.

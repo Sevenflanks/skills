@@ -19,8 +19,8 @@
 
 ## 主要流程
 
-1. 以 PowerShell helper 收集指定時間範圍內的 session-derived repo、git `--all` history、PR / issue 補充資料。
-2. 若未指定時間範圍，helper 會以預設 `Asia/Taipei` timezone 計算「今天」；若使用者需要其他 timezone、日期範圍、或掃描根目錄，應明確覆寫。
+1. 以 PowerShell helper 收集指定時間範圍內的 session-derived repo、git `--all` history、PR / issue 補充資料。session-derived repo discovery 不只看 session 啟動目錄，也會納入 log 內可解析成 git repo / worktree root 的外部 touched repo 證據，例如 `permission=external_directory` 與 `permission=read` 路徑。
+2. 若使用者未提供明確時間範圍，helper 會以 configured timezone 計算「今天」，預設為 `Asia/Taipei`。這裡指的是缺少明確時間範圍，不是任何空白輸入都自動觸發。若使用者需要其他 timezone、日期範圍、或掃描根目錄，應明確覆寫。
 3. 讓 helper 只輸出純 JSON，不混入說明文字。
 4. 由 skill 檢查 JSON 內的 warning / error / `ghAvailable` 狀態。
 5. 依 repo 資料夾名稱分組，將內容壓成簡短工作日誌條列。

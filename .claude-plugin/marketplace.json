@@ -7,7 +7,7 @@
       "name": "daily-work-log",
       "source": "skills/daily-work-log",
       "description": "從 OpenCode session、跨 branch git commit 與 GitHub PR / issue 關聯蒐集證據，整理成每日工作日誌。",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "keywords": [
         "work-log",
         "daily-report",
