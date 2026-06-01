@@ -132,6 +132,42 @@
         "Remaining bullets summarize real work rather than temporary git state.",
         "Noise filtering does not erase legitimate work commits from the report."
       ]
+    },
+    {
+      "id": 8,
+      "prompt": "我想整理工作日誌，但先不要指定 From/To。請直接按 skill 預設把今天的範圍算出來，再從 session repo 開始收集，最後照資料夾名稱分組輸出。",
+      "expected_output": "未提供明確時間範圍時，skill 應先明確採用 configured timezone 下的今天範圍，再執行 helper 與分組摘要，而不是要求使用者補 From/To 才能開始。",
+      "files": [],
+      "expectations": [
+        "未指定 From/To 時，會把今天視為預設時間範圍，而不是停在追問。",
+        "預設今天的邊界需依 configured timezone 計算。",
+        "repo discovery 仍從 session repo 起手，之後再輸出按資料夾名稱分組的日誌。",
+        "helper 仍需維持 pure JSON 輸出，由 skill 根據 JSON 產生最終摘要。"
+      ],
+      "assertions": [
+        "Output states or implies that omitted explicit time range defaults to today.",
+        "Default-today behavior is timezone-aware rather than host-local by accident.",
+        "Response proceeds with helper-based collection instead of blocking on missing From/To.",
+        "Final answer remains a grouped daily log rather than raw JSON or a clarification-only reply."
+      ]
+    },
+    {
+      "id": 9,
+      "prompt": "我今天是在較大的工作資料夾底下開 session，但實際有讀寫另一個外部 repo。log 裡有 `permission=external_directory` 與 `permission=read` 的路徑證據可解析到該 repo 的 git root。整理日報時，請把那個 touched external repo 也算進 session 模式的 repo discovery。",
+      "expected_output": "在 `session` repo discovery 模式下，不只看 session-start 目錄，也會把 log 內可解析成 git repo 或 worktree root 的 touched external repo 納入候選，並據此整理最終日報。",
+      "files": [],
+      "expectations": [
+        "`session` 模式 repo discovery 不能只依賴 session-start 目錄。",
+        "會使用 `permission=external_directory` 與 `permission=read` 類路徑證據解析 touched external repo。",
+        "若外部路徑可回推到 git repo 或 worktree root，應納入 repo 候選。",
+        "最終日報仍按資料夾名稱分組，不直接暴露外部絕對路徑。"
+      ],
+      "assertions": [
+        "Touched external repos evidenced by permission logs are included in session-mode discovery when they resolve to git or worktree roots.",
+        "Session discovery is not limited to broad session-start directories when stronger touched-repo evidence exists.",
+        "Final report uses repo folder grouping without leaking absolute external paths.",
+        "External-repo inclusion is explained as evidence-based discovery rather than guesswork."
+      ]
     }
   ]
 }

@@ -204,7 +204,7 @@ function Get-SessionDirectoriesFromLogs {
     }
 
     foreach ($line in ($content -split "`r?`n")) {
-      if ([string]::IsNullOrWhiteSpace($line) -or $line -notmatch 'service=default directory=(.+?) creating instance') {
+      if ([string]::IsNullOrWhiteSpace($line)) {
         continue
       }
 
@@ -213,7 +213,14 @@ function Get-SessionDirectoriesFromLogs {
         continue
       }
 
-      $candidate = $Matches[1].Trim()
+      $candidate = $null
+      if ($line -match 'service=default directory=(.+?) creating instance') {
+        $candidate = $Matches[1].Trim()
+      }
+      elseif ($line -match 'permission=(?:external_directory|read|read-only) path=(.+)$') {
+        $candidate = Resolve-GitRepoRoot -Path $Matches[1].Trim()
+      }
+
       if ($candidate) {
         $paths.Add($candidate)
       }
@@ -302,6 +309,65 @@ function Test-GitRepo {
   catch {
     return $false
   }
+}
+
+function Resolve-GitRepoRoot {
+  param([string]$Path)
+
+  if ([string]::IsNullOrWhiteSpace($Path)) {
+    return $null
+  }
+
+  try {
+    $candidatePath = [System.IO.Path]::GetFullPath($Path)
+  }
+  catch {
+    return $null
+  }
+
+  $current = $null
+  if (Test-Path -LiteralPath $candidatePath -PathType Container) {
+    $current = $candidatePath
+  }
+  elseif (Test-Path -LiteralPath $candidatePath -PathType Leaf) {
+    $current = Split-Path -Path $candidatePath -Parent
+  }
+  else {
+    $current = Split-Path -Path $candidatePath -Parent
+    while (-not [string]::IsNullOrWhiteSpace($current) -and -not (Test-Path -LiteralPath $current -PathType Container)) {
+      $parent = Split-Path -Path $current -Parent
+      if ([string]::IsNullOrWhiteSpace($parent) -or $parent -eq $current) {
+        $current = $null
+        break
+      }
+
+      $current = $parent
+    }
+
+    if ([string]::IsNullOrWhiteSpace($current)) {
+      return $null
+    }
+  }
+
+  while (-not [string]::IsNullOrWhiteSpace($current)) {
+    if (Test-GitRepo -RepositoryPath $current) {
+      $result = Invoke-Native -FilePath 'git' -Arguments @('rev-parse', '--show-toplevel') -WorkingDirectory $current
+      if ($result.ExitCode -eq 0 -and -not [string]::IsNullOrWhiteSpace($result.StdOut)) {
+        return [System.IO.Path]::GetFullPath($result.StdOut)
+      }
+
+      return [System.IO.Path]::GetFullPath($current)
+    }
+
+    $parent = Split-Path -Path $current -Parent
+    if ([string]::IsNullOrWhiteSpace($parent) -or $parent -eq $current) {
+      break
+    }
+
+    $current = $parent
+  }
+
+  return $null
 }
 
 function Parse-GithubRepo {
