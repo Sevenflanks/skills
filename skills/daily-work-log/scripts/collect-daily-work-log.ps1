@@ -6,7 +6,8 @@ param(
   [string]$SourceMode = 'session',
   [string[]]$ScanRoots = @(),
   [string]$Timezone = 'Asia/Taipei',
-  [string]$OpenCodeLogRoot
+  [string]$OpenCodeLogRoot,
+  [string]$OpenCodeStorageRoot
 )
 
 Set-StrictMode -Version Latest
@@ -94,6 +95,24 @@ function Resolve-DateRange {
   return [ordered]@{ From = $start; To = $end }
 }
 
+function ConvertTo-EpochMilliseconds {
+  param([datetimeoffset]$Value)
+
+  return $Value.ToUniversalTime().ToUnixTimeMilliseconds()
+}
+
+function New-OpenCodeSessionSql {
+  param(
+    [datetimeoffset]$FromRange,
+    [datetimeoffset]$ToRange
+  )
+
+  $fromMilliseconds = ConvertTo-EpochMilliseconds -Value $FromRange
+  $toMilliseconds = ConvertTo-EpochMilliseconds -Value $ToRange
+
+  return ('select id, directory, path, title, time_created, time_updated from session where (time_created between {0} and {1} or time_updated between {0} and {1}) order by time_updated' -f $fromMilliseconds, $toMilliseconds)
+}
+
 function Get-OpenCodeLogRoot {
   param([string]$OverrideLogRoot)
 
@@ -107,6 +126,26 @@ function Get-OpenCodeLogRoot {
 
   $homePath = [Environment]::GetFolderPath('UserProfile')
   $candidate = Join-Path $homePath '.local\share\opencode\log'
+  if (Test-Path -LiteralPath $candidate) {
+    return $candidate
+  }
+
+  return $null
+}
+
+function Get-OpenCodeStorageRoot {
+  param([string]$OverrideStorageRoot)
+
+  if (-not [string]::IsNullOrWhiteSpace($OverrideStorageRoot)) {
+    if (Test-Path -LiteralPath $OverrideStorageRoot) {
+      return (Get-Item -LiteralPath $OverrideStorageRoot).FullName
+    }
+
+    return $null
+  }
+
+  $homePath = [Environment]::GetFolderPath('UserProfile')
+  $candidate = Join-Path $homePath '.local\share\opencode\storage'
   if (Test-Path -LiteralPath $candidate) {
     return $candidate
   }
@@ -138,6 +177,12 @@ function Read-SharedTextFile {
   }
 }
 
+function Resolve-GitRepoRootFromPath {
+  param([string]$Path)
+
+  return Resolve-GitRepoRoot -Path $Path
+}
+
 function TryParse-LogLineTimestamp {
   param([string]$Line)
 
@@ -158,10 +203,26 @@ function TryParse-LogLineTimestamp {
   }
 }
 
+function Get-PathCandidateFromLogLine {
+  param([string]$Line)
+
+  $directoryMatch = [regex]::Match($Line, 'service=default directory=(.+?) creating instance')
+  if ($directoryMatch.Success) {
+    return $directoryMatch.Groups[1].Value.Trim()
+  }
+
+  $permissionMatch = [regex]::Match($Line, 'permission=(external_directory|read|read-only) path=(.+)')
+  if ($permissionMatch.Success) {
+    return $permissionMatch.Groups[2].Value.Trim()
+  }
+
+  return $null
+}
+
 function Test-LogEventInRange {
   param(
     [AllowNull()]
-    [datetime]$EventTime,
+    $EventTime,
     [datetimeoffset]$FromRange,
     [datetimeoffset]$ToRange,
     [string]$TimezoneId
@@ -172,9 +233,234 @@ function Test-LogEventInRange {
   }
 
   $timeZoneInfo = Resolve-TimeZoneInfo -TimezoneId $TimezoneId
-  $offset = $timeZoneInfo.GetUtcOffset($EventTime)
-  $eventOffset = [datetimeoffset]::new($EventTime, $offset)
+  $eventDateTime = [datetime]$EventTime
+  $offset = $timeZoneInfo.GetUtcOffset($eventDateTime)
+  $eventOffset = [datetimeoffset]::new($eventDateTime, $offset)
   return $eventOffset -ge $FromRange -and $eventOffset -le $ToRange
+}
+
+function Get-OpenCodeSessionRowsFromDb {
+  param(
+    [datetimeoffset]$FromRange,
+    [datetimeoffset]$ToRange,
+    [System.Collections.Generic.List[string]]$Warnings,
+    [ref]$Succeeded
+  )
+
+  $Succeeded.Value = $false
+
+  if (-not (Get-Command opencode -ErrorAction SilentlyContinue)) {
+    Add-WarningMessage -List $Warnings -Message 'OpenCode CLI not found; DB session discovery unavailable.'
+    return @()
+  }
+
+  $sql = New-OpenCodeSessionSql -FromRange $FromRange -ToRange $ToRange
+  try {
+    $result = Invoke-Native -FilePath 'opencode' -Arguments @('db', '--format', 'json', $sql)
+  }
+  catch {
+    Add-WarningMessage -List $Warnings -Message ("OpenCode DB session discovery failed: {0}" -f $_.Exception.Message)
+    return @()
+  }
+
+  if ($result.ExitCode -ne 0) {
+    Add-WarningMessage -List $Warnings -Message ("OpenCode DB session discovery failed: {0}" -f $result.StdErr)
+    return @()
+  }
+
+  try {
+    $rows = $result.StdOut | ConvertFrom-Json
+    $Succeeded.Value = $true
+    return @($rows)
+  }
+  catch {
+    Add-WarningMessage -List $Warnings -Message 'OpenCode DB session discovery returned invalid JSON.'
+    return @()
+  }
+}
+
+function Get-SessionDirectoriesFromDb {
+  param(
+    [datetimeoffset]$FromRange,
+    [datetimeoffset]$ToRange,
+    [System.Collections.Generic.List[string]]$Warnings,
+    [ref]$Succeeded
+  )
+
+  $dbSucceeded = $false
+  $rows = Get-OpenCodeSessionRowsFromDb -FromRange $FromRange -ToRange $ToRange -Warnings $Warnings -Succeeded ([ref]$dbSucceeded)
+  $Succeeded.Value = $dbSucceeded
+
+  if (-not $dbSucceeded) {
+    return @()
+  }
+
+  $paths = [System.Collections.Generic.List[string]]::new()
+  $seen = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+  $unresolvedCount = 0
+
+  if (@($rows).Count -eq 0) {
+    Add-WarningMessage -List $Warnings -Message 'OpenCode db query returned no session rows; lower-level session discovery was not used.'
+  }
+
+  foreach ($row in @($rows)) {
+    foreach ($propertyName in @('directory', 'path')) {
+      $property = $row.PSObject.Properties[$propertyName]
+      if (-not $property) {
+        continue
+      }
+
+      $candidatePath = [string]$property.Value
+      if ([string]::IsNullOrWhiteSpace($candidatePath)) {
+        continue
+      }
+
+      $repoRoot = Resolve-GitRepoRootFromPath -Path $candidatePath
+      if ($repoRoot -and $seen.Add($repoRoot)) {
+        $paths.Add($repoRoot)
+      }
+      elseif (-not $repoRoot) {
+        $unresolvedCount += 1
+      }
+    }
+  }
+
+  if ($unresolvedCount -gt 0) {
+    Add-WarningMessage -List $Warnings -Message 'Some OpenCode DB session paths could not be resolved to git repositories.'
+  }
+
+  return $paths
+}
+
+function Get-SessionDirectories {
+  param(
+    [datetimeoffset]$FromRange,
+    [datetimeoffset]$ToRange,
+    [string]$TimezoneId,
+    [string]$OverrideLogRoot,
+    [string]$OverrideStorageRoot,
+    [System.Collections.Generic.List[string]]$Warnings
+  )
+
+  $dbSucceeded = $false
+  $dbPaths = Get-SessionDirectoriesFromDb -FromRange $FromRange -ToRange $ToRange -Warnings $Warnings -Succeeded ([ref]$dbSucceeded)
+  if ($dbSucceeded) {
+    return $dbPaths
+  }
+
+  Add-WarningMessage -List $Warnings -Message 'OpenCode db query failed; falling back to directory-readme session discovery.'
+  $directoryReadmeSucceeded = $false
+  $directoryReadmePaths = Get-SessionDirectoriesFromDirectoryReadme -FromRange $FromRange -ToRange $ToRange -OverrideStorageRoot $OverrideStorageRoot -Warnings $Warnings -Succeeded ([ref]$directoryReadmeSucceeded)
+  if ($directoryReadmeSucceeded -and @($directoryReadmePaths).Count -gt 0) {
+    return $directoryReadmePaths
+  }
+
+  return Get-SessionDirectoriesFromLogs -FromRange $FromRange -ToRange $ToRange -TimezoneId $TimezoneId -OverrideLogRoot $OverrideLogRoot -Warnings $Warnings
+}
+
+function Get-SessionDirectoriesFromDirectoryReadme {
+  param(
+    [datetimeoffset]$FromRange,
+    [datetimeoffset]$ToRange,
+    [string]$OverrideStorageRoot,
+    [System.Collections.Generic.List[string]]$Warnings,
+    [ref]$Succeeded
+  )
+
+  $Succeeded.Value = $false
+  $storageRoot = Get-OpenCodeStorageRoot -OverrideStorageRoot $OverrideStorageRoot
+  if (-not $storageRoot) {
+    Add-WarningMessage -List $Warnings -Message 'OpenCode directory-readme discovery unavailable; falling back to log session discovery.'
+    return @()
+  }
+
+  $directoryReadmeRoot = Join-Path $storageRoot 'directory-readme'
+  if (-not (Test-Path -LiteralPath $directoryReadmeRoot)) {
+    Add-WarningMessage -List $Warnings -Message 'OpenCode directory-readme discovery unavailable; falling back to log session discovery.'
+    return @()
+  }
+
+  $fromMilliseconds = ConvertTo-EpochMilliseconds -Value $FromRange
+  $toMilliseconds = ConvertTo-EpochMilliseconds -Value $ToRange
+  $paths = [System.Collections.Generic.List[string]]::new()
+  $seen = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+  $hadParseFailure = $false
+  $unresolvedCount = 0
+
+  try {
+    $files = Get-ChildItem -LiteralPath $directoryReadmeRoot -File -Filter '*.json' | Sort-Object Name
+  }
+  catch {
+    Add-WarningMessage -List $Warnings -Message 'OpenCode directory-readme discovery unavailable; falling back to log session discovery.'
+    return @()
+  }
+
+  foreach ($file in $files) {
+    try {
+      $session = (Read-SharedTextFile -Path $file.FullName) | ConvertFrom-Json
+    }
+    catch {
+      $hadParseFailure = $true
+      continue
+    }
+
+    if ($null -eq $session) {
+      $hadParseFailure = $true
+      continue
+    }
+
+    $updatedAtProperty = $session.PSObject.Properties['updatedAt']
+    if (-not $updatedAtProperty) {
+      continue
+    }
+
+    try {
+      $updatedAtMilliseconds = [int64]$updatedAtProperty.Value
+    }
+    catch {
+      continue
+    }
+
+    if ($updatedAtMilliseconds -lt $fromMilliseconds -or $updatedAtMilliseconds -gt $toMilliseconds) {
+      continue
+    }
+
+    $injectedPathsProperty = $session.PSObject.Properties['injectedPaths']
+    if (-not $injectedPathsProperty) {
+      continue
+    }
+
+    foreach ($candidatePath in @($injectedPathsProperty.Value)) {
+      $candidate = [string]$candidatePath
+      if ([string]::IsNullOrWhiteSpace($candidate)) {
+        continue
+      }
+
+      $repoRoot = Resolve-GitRepoRootFromPath -Path $candidate
+      if ($repoRoot -and $seen.Add($repoRoot)) {
+        $paths.Add($repoRoot)
+      }
+      elseif (-not $repoRoot) {
+        $unresolvedCount += 1
+      }
+    }
+  }
+
+  if ($hadParseFailure) {
+    Add-WarningMessage -List $Warnings -Message 'Some directory-readme files could not be parsed.'
+  }
+
+  if ($unresolvedCount -gt 0) {
+    Add-WarningMessage -List $Warnings -Message 'Some OpenCode directory-readme paths could not be resolved to git repositories.'
+  }
+
+  if ($paths.Count -eq 0) {
+    Add-WarningMessage -List $Warnings -Message 'OpenCode directory-readme discovery found no resolvable git repositories; falling back to log session discovery.'
+    return $paths
+  }
+
+  $Succeeded.Value = $true
+  return $paths
 }
 
 function Get-SessionDirectoriesFromLogs {
@@ -193,6 +479,8 @@ function Get-SessionDirectoriesFromLogs {
   }
 
   $paths = [System.Collections.Generic.List[string]]::new()
+  $seen = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+  $unresolvedCount = 0
   $logFiles = Get-ChildItem -LiteralPath $logRoot -File -Filter '*.log' | Sort-Object Name
   foreach ($file in $logFiles) {
     try {
@@ -208,23 +496,28 @@ function Get-SessionDirectoriesFromLogs {
         continue
       }
 
+      $candidate = Get-PathCandidateFromLogLine -Line $line
+      if ([string]::IsNullOrWhiteSpace($candidate)) {
+        continue
+      }
+
       $eventTime = TryParse-LogLineTimestamp -Line $line
       if (-not (Test-LogEventInRange -EventTime $eventTime -FromRange $FromRange -ToRange $ToRange -TimezoneId $TimezoneId)) {
         continue
       }
 
-      $candidate = $null
-      if ($line -match 'service=default directory=(.+?) creating instance') {
-        $candidate = $Matches[1].Trim()
+      $repoRoot = Resolve-GitRepoRootFromPath -Path $candidate
+      if ($repoRoot -and $seen.Add($repoRoot)) {
+        $paths.Add($repoRoot)
       }
-      elseif ($line -match 'permission=(?:external_directory|read|read-only) path=(.+)$') {
-        $candidate = Resolve-GitRepoRoot -Path $Matches[1].Trim()
-      }
-
-      if ($candidate) {
-        $paths.Add($candidate)
+      elseif (-not $repoRoot) {
+        $unresolvedCount += 1
       }
     }
+  }
+
+  if ($unresolvedCount -gt 0) {
+    Add-WarningMessage -List $Warnings -Message 'Some OpenCode log session paths could not be resolved to git repositories.'
   }
 
   return $paths
@@ -273,8 +566,24 @@ function Invoke-Native {
     [string]$WorkingDirectory
   )
 
+  $resolvedFilePath = $FilePath
+  $resolvedArguments = [System.Collections.Generic.List[string]]::new()
+  $command = Get-Command $FilePath -ErrorAction SilentlyContinue
+  if ($command -and $command.Source -and [System.IO.Path]::GetExtension($command.Source) -ieq '.ps1') {
+    $pwshCommand = Get-Command pwsh -ErrorAction SilentlyContinue
+    if ($pwshCommand -and $pwshCommand.Source) {
+      $resolvedFilePath = $pwshCommand.Source
+      $null = $resolvedArguments.Add('-NoProfile')
+      $null = $resolvedArguments.Add('-File')
+      $null = $resolvedArguments.Add($command.Source)
+    }
+  }
+
   $psi = [System.Diagnostics.ProcessStartInfo]::new()
-  $psi.FileName = $FilePath
+  $psi.FileName = $resolvedFilePath
+  foreach ($arg in $resolvedArguments) {
+    $null = $psi.ArgumentList.Add($arg)
+  }
   foreach ($arg in $Arguments) {
     $null = $psi.ArgumentList.Add($arg)
   }
@@ -620,7 +929,7 @@ try {
   $resolvedTo = $range.To
 
   if ($SourceMode -in @('session', 'mixed')) {
-    foreach ($path in Get-SessionDirectoriesFromLogs -FromRange $resolvedFrom -ToRange $resolvedTo -TimezoneId $Timezone -OverrideLogRoot $OpenCodeLogRoot -Warnings $warnings) {
+    foreach ($path in Get-SessionDirectories -FromRange $resolvedFrom -ToRange $resolvedTo -TimezoneId $Timezone -OverrideLogRoot $OpenCodeLogRoot -OverrideStorageRoot $OpenCodeStorageRoot -Warnings $warnings) {
       Add-PathItem -Map $repoMap -Path $path -Source 'session'
     }
   }

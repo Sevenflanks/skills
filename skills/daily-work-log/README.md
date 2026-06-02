@@ -1,6 +1,6 @@
 # daily-work-log
 
-`daily-work-log` 是一個用來整理每日工作日誌的 skill。它先從 OpenCode 活動、git 跨 branch commit 與 GitHub PR / issue 關聯蒐集證據，再輸出適合直接貼上的分組日誌。
+`daily-work-log` 是一個用來整理每日工作日誌的 skill。它先從 OpenCode 活動、git 跨 branch commit 與 GitHub PR / issue 關聯蒐集證據，再輸出適合直接貼上的分組日誌。預設 `session` 模式會先用 `opencode db --format json` 找 session repo 證據。
 
 ## 解決的問題
 
@@ -19,12 +19,16 @@
 
 ## 主要流程
 
-1. 以 PowerShell helper 收集指定時間範圍內的 session-derived repo、git `--all` history、PR / issue 補充資料。session-derived repo discovery 不只看 session 啟動目錄，也會納入 log 內可解析成 git repo / worktree root 的外部 touched repo 證據，例如 `permission=external_directory` 與 `permission=read` 路徑。
+1. 以 PowerShell helper 收集指定時間範圍內的 session-derived repo、git `--all` history、PR / issue 補充資料。
 2. 若使用者未提供明確時間範圍，helper 會以 configured timezone 計算「今天」，預設為 `Asia/Taipei`。這裡指的是缺少明確時間範圍，不是任何空白輸入都自動觸發。若使用者需要其他 timezone、日期範圍、或掃描根目錄，應明確覆寫。
-3. 讓 helper 只輸出純 JSON，不混入說明文字。
-4. 由 skill 檢查 JSON 內的 warning / error / `ghAvailable` 狀態。
-5. 依 repo 資料夾名稱分組，將內容壓成簡短工作日誌條列。
-6. 若 `gh` 不可用、repo 非 git、或今日有 session 但無 commit，要在最終輸出保留資料缺口說明。
+3. 在 `session` 模式，repo discovery 先查 `opencode db --format json`；若 DB 不可用、查詢失敗、或 JSON 無效，才依序 fallback 到 `storage/directory-readme` 與 OpenCode logs。
+4. 若 DB 查詢成功且回傳空陣列 `[]`，代表沒有 session repo 證據，這個結果具權威性，不再 fallback 到檔案來源。
+5. 若 DB 失敗且 `storage/directory-readme` 沒有找到任何可解析 git repo / worktree root 的路徑，繼續 fallback 到 OpenCode logs；log fallback 會納入可解析成 git repo / worktree root 的 `permission=external_directory`、`permission=read`、`permission=read-only` touched path 證據。
+6. 讓 helper 只輸出純 JSON，不混入說明文字。
+7. 由 skill 檢查 JSON 內的 warning / error / `ghAvailable` 狀態。
+8. 只納入可解析成 git repo 或 worktree root 的路徑，其他缺口要透過 warning 或最終註記說清楚。
+9. 依 repo 資料夾名稱分組，將內容壓成簡短工作日誌條列。
+10. 若 `gh` 不可用、repo 非 git、或今日有 session 但無 commit，要在最終輸出保留資料缺口說明。
 
 ## 檔案
 

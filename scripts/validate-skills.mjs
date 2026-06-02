@@ -26,7 +26,7 @@ function parseFrontmatter(content, filePath) {
   }
 
   const frontmatterStart = openingMatch[0].length;
-  const endOffset = content.slice(frontmatterStart).search(/\r?\n---/);
+  const endOffset = content.slice(frontmatterStart).search(/\r?\n---(?:\r?\n|$)/);
   const end = endOffset === -1 ? -1 : frontmatterStart + endOffset;
   if (end === -1) {
     fail(`${path.relative(root, filePath)} frontmatter is not closed`);
