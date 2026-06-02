@@ -13,7 +13,7 @@
         "優先保留 PR / issue 編號。",
         "在 helper 執行後先檢查 JSON warnings / errors，再產出最終摘要。",
         "每條日誌單獨閱讀也能理解；若片段太碎，應合併或省略。",
-        "同一 repo 預設控制在 2–5 條，避免逐條照抄 commit。"
+        "同一 repo 預設控制在 2-5 條，避免逐條照抄 commit。"
       ],
       "assertions": [
         "Output contains grouped repo headings rather than a flat list.",
@@ -22,7 +22,7 @@
         "Output does not expose absolute filesystem paths in the final human-readable log.",
         "Summary notes helper-based or evidence-based collection rather than pure guesswork.",
         "Each bullet can be understood on its own rather than depending on adjacent bullets for meaning.",
-        "No repo expands into an excessive near-raw commit dump; bullets are theme-level and usually stay within 2–5 items per repo."
+        "No repo expands into an excessive near-raw commit dump; bullets are theme-level and usually stay within 2-5 items per repo."
       ]
     },
     {
@@ -153,12 +153,12 @@
     },
     {
       "id": 9,
-      "prompt": "我今天是在較大的工作資料夾底下開 session，但實際有讀寫另一個外部 repo。log 裡有 `permission=external_directory` 與 `permission=read` 的路徑證據可解析到該 repo 的 git root。整理日報時，請把那個 touched external repo 也算進 session 模式的 repo discovery。",
+      "prompt": "我今天是在較大的工作資料夾底下開 session，但實際有讀寫另一個外部 repo。log 裡有 `permission=external_directory`、`permission=read` 與 `permission=read-only` 的路徑證據可解析到該 repo 的 git root。整理日報時，請把那個 touched external repo 也算進 session 模式的 repo discovery。",
       "expected_output": "在 `session` repo discovery 模式下，不只看 session-start 目錄，也會把 log 內可解析成 git repo 或 worktree root 的 touched external repo 納入候選，並據此整理最終日報。",
       "files": [],
       "expectations": [
         "`session` 模式 repo discovery 不能只依賴 session-start 目錄。",
-        "會使用 `permission=external_directory` 與 `permission=read` 類路徑證據解析 touched external repo。",
+        "會使用 `permission=external_directory`、`permission=read` 與 `permission=read-only` 類路徑證據解析 touched external repo。",
         "若外部路徑可回推到 git repo 或 worktree root，應納入 repo 候選。",
         "最終日報仍按資料夾名稱分組，不直接暴露外部絕對路徑。"
       ],
@@ -167,6 +167,42 @@
         "Session discovery is not limited to broad session-start directories when stronger touched-repo evidence exists.",
         "Final report uses repo folder grouping without leaking absolute external paths.",
         "External-repo inclusion is explained as evidence-based discovery rather than guesswork."
+      ]
+    },
+    {
+      "id": 10,
+      "prompt": "整理今天日報時，請使用預設 session mode。OpenCode DB 有 session repo 資料，directory-readme 和 log 也存在舊資料。請以 DB 證據為主，不要被舊檔案來源覆蓋。",
+      "expected_output": "session mode 應先查 `opencode db --format json`，並以成功 DB 結果作為 repo discovery 主要來源；只有可解析為 git repo 或 worktree root 的路徑會進入結果，檔案來源不能覆蓋 DB 證據。",
+      "files": [],
+      "expectations": [
+        "預設 `session` repo discovery 先使用 `opencode db --format json`。",
+        "DB 查詢成功時，以 DB session evidence 作為主要來源，不被 directory-readme 或 log 舊資料覆蓋。",
+        "只有可解析成 git repo 或 worktree root 的路徑會納入 repo 結果。",
+        "若有檔案來源或 path 解析缺口，應透過 warnings 或最終註記說明。"
+      ],
+      "assertions": [
+        "Output or execution note identifies OpenCode DB as the primary session discovery source.",
+        "File-based OpenCode sources do not override successful DB session evidence.",
+        "Repo results include only paths resolved to git repo or worktree roots.",
+        "Coverage gaps are reported honestly instead of silently ignored."
+      ]
+    },
+    {
+      "id": 11,
+      "prompt": "整理今天日報時，`opencode db --format json` 成功執行但回傳空陣列 `[]`。storage/directory-readme 和 OpenCode logs 裡可能還有舊 repo 線索，但這次請不要 fallback，也要清楚說明 coverage 狀態。",
+      "expected_output": "DB 成功回傳 `[]` 時視為 session discovery 的權威空結果，不 fallback 到 directory-readme 或 logs；最終輸出或執行說明應說清楚沒有 DB session repo 證據，以及 coverage 缺口。",
+      "files": [],
+      "expectations": [
+        "DB 查詢成功且回傳 `[]` 時，不再 fallback 到 `storage/directory-readme` 或 OpenCode logs。",
+        "空 DB 結果被視為 session discovery 權威結果，而不是查詢失敗。",
+        "最終說明應誠實呈現沒有 session repo 證據與可能 coverage 範圍。",
+        "不應把舊檔案來源 repo 當成今天 session repo。"
+      ],
+      "assertions": [
+        "Output treats successful empty DB results as authoritative for session discovery.",
+        "Output does not mention fallback to directory-readme or logs after DB returns an empty array.",
+        "Coverage or warning text states that no DB session repo evidence was found.",
+        "Stale file-based repo hints are not included as today's session repos."
       ]
     }
   ]
