@@ -329,6 +329,54 @@ $tests.Add({
   $binRoot = Join-Path $tempRoot 'bin'
   $storageRoot = Join-Path $tempRoot 'storage'
   $directoryReadmeRoot = Join-Path $storageRoot 'directory-readme'
+  $logRoot = Join-Path $tempRoot 'opencode-log'
+
+  try {
+    New-Item -ItemType Directory -Path $directoryReadmeRoot -Force | Out-Null
+    New-Item -ItemType Directory -Path $logRoot -Force | Out-Null
+    $nonGitPath = Join-Path $tempRoot 'directory-readme-unresolved'
+    New-Item -ItemType Directory -Path $nonGitPath -Force | Out-Null
+    $repo = New-GitRepo -Root $tempRoot -Name 'log-after-empty-directory-readme'
+    $updatedAt = [datetimeoffset]'2026-05-29T12:00:00+08:00'
+    $session = [ordered]@{
+      sessionID = 'ses_empty_directory_readme'
+      injectedPaths = @($nonGitPath)
+      updatedAt = $updatedAt.ToUnixTimeMilliseconds()
+    }
+    $sessionJson = $session | ConvertTo-Json -Depth 5
+    Write-Utf8NoBom -Path (Join-Path $directoryReadmeRoot 'ses_empty_directory_readme.json') -Content $sessionJson
+    $logFile = Join-Path $logRoot '2026-05-29T120000.log'
+    $content = "INFO  2026-05-29T12:00:00 +10ms service=default directory=$repo creating instance"
+    Write-Utf8NoBom -Path $logFile -Content $content
+    (Get-Item -LiteralPath $logFile).LastWriteTime = [datetime]'2026-05-29T12:00:00'
+    $pathRoot = New-FakeOpenCode -BinRoot $binRoot -JsonOutput 'forced DB failure for empty directory-readme fallback test' -ExitCode 1
+
+    $raw = Invoke-Collector `
+      -From '2026-05-29T00:00:00+08:00' `
+      -To '2026-05-29T23:59:59+08:00' `
+      -SourceMode session `
+      -OpenCodeStorageRoot $storageRoot `
+      -OpenCodeLogRoot $logRoot `
+      -ExtraPath $pathRoot
+
+    $data = $raw | ConvertFrom-Json
+    $names = Get-RepoNames -Data $data
+
+    Assert-True -Condition ($names -contains 'log-after-empty-directory-readme') -Message 'Expected empty directory-readme result to fall through to logs and include log-after-empty-directory-readme, but it was missing.'
+    Assert-WarningPresent -Data $data -ExpectedWarning 'Some OpenCode directory-readme paths could not be resolved to git repositories.'
+  }
+  finally {
+    if (Test-Path -LiteralPath $tempRoot) {
+      Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+    }
+  }
+})
+
+$tests.Add({
+  $tempRoot = New-TestRoot
+  $binRoot = Join-Path $tempRoot 'bin'
+  $storageRoot = Join-Path $tempRoot 'storage'
+  $directoryReadmeRoot = Join-Path $storageRoot 'directory-readme'
 
   try {
     New-Item -ItemType Directory -Path $directoryReadmeRoot -Force | Out-Null
