@@ -204,6 +204,39 @@
         "Coverage or warning text states that no DB session repo evidence was found.",
         "Stale file-based repo hints are not included as today's session repos."
       ]
+    },
+    {
+      "id": 12,
+      "prompt": "今天某個 repo 有 30 個 commit，請整理日報但不要逐條照抄。可以先壓縮證據，再用主題式摘要輸出。",
+      "expected_output": "使用 formatter 或等效 compaction，將高 commit repo 控制在少量 shownCommits 證據內，最終日報以主題句呈現而不是 raw commit dump。",
+      "files": [],
+      "expectations": [
+        "高 commit repo 應先做 evidence compaction 或明確採用同等策略。",
+        "每個 repo 預設 shownCommits 不超過 8 筆證據。",
+        "最終輸出是主題摘要，不逐條列出 30 個 commit。",
+        "仍保留重要 PR / issue 編號與資料缺口說明。"
+      ],
+      "assertions": [
+        "Output mentions compacted evidence or behaves consistently with compacted evidence.",
+        "High-commit repo summary is concise and not a near-raw commit dump.",
+        "Repo bullets remain grouped by folder name and preserve important identifiers."
+      ]
+    },
+    {
+      "id": 13,
+      "prompt": "今天關聯到 PR #238，但標題只是 noop。整理日報時不要寫成 `PR #238: noop [MERGED]`，需要保留 PR 證據但不要讓 noop 變成工作項目。",
+      "expected_output": "將 noop PR 視為 low-signal reference，例如保留 `PR #238 [MERGED]`，最終摘要不把 `PR #238: noop [MERGED]` 當成一般 PR 標題或日誌 bullet。",
+      "files": [],
+      "expectations": [
+        "低訊號 PR 標題 `noop` 不應出現在一般 PR 摘要或最終工作 bullet。",
+        "仍保留 PR 編號與狀態作為 low-signal reference。",
+        "一般 PR 標題仍可用 `PR #<number>: <title> [<state>]` 呈現。"
+      ],
+      "assertions": [
+        "Output excludes `PR #238: noop [MERGED]` from normal summaries.",
+        "Output preserves `PR #238 [MERGED]` or equivalent low-signal PR reference.",
+        "Noop PR is not described as substantive work."
+      ]
     }
   ]
 }
