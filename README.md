@@ -8,7 +8,7 @@
 
 | Skill | 版本 | 狀態 | 說明 | 路徑 |
 | --- | --- | --- | --- | --- |
-| `daily-work-log` | `0.1.1` | stable | 從 OpenCode session、跨 branch git commit 與 GitHub PR / issue 關聯蒐集證據，整理成每日工作日誌。 | [`skills/daily-work-log/`](skills/daily-work-log/) |
+| `daily-work-log` | `0.1.2` | stable | 從 OpenCode session、跨 branch git commit 與 GitHub PR / issue 關聯蒐集證據，整理成每日工作日誌。 | [`skills/daily-work-log/`](skills/daily-work-log/) |
 | `gh-body-file` | `0.1.1` | stable | 在 Windows、PowerShell、OpenCode shell 環境中，安全使用 GitHub CLI 支援 `--body-file` 的指令。 | [`skills/gh-body-file/`](skills/gh-body-file/) |
 | `playwright-server-lifecycle` | `0.1.0` | stable | 管理 Playwright/browser 驗證所需的本機 dev server 背景啟動、PID/log、ready check 與 cleanup。 | [`skills/playwright-server-lifecycle/`](skills/playwright-server-lifecycle/) |
 
