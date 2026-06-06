@@ -87,6 +87,29 @@ pwsh -NoProfile -File "<path-to-skill>\scripts\collect-daily-work-log.ps1" `
   -ScanRoots "<scan-root>"
 ```
 
+## Collector JSON shape
+
+Treat collector JSON as source of truth:
+
+- `meta`: `generatedAt`, `timezone`, `from`, `to`, `sourceMode`, `scanRoots`, `ghAvailable`, `ghViewer`.
+- `warnings` / `errors`: global evidence gaps or failures.
+- `repos[]`: `name`, `path`, `source`, `isGitRepo`, optional `githubRepo`, `commits[]`, `prs[]`, `warnings[]`.
+- `commits[]`: commit evidence from `git log --all`; ignore stash noise before summarizing.
+- `prs[]`: PR evidence tied to commit / branch / hash relevance; preserve PR and issue numbers when useful.
+
+## Optional evidence compaction
+
+For high-volume evidence, pipe collector JSON through `scripts/format-daily-work-log-evidence.ps1`. It reads collector JSON from stdin, emits pure JSON, preserves `meta`, `warnings`, `errors`, and returns compact repo evidence: `name`, `commitCount`, `shownCommits`, `prs`, `lowSignalPrRefs`, `warnings`.
+
+```powershell
+pwsh -NoProfile -File "<path-to-skill>\scripts\collect-daily-work-log.ps1" |
+  pwsh -NoProfile -File "<path-to-skill>\scripts\format-daily-work-log-evidence.ps1" -MaxCommitsPerRepo 8
+```
+
+## High-commit repos
+
+When a repo has many commits, summarize themes instead of dumping commits. Use compacted `shownCommits` as evidence, keep `shownCommits.Count <= 8` by default, and turn low-signal PR titles such as `noop` into `lowSignalPrRefs` like `PR #238 [MERGED]` instead of user-facing bullets like `PR #238: noop [MERGED]`.
+
 ## Required checks
 
 - Helper script output is valid JSON only.

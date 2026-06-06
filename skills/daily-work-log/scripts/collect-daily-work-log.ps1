@@ -12,6 +12,7 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+$script:GitRepoRootCache = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
 
 function Add-WarningMessage {
   param(
@@ -110,7 +111,7 @@ function New-OpenCodeSessionSql {
   $fromMilliseconds = ConvertTo-EpochMilliseconds -Value $FromRange
   $toMilliseconds = ConvertTo-EpochMilliseconds -Value $ToRange
 
-  return ('select id, directory, path, title, time_created, time_updated from session where (time_created between {0} and {1} or time_updated between {0} and {1}) order by time_updated' -f $fromMilliseconds, $toMilliseconds)
+  return ('select id, directory, path, title, time_created, time_updated from session where time_created <= {1} and time_updated >= {0} order by time_updated' -f $fromMilliseconds, $toMilliseconds)
 }
 
 function Get-OpenCodeLogRoot {
@@ -180,7 +181,24 @@ function Read-SharedTextFile {
 function Resolve-GitRepoRootFromPath {
   param([string]$Path)
 
-  return Resolve-GitRepoRoot -Path $Path
+  if ([string]::IsNullOrWhiteSpace($Path)) {
+    return $null
+  }
+
+  try {
+    $cacheKey = [System.IO.Path]::GetFullPath($Path)
+  }
+  catch {
+    return $null
+  }
+
+  if ($script:GitRepoRootCache.ContainsKey($cacheKey)) {
+    return $script:GitRepoRootCache[$cacheKey]
+  }
+
+  $repoRoot = Resolve-GitRepoRoot -Path $cacheKey
+  $script:GitRepoRootCache[$cacheKey] = $repoRoot
+  return $repoRoot
 }
 
 function TryParse-LogLineTimestamp {
@@ -297,10 +315,11 @@ function Get-SessionDirectoriesFromDb {
 
   $paths = [System.Collections.Generic.List[string]]::new()
   $seen = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+  $seenCandidates = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
   $unresolvedCount = 0
 
   if (@($rows).Count -eq 0) {
-    Add-WarningMessage -List $Warnings -Message 'OpenCode db query returned no session rows; lower-level session discovery was not used.'
+    Add-WarningMessage -List $Warnings -Message 'OpenCode DB returned no sessions for the requested range; fallback discovery was not used.'
   }
 
   foreach ($row in @($rows)) {
@@ -312,6 +331,18 @@ function Get-SessionDirectoriesFromDb {
 
       $candidatePath = [string]$property.Value
       if ([string]::IsNullOrWhiteSpace($candidatePath)) {
+        continue
+      }
+
+      try {
+        $candidatePath = [System.IO.Path]::GetFullPath($candidatePath)
+      }
+      catch {
+        $unresolvedCount += 1
+        continue
+      }
+
+      if (-not $seenCandidates.Add($candidatePath)) {
         continue
       }
 
@@ -483,35 +514,47 @@ function Get-SessionDirectoriesFromLogs {
   $unresolvedCount = 0
   $logFiles = Get-ChildItem -LiteralPath $logRoot -File -Filter '*.log' | Sort-Object Name
   foreach ($file in $logFiles) {
+    $reader = $null
     try {
-      $content = Read-SharedTextFile -Path $file.FullName
+      $fileStream = [System.IO.FileStream]::new(
+        $file.FullName,
+        [System.IO.FileMode]::Open,
+        [System.IO.FileAccess]::Read,
+        [System.IO.FileShare]::ReadWrite -bor [System.IO.FileShare]::Delete
+      )
+      $reader = [System.IO.StreamReader]::new($fileStream)
+
+      while ($null -ne ($line = $reader.ReadLine())) {
+        if ([string]::IsNullOrWhiteSpace($line)) {
+          continue
+        }
+
+        $candidate = Get-PathCandidateFromLogLine -Line $line
+        if ([string]::IsNullOrWhiteSpace($candidate)) {
+          continue
+        }
+
+        $eventTime = TryParse-LogLineTimestamp -Line $line
+        if (-not (Test-LogEventInRange -EventTime $eventTime -FromRange $FromRange -ToRange $ToRange -TimezoneId $TimezoneId)) {
+          continue
+        }
+
+        $repoRoot = Resolve-GitRepoRootFromPath -Path $candidate
+        if ($repoRoot -and $seen.Add($repoRoot)) {
+          $paths.Add($repoRoot)
+        }
+        elseif (-not $repoRoot) {
+          $unresolvedCount += 1
+        }
+      }
     }
     catch {
       Add-WarningMessage -List $Warnings -Message ("Failed to read OpenCode log: {0}" -f $file.FullName)
       continue
     }
-
-    foreach ($line in ($content -split "`r?`n")) {
-      if ([string]::IsNullOrWhiteSpace($line)) {
-        continue
-      }
-
-      $candidate = Get-PathCandidateFromLogLine -Line $line
-      if ([string]::IsNullOrWhiteSpace($candidate)) {
-        continue
-      }
-
-      $eventTime = TryParse-LogLineTimestamp -Line $line
-      if (-not (Test-LogEventInRange -EventTime $eventTime -FromRange $FromRange -ToRange $ToRange -TimezoneId $TimezoneId)) {
-        continue
-      }
-
-      $repoRoot = Resolve-GitRepoRootFromPath -Path $candidate
-      if ($repoRoot -and $seen.Add($repoRoot)) {
-        $paths.Add($repoRoot)
-      }
-      elseif (-not $repoRoot) {
-        $unresolvedCount += 1
+    finally {
+      if ($null -ne $reader) {
+        $reader.Dispose()
       }
     }
   }
@@ -530,6 +573,7 @@ function Get-ScanRepositories {
   )
 
   $repos = [System.Collections.Generic.List[string]]::new()
+  $seen = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
   foreach ($root in $Roots) {
     if (-not (Test-Path -LiteralPath $root)) {
       Add-WarningMessage -List $Warnings -Message ("Scan root not found: {0}" -f $root)
@@ -538,7 +582,10 @@ function Get-ScanRepositories {
 
     try {
       if (Test-GitRepo -RepositoryPath $root) {
-        $repos.Add((Get-Item -LiteralPath $root).FullName)
+        $repoPath = (Get-Item -LiteralPath $root).FullName
+        if ($seen.Add($repoPath)) {
+          $repos.Add($repoPath)
+        }
       }
 
       $gitMarkers = Get-ChildItem -LiteralPath $root -Force -Filter '.git' -Recurse -ErrorAction SilentlyContinue |
@@ -546,7 +593,7 @@ function Get-ScanRepositories {
 
       foreach ($gitMarker in $gitMarkers) {
         $repoPath = Split-Path -Path $gitMarker.FullName -Parent
-        if (-not [string]::IsNullOrWhiteSpace($repoPath)) {
+        if (-not [string]::IsNullOrWhiteSpace($repoPath) -and $seen.Add($repoPath)) {
           $repos.Add($repoPath)
         }
       }
@@ -912,6 +959,7 @@ function Get-GhContext {
       baseRefName = $pr.baseRefName
       isDraft = [bool]$pr.isDraft
       author = if ($pr.author) { $pr.author.login } else { $null }
+      closingIssuesReferences = @($pr.closingIssuesReferences)
       issuesClosed = $issuesClosed
     })
   }
