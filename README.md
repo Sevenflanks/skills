@@ -8,11 +8,25 @@
 
 | Skill | 版本 | 狀態 | 說明 | 路徑 |
 | --- | --- | --- | --- | --- |
+| `code-intent-comments` | `0.1.0` | stable | 引導 agent 以白話繁中撰寫高價值程式註解，補足 class 責任、核心邏輯、CR、相容性與高風險脈絡。 | [`skills/code-intent-comments/`](skills/code-intent-comments/) |
 | `daily-work-log` | `0.1.0` | stable | 從 OpenCode session、跨 branch git commit 與 GitHub PR / issue 關聯蒐集證據，整理成每日工作日誌。 | [`skills/daily-work-log/`](skills/daily-work-log/) |
 | `gh-body-file` | `0.1.1` | stable | 在 Windows、PowerShell、OpenCode shell 環境中，安全使用 GitHub CLI 支援 `--body-file` 的指令。 | [`skills/gh-body-file/`](skills/gh-body-file/) |
 | `playwright-server-lifecycle` | `0.1.0` | stable | 管理 Playwright/browser 驗證所需的本機 dev server 背景啟動、PID/log、ready check 與 cleanup。 | [`skills/playwright-server-lifecycle/`](skills/playwright-server-lifecycle/) |
 
 完整 catalog 可見 [`skills.json`](skills.json)。若需要 Claude plugin-style metadata，可見 [`.claude-plugin/marketplace.json`](.claude-plugin/marketplace.json)。新增、調整或移除 skill 時，請同步更新 catalog 並執行驗證。
+
+## code-intent-comments
+
+`code-intent-comments` 會引導 agent 在寫程式時補上人類工程師需要的意圖型註解。它要求註解說明原因、限制、風險、使用者需求、舊資料相容與不可簡化原因，而不是把程式碼翻成中文。
+
+適用於需要補足維護脈絡的程式變更，例如：
+
+- class/module 責任與邊界。
+- 核心 method、特殊流程、金額/rounding/冪等/狀態轉換。
+- User 要求、CR、舊資料相容、legacy 或 framework workaround。
+- 本次 touched code 附近不足、過時或模糊的既有註解。
+
+簡單 typo、格式調整、明顯 config rename 不需要套用，除非有外部相容風險。
 
 ## daily-work-log
 
@@ -64,6 +78,11 @@
 
 ```text
 skills/
+├── code-intent-comments/
+│   ├── README.md
+│   ├── SKILL.md
+│   └── evals/
+│       └── evals.json
 ├── daily-work-log/
 │   ├── README.md
 │   ├── SKILL.md
@@ -83,6 +102,9 @@ skills/
         └── evals.json
 ```
 
+- `code-intent-comments` 說明文件：[`skills/code-intent-comments/README.md`](skills/code-intent-comments/README.md)
+- `code-intent-comments` 定義檔：[`skills/code-intent-comments/SKILL.md`](skills/code-intent-comments/SKILL.md)
+- `code-intent-comments` 評估案例：[`skills/code-intent-comments/evals/evals.json`](skills/code-intent-comments/evals/evals.json)
 - `daily-work-log` 說明文件：[`skills/daily-work-log/README.md`](skills/daily-work-log/README.md)
 - `daily-work-log` 定義檔：[`skills/daily-work-log/SKILL.md`](skills/daily-work-log/SKILL.md)
 - `daily-work-log` PowerShell helper：[`skills/daily-work-log/scripts/collect-daily-work-log.ps1`](skills/daily-work-log/scripts/collect-daily-work-log.ps1)
