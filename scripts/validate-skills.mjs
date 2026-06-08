@@ -19,19 +19,22 @@ function readJson(filePath) {
 }
 
 function parseFrontmatter(content, filePath) {
-  if (!content.startsWith('---\n')) {
+  const openingMatch = content.match(/^---\r?\n/);
+  if (!openingMatch) {
     fail(`${path.relative(root, filePath)} is missing YAML frontmatter`);
     return new Map();
   }
 
-  const end = content.indexOf('\n---', 4);
+  const frontmatterStart = openingMatch[0].length;
+  const endOffset = content.slice(frontmatterStart).search(/\r?\n---(?:\r?\n|$)/);
+  const end = endOffset === -1 ? -1 : frontmatterStart + endOffset;
   if (end === -1) {
     fail(`${path.relative(root, filePath)} frontmatter is not closed`);
     return new Map();
   }
 
   const entries = new Map();
-  const frontmatter = content.slice(4, end).split(/\r?\n/);
+  const frontmatter = content.slice(frontmatterStart, end).split(/\r?\n/);
   let currentObject = null;
 
   for (const line of frontmatter) {

@@ -4,7 +4,7 @@ description: Use when the user wants a daily work log, wants today's work summar
 license: MIT
 metadata:
   author: sevenflankse
-  version: 0.1.0
+  version: 0.1.2
 ---
 
 # Daily Work Log
@@ -28,31 +28,37 @@ Do not use this skill when:
 
 ## Core rule
 
-Do not hand-assemble repo, commit, or PR data from memory. Run the helper script first and treat its JSON as the source of truth. If GitHub CLI is unavailable or repo discovery is partial, report the gap explicitly instead of guessing.
+Do not hand-assemble repo, commit, or PR data from memory. Run the helper script first and treat its JSON as the source of truth. In `session` source mode, repo discovery queries `opencode db --format json` for session evidence first. If GitHub CLI is unavailable or repo discovery is partial, report the gap explicitly instead of guessing.
 
 ## Workflow
 
 1. **Confirm scope and defaults**
-   - Default range is today in the configured timezone.
+   - If the user does not specify a clear time range, default range is today in the configured timezone.
+   - This default is about missing explicit time range, not about auto-triggering on completely blank input.
    - The helper defaults to `Asia/Taipei`; override `From`, `To`, or `Timezone` when the user needs another range or timezone.
    - Allow overrides for `From`, `To`, repo source mode, or scan roots when the user asks.
    - Default repo source mode is `session`; fallback or broader discovery can use `scan` or `mixed`.
+   - In `session` mode, the helper asks `opencode db --format json` for session evidence before reading any file-based OpenCode sources.
+   - If the DB command is unavailable, fails, or returns invalid JSON, fallback order is DB, then `storage/directory-readme`, then OpenCode logs.
+   - If the DB query succeeds and returns empty `[]`, treat that as authoritative for session discovery and do not fallback to file-based sources.
 
 2. **Run the bundled collector**
    - Use `skills/daily-work-log/scripts/collect-daily-work-log.ps1`.
    - Keep the script output pure JSON on `stdout`.
    - Do not append human text, markdown, or logging noise to `stdout`.
+   - In `session` mode, treat session-derived repo discovery as including both session-start directories and touched external repo evidence that can be resolved to git repo or worktree roots from `permission=external_directory` or `permission=read` log entries.
 
 3. **Inspect collection gaps before writing the summary**
    - Check `meta.ghAvailable`.
    - Check repo `warnings` and top-level `warnings` / `errors`.
    - Note repos that are not git repos, repos with session activity but no commits, and repos with commits but no PR/issue supplement.
+   - Only include paths that resolve to git repo or worktree roots. Surface skipped or unresolved paths through warnings or final notes.
    - Treat PR supplement as relevant only when it can be tied back to the day's commit / branch / hash evidence; do not attach every updated PR from the same repo.
 
 4. **Summarize by folder name**
    - Group by repo folder name only, not absolute path.
    - Prefer short bullets, ideally within 30 Chinese characters.
-   - Default to 2–5 bullets per repo. If a repo would exceed that, merge nearby commits into theme-level bullets instead of listing every commit-shaped fragment.
+   - Default to 2-5 bullets per repo. If a repo would exceed that, merge nearby commits into theme-level bullets instead of listing every commit-shaped fragment.
    - Prefer bullets that preserve issue / PR numbers such as `PR #219` or `#217`.
    - Each bullet should be understandable on its own. A reader should understand what changed without needing the previous bullet as context.
    - If a bullet only makes sense together with neighboring bullets, merge them into one clearer sentence or drop the weaker fragment.
@@ -81,17 +87,47 @@ pwsh -NoProfile -File "<path-to-skill>\scripts\collect-daily-work-log.ps1" `
   -ScanRoots "<scan-root>"
 ```
 
+## Collector JSON shape
+
+Treat collector JSON as source of truth:
+
+- `meta`: `generatedAt`, `timezone`, `from`, `to`, `sourceMode`, `scanRoots`, `ghAvailable`, `ghViewer`.
+- `warnings` / `errors`: global evidence gaps or failures.
+- `repos[]`: `name`, `path`, `source`, `isGitRepo`, optional `githubRepo`, `commits[]`, `prs[]`, `warnings[]`.
+- `commits[]`: commit evidence from `git log --all`; ignore stash noise before summarizing.
+- `prs[]`: PR evidence tied to commit / branch / hash relevance; preserve PR and issue numbers when useful.
+
+## Optional evidence compaction
+
+For high-volume evidence, pipe collector JSON through `scripts/format-daily-work-log-evidence.ps1`. It reads collector JSON from stdin, emits pure JSON, preserves `meta`, `warnings`, `errors`, and returns compact repo evidence: `name`, `commitCount`, `shownCommits`, `prs`, `lowSignalPrRefs`, `warnings`.
+
+```powershell
+pwsh -NoProfile -File "<path-to-skill>\scripts\collect-daily-work-log.ps1" |
+  pwsh -NoProfile -File "<path-to-skill>\scripts\format-daily-work-log-evidence.ps1" -MaxCommitsPerRepo 8
+```
+
+## High-commit repos
+
+When a repo has many commits, summarize themes instead of dumping commits. Use compacted `shownCommits` as evidence, keep `shownCommits.Count <= 8` by default, and turn low-signal PR titles such as `noop` into `lowSignalPrRefs` like `PR #238 [MERGED]` instead of user-facing bullets like `PR #238: noop [MERGED]`.
+
 ## Required checks
 
 - Helper script output is valid JSON only.
+- When the user does not provide a clear time range, the helper resolves the range to today in the configured timezone.
 - Git history collection uses `git log --all`; do not limit to current branch.
 - `scan` / `mixed` repo discovery must cover git worktrees as well as normal repos.
+- `session` repo discovery must query `opencode db --format json` first.
+- DB fallback order is DB, then `storage/directory-readme`, then OpenCode logs, but DB success with empty `[]` is authoritative and does not fallback.
+- If `storage/directory-readme` finds no resolvable repo/worktree roots after a DB failure, continue to OpenCode log fallback.
+- OpenCode log fallback includes session-start directories plus touched external repo evidence from `permission=external_directory`, `permission=read`, and `permission=read-only` paths when they resolve to git repo or worktree roots.
+- Only paths resolvable to git repo or worktree roots are included in repo results.
+- Repo discovery gaps, skipped paths, and partial evidence are reported through warnings and final notes.
 - Stash noise such as `refs/stash`, `index on ...`, or `untracked files on ...` is excluded from summary-worthy commits.
 - GitHub supplement is attempted only when `gh` is available and authenticated.
 - GitHub supplement is filtered by commit / branch / hash relevance; do not attach unrelated updated PRs from the same repo.
 - Missing GitHub supplement is reported as a warning, not silently ignored.
 - Final output is grouped by folder name only.
-- Each repo defaults to 2–5 bullets unless there is a strong reason to exceed that.
+- Each repo defaults to 2-5 bullets unless there is a strong reason to exceed that.
 - Final bullets stay concise and preserve PR / issue identifiers when available.
 - Final bullets are independently understandable; avoid fragments that only make sense when read together.
 
@@ -134,7 +170,9 @@ Output: Run the helper with explicit From/To plus `-SourceMode mixed -ScanRoots 
 | 只看目前 branch 的 commit | 一律使用 `git log --all`。 |
 | 直接從 commit message 猜 PR / issue 關聯 | 先收 git，再用 `gh` 補 PR 與 closing issues。 |
 | helper 腳本同時輸出 JSON 與說明文字 | `stdout` 保持 pure JSON；人類摘要由 skill 產生。 |
+| DB 回傳空陣列時繼續讀 log 湊 repo | DB 成功且回傳 `[]` 代表 session discovery 沒有 repo，不 fallback。 |
+| DB 查詢失敗就停止 session discovery | 依序 fallback 到 `storage/directory-readme`，再讀 OpenCode logs，並保留 warning。 |
 | 看見非 git repo 就忽略 | 明講「今日有 session，非 git repo」。 |
 | `gh` 失敗時假裝沒有 PR | 保留 warning，並在最終輸出說明未補證。 |
 | 把相鄰 commit 片段拆成多條半句 | 合併成一條能單獨理解的日誌句；若無法說清楚就不要列。 |
-| 把同一 repo 的 commit 幾乎逐條照抄 | 先歸納成 2–5 條主題句，再保留最重要的 PR / issue。 |
+| 把同一 repo 的 commit 幾乎逐條照抄 | 先歸納成 2-5 條主題句，再保留最重要的 PR / issue。 |
