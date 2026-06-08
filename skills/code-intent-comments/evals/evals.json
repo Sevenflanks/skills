@@ -1,0 +1,74 @@
+{
+  "skill_name": "code-intent-comments",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "你正在修改 Java 金額分攤邏輯。規則是前 n-1 筆正常 rounding，最後一筆承接尾差，確保下游會計總額等於原始總額。請加入必要註解，但不要寫逐行翻譯。",
+      "expected_output": "應在尾差分攤附近加入白話註解，說明商業不變量、最後一筆承接尾差，以及不可改成每筆 rounding 後加總的原因。",
+      "files": [],
+      "expectations": [
+        "註解說明前 n-1 筆與最後一筆的規則",
+        "註解說明下游總額一致性",
+        "註解說明不可簡化成每筆 rounding 後加總",
+        "沒有逐行翻譯 if 或加總動作"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "你新增一個 service class，將舊 DB 值 default 顯示成 ALL，原因是 2026-03 CR-123 User 要求新 UI wording，但舊資料仍要正常顯示。驗證責任留在 CampaignValidator。請加入必要註解。",
+      "expected_output": "應補 class 或 method 註解，說明責任邊界、default 是舊資料儲存值、ALL 是顯示值、只做顯示轉換不回寫 DB，驗證留在 CampaignValidator。",
+      "files": [],
+      "expectations": [
+        "註解包含 CR 或使用者需求脈絡",
+        "註解說明 default 與 ALL 的資料語意差異",
+        "註解說明不回寫 DB",
+        "註解說明 validation 不屬於此 class"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "你只把 config key 從 maxRetires 修成 maxRetries，並更新一個測試。請判斷是否需要註解。",
+      "expected_output": "應判斷不需要新增程式碼註解，除非有外部相容風險；不應加入 fixed typo 類註解。",
+      "files": [],
+      "expectations": [
+        "沒有新增 fixed typo 類低資訊註解",
+        "有提到只有外部相容風險時才需要註解"
+      ]
+    },
+    {
+      "id": 4,
+      "prompt": "你修改一段 Nuxt auth workaround。舊註解只寫暫時處理，但這段是為了 hydration 期間 store 尚未初始化時用 cookie 還原登入狀態。請改寫必要註解。",
+      "expected_output": "應只改 touched code 附近註解，說明 framework 怪癖、fallback 原因、暫時性與移除條件。",
+      "files": [],
+      "expectations": [
+        "註解說明 hydration 或 store 初始化限制",
+        "註解說明 cookie fallback 的原因",
+        "註解說明未來移除條件",
+        "沒有整理遠處無關註解"
+      ]
+    },
+    {
+      "id": 5,
+      "prompt": "你在一個大檔案只修改其中一個 method，但看到其他區塊有很多口語或低資訊註解。請判斷是否要一併整理。",
+      "expected_output": "應拒絕全檔註解整理，只允許改本次 touched code 附近且與理解、風險、需求脈絡直接相關的註解。",
+      "files": [],
+      "expectations": [
+        "明確拒絕 broad whole-file comment cleanup",
+        "只允許改 touched code 附近註解",
+        "要求註解改寫必須和理解、風險或需求脈絡直接相關"
+      ]
+    },
+    {
+      "id": 6,
+      "prompt": "你修改一段批次匯出程式，旁邊既有註解寫著：`// perf opt: async proc w/ cache to avoid DB IO bottleneck`。這段其實是為了避免每筆資料都查 DB，改成批次前先載入對照表。請判斷是否改寫註解，並寫出建議註解。",
+      "expected_output": "應改寫 touched code 附近的艱澀縮寫註解，改成白話繁中，保留必要技術詞 DB/cache，但避免 perf/opt/proc/w 等不必要縮寫。",
+      "files": [],
+      "expectations": [
+        "改寫既有註解，因為它在 touched code 附近且影響理解",
+        "使用白話繁中說明批次前先載入對照表的原因",
+        "保留 DB 或 cache 等常見技術詞即可",
+        "避免 perf、opt、proc、w/ 這類不必要縮寫"
+      ]
+    }
+  ]
+}

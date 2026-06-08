@@ -3,6 +3,24 @@
   "repository": "Sevenflanks/skills",
   "skills": [
     {
+      "name": "code-intent-comments",
+      "path": "skills/code-intent-comments",
+      "summary": "引導 agent 以白話繁中撰寫高價值程式註解，補足 class 責任、核心邏輯、CR、相容性與高風險脈絡。",
+      "version": "0.1.0",
+      "license": "MIT",
+      "author": "sevenflankse",
+      "tags": [
+        "comments",
+        "documentation",
+        "maintainability",
+        "code-review",
+        "intent",
+        "risk",
+        "cr"
+      ],
+      "status": "stable"
+    },
+    {
       "name": "daily-work-log",
       "path": "skills/daily-work-log",
       "summary": "從 OpenCode session、跨 branch git commit 與 GitHub PR / issue 關聯蒐集證據，整理成每日工作日誌。",
