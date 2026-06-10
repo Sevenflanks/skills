@@ -9,7 +9,7 @@
 | Skill | 版本 | 狀態 | 說明 | 路徑 |
 | --- | --- | --- | --- | --- |
 | `code-intent-comments` | `0.1.0` | stable | 引導 agent 以白話繁中撰寫高價值程式註解，補足 class 責任、核心邏輯、CR、相容性與高風險脈絡。 | [`skills/code-intent-comments/`](skills/code-intent-comments/) |
-| `daily-work-log` | `0.1.2` | stable | 從 OpenCode session、跨 branch git commit 與 GitHub PR / issue 關聯蒐集證據，整理成每日工作日誌。 | [`skills/daily-work-log/`](skills/daily-work-log/) |
+| `daily-work-log` | `0.1.3` | stable | 從 OpenCode session、跨 branch git commit 與 GitHub PR / issue 關聯蒐集證據，整理成每日工作日誌。 | [`skills/daily-work-log/`](skills/daily-work-log/) |
 | `gh-body-file` | `0.1.1` | stable | 在 Windows、PowerShell、OpenCode shell 環境中，安全使用 GitHub CLI 支援 `--body-file` 的指令。 | [`skills/gh-body-file/`](skills/gh-body-file/) |
 | `playwright-server-lifecycle` | `0.1.0` | stable | 管理 Playwright/browser 驗證所需的本機 dev server 背景啟動、PID/log、ready check 與 cleanup。 | [`skills/playwright-server-lifecycle/`](skills/playwright-server-lifecycle/) |
 
@@ -30,7 +30,7 @@
 
 ## daily-work-log
 
-`daily-work-log` 會先用固定 PowerShell helper 從本機 OpenCode 活動、`git log --all` 結果與 GitHub PR / issue 關聯蒐集證據，並要求 helper 只輸出純 JSON。之後 skill 再根據 JSON 內容，將工作內容壓成依資料夾名稱分組的每日工作日誌。
+`daily-work-log` 會先用固定 PowerShell helper 從本機 OpenCode 活動、`git log --all` 結果與 GitHub PR / issue 關聯蒐集證據，並要求 helper 只輸出純 JSON。之後 skill 再根據 JSON 內容，將工作內容壓成優先依 GitHub repo name 分組、必要時 fallback 到資料夾名稱的每日工作日誌。
 
 適用於需要整理今日或指定時間範圍的工作摘要，例如：
 
@@ -39,7 +39,7 @@
 - 使用 `gh` 補充 PR 編號與 closing issue 關聯。
 - 輸出適合直接貼到 standup / 日報的簡短條列。
 
-若 `gh` 不可用、repo 非 git、或 session 有進入但沒有 commit，此 skill 會要求 agent 保留資料缺口說明，而不是直接忽略。
+若 `gh` 不可用或未登入，此 skill 會要求 agent 預設先停止並建議安裝 GitHub CLI 或執行 `gh auth login`；只有使用者強烈堅持時才降級繼續並保留 PR / issue 補證缺口。repo 非 git、或 session 有進入但沒有 commit 時，也會要求 agent 保留資料缺口說明，而不是直接忽略。
 
 ## gh-body-file
 

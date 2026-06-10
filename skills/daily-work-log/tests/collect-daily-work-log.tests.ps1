@@ -612,6 +612,7 @@ Describe 'format-daily-work-log-evidence compaction' {
     $repo = @($output.repos | Where-Object { $_.name -eq 'busy-repo' })[0]
 
     $output.meta.timezone | Should Be 'Asia/Taipei'
+    $repo.githubRepo | Should Be 'sevenflanks/busy-repo'
     (@($repo.shownCommits).Count -le 8) | Should Be $true
     (@($repo.shownCommits | ForEach-Object { $_.subject }) -contains 'refs/stash') | Should Be $false
     (@($repo.shownCommits | ForEach-Object { $_.subject }) -contains 'index on feature: abc1234 work') | Should Be $false

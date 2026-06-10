@@ -140,6 +140,7 @@ end {
 
       $repos.Add([ordered]@{
         name = Get-PropertyValue -Object $repo -Name 'name'
+        githubRepo = Get-PropertyValue -Object $repo -Name 'githubRepo'
         commitCount = $summaryCommits.Count
         shownCommits = @($summaryCommits | Select-Object -First $MaxCommitsPerRepo)
         prs = @($prTexts)

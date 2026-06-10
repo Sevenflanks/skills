@@ -11,7 +11,7 @@
 當任務需要：
 
 - 依 OpenCode session 與 git activity 整理今日日誌。
-- 按 repo / 資料夾名稱分組輸出工作內容。
+- 優先按 GitHub repo name 分組輸出工作內容，缺少 GitHub repo name 時才 fallback 到 repo 資料夾名稱。
 - 補上 PR 編號與 closing issue 關聯。
 - 在 Windows / PowerShell / OpenCode 環境中，以一致方式收集工作證據。
 
@@ -25,10 +25,10 @@
 4. 若 DB 查詢成功且回傳空陣列 `[]`，代表沒有 session repo 證據，這個結果具權威性，不再 fallback 到檔案來源。
 5. 若 DB 失敗且 `storage/directory-readme` 沒有找到任何可解析 git repo / worktree root 的路徑，繼續 fallback 到 OpenCode logs；log fallback 會納入可解析成 git repo / worktree root 的 `permission=external_directory`、`permission=read`、`permission=read-only` touched path 證據。
 6. 讓 helper 只輸出純 JSON，不混入說明文字。
-7. 由 skill 檢查 JSON 內的 warning / error / `ghAvailable` 狀態。
+7. 由 skill 檢查 JSON 內的 warning / error / `ghAvailable` / `ghViewer` 狀態；若 `gh` 不可用或未登入，預設先停止並建議安裝 GitHub CLI 或執行 `gh auth login`。
 8. 只納入可解析成 git repo 或 worktree root 的路徑，其他缺口要透過 warning 或最終註記說清楚。
-9. 依 repo 資料夾名稱分組，將內容壓成簡短工作日誌條列。
-10. 若 `gh` 不可用、repo 非 git、或今日有 session 但無 commit，要在最終輸出保留資料缺口說明。
+9. 依 `githubRepo` 的 GitHub repo name 分組，若缺少 `githubRepo` 才 fallback 到 repo 資料夾名稱，並將內容壓成簡短工作日誌條列。
+10. 只有使用者強烈堅持在沒有可用或已登入 `gh` 的環境繼續時，才產生降級日報並在最終輸出保留 PR / issue 補證缺口；repo 非 git、或今日有 session 但無 commit，也要保留資料缺口說明。
 
 ## 檔案
 
