@@ -3,13 +3,13 @@
   "evals": [
     {
       "id": 1,
-      "prompt": "幫我整理今天的工作日誌。來源請從 OpenCode session 實際進過的 repo 開始，commit 不要限制 branch，再用 gh 補 PR 跟 closing issue，最後按資料夾名稱分組，每條盡量 30 字內。",
-      "expected_output": "先要求使用 PowerShell helper 產出 pure JSON，再依 JSON 結果輸出按資料夾名稱分組的工作日誌，明確要求 git log --all 與 gh 補 PR / issue 關聯。",
+      "prompt": "幫我整理今天的工作日誌。來源請從 OpenCode session 實際進過的 repo 開始，commit 不要限制 branch，再用 gh 補 PR 跟 closing issue，最後優先按 GitHub repo name 分組，每條盡量 30 字內。",
+      "expected_output": "先要求使用 PowerShell helper 產出 pure JSON，再依 JSON 結果優先輸出按 GitHub repo name 分組的工作日誌；缺少 githubRepo 時才 fallback 到 repo folder name，並明確要求 git log --all 與 gh 補 PR / issue 關聯。",
       "files": [],
       "expectations": [
         "使用 skill 內的 PowerShell helper，而不是手動拼湊資料來源。",
         "明確要求 git commit 蒐集使用 `git log --all`，不限 branch。",
-        "最終輸出依 repo 資料夾名稱分組，而不是絕對路徑。",
+        "最終輸出優先依 `githubRepo` 的 GitHub repo name 分組，缺少時才 fallback 到 repo 資料夾名稱，且不是絕對路徑。",
         "優先保留 PR / issue 編號。",
         "在 helper 執行後先檢查 JSON warnings / errors，再產出最終摘要。",
         "每條日誌單獨閱讀也能理解；若片段太碎，應合併或省略。",
@@ -49,19 +49,22 @@
     },
     {
       "id": 3,
-      "prompt": "今天有些目錄只是 session 進去過，但不是 git repo；另外這台機器的 gh 沒登入。請還是整理日報，但要把資料缺口講清楚。",
-      "expected_output": "保留非 git repo 與 gh 未登入的缺口說明，不亂猜 PR / issue；最終輸出仍維持依資料夾分組的日誌。",
+      "prompt": "今天有些目錄只是 session 進去過，但不是 git repo；另外這台機器的 gh 沒登入。請整理日報，但若缺少 gh 認證會影響 PR / issue 補證，先告訴我該怎麼處理。",
+      "expected_output": "保留非 git repo 缺口；遇到 gh 未登入時預設停止並建議執行 `gh auth login` 或安裝 GitHub CLI，不亂猜 PR / issue。只有使用者強烈堅持才繼續產生降級日報並說明 PR / issue 未補證。",
       "files": [],
       "expectations": [
-        "不會因為 gh 不可用就假裝沒有 PR / issue 關聯資料缺口。",
+        "不會因為 gh 不可用或未登入就直接產生缺少 PR / issue 補證的日報。",
+        "會先停止並建議安裝 GitHub CLI 或執行 `gh auth login`。",
+        "只有使用者強烈堅持時才繼續在沒有 gh 補證的環境運作。",
         "會明講非 git repo 與 session-only 目錄狀態。",
         "helper 仍需維持 pure JSON 輸出，由 skill 負責生成人類文字。",
-        "最終日誌格式仍維持分組條列，而不是回傳原始 JSON 給使用者。",
+        "若使用者強烈堅持降級繼續，最終日誌格式仍維持分組條列，而不是回傳原始 JSON 給使用者。",
         "缺口說明與工作條列都要能單獨理解，不使用殘缺片語。",
         "即使 repo 工作很多，也應先主題化合併，避免整段列舉 commit。"
       ],
       "assertions": [
-        "Output explicitly states that PR / issue linkage could not be supplemented when GitHub CLI is unavailable.",
+        "Output stops by default and recommends installing GitHub CLI or running `gh auth login` when GitHub CLI is unavailable or unauthenticated.",
+        "Output only proceeds without GitHub evidence when the user strongly insists on degraded operation.",
         "Output explicitly calls out non-git or session-only directories instead of silently dropping them.",
         "Final response remains a grouped work log, not raw JSON dumped to the user.",
         "Gap reporting is explicit and honest rather than inferred away.",
@@ -135,13 +138,13 @@
     },
     {
       "id": 8,
-      "prompt": "我想整理工作日誌，但先不要指定 From/To。請直接按 skill 預設把今天的範圍算出來，再從 session repo 開始收集，最後照資料夾名稱分組輸出。",
+      "prompt": "我想整理工作日誌，但先不要指定 From/To。請直接按 skill 預設把今天的範圍算出來，再從 session repo 開始收集，最後優先照 GitHub repo name 分組輸出。",
       "expected_output": "未提供明確時間範圍時，skill 應先明確採用 configured timezone 下的今天範圍，再執行 helper 與分組摘要，而不是要求使用者補 From/To 才能開始。",
       "files": [],
       "expectations": [
         "未指定 From/To 時，會把今天視為預設時間範圍，而不是停在追問。",
         "預設今天的邊界需依 configured timezone 計算。",
-        "repo discovery 仍從 session repo 起手，之後再輸出按資料夾名稱分組的日誌。",
+        "repo discovery 仍從 session repo 起手，之後再輸出優先按 GitHub repo name 分組、缺少時 fallback repo folder name 的日誌。",
         "helper 仍需維持 pure JSON 輸出，由 skill 根據 JSON 產生最終摘要。"
       ],
       "assertions": [
@@ -160,12 +163,12 @@
         "`session` 模式 repo discovery 不能只依賴 session-start 目錄。",
         "會使用 `permission=external_directory`、`permission=read` 與 `permission=read-only` 類路徑證據解析 touched external repo。",
         "若外部路徑可回推到 git repo 或 worktree root，應納入 repo 候選。",
-        "最終日報仍按資料夾名稱分組，不直接暴露外部絕對路徑。"
+        "最終日報優先按 GitHub repo name 分組，缺少時才 fallback repo folder name，不直接暴露外部絕對路徑。"
       ],
       "assertions": [
         "Touched external repos evidenced by permission logs are included in session-mode discovery when they resolve to git or worktree roots.",
         "Session discovery is not limited to broad session-start directories when stronger touched-repo evidence exists.",
-        "Final report uses repo folder grouping without leaking absolute external paths.",
+        "Final report uses GitHub repo name grouping when `githubRepo` is available, falls back to repo folder name only when needed, and does not leak absolute external paths.",
         "External-repo inclusion is explained as evidence-based discovery rather than guesswork."
       ]
     },
@@ -219,7 +222,7 @@
       "assertions": [
         "Output mentions compacted evidence or behaves consistently with compacted evidence.",
         "High-commit repo summary is concise and not a near-raw commit dump.",
-        "Repo bullets remain grouped by folder name and preserve important identifiers."
+        "Repo bullets remain grouped by GitHub repo name when available, with folder-name fallback, and preserve important identifiers."
       ]
     },
     {

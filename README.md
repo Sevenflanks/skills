@@ -30,7 +30,7 @@
 
 ## daily-work-log
 
-`daily-work-log` 會先用固定 PowerShell helper 從本機 OpenCode 活動、`git log --all` 結果與 GitHub PR / issue 關聯蒐集證據，並要求 helper 只輸出純 JSON。之後 skill 再根據 JSON 內容，將工作內容壓成依資料夾名稱分組的每日工作日誌。
+`daily-work-log` 會先用固定 PowerShell helper 從本機 OpenCode 活動、`git log --all` 結果與 GitHub PR / issue 關聯蒐集證據，並要求 helper 只輸出純 JSON。之後 skill 再根據 JSON 內容，將工作內容壓成優先依 GitHub repo name 分組、必要時 fallback 到資料夾名稱的每日工作日誌。
 
 適用於需要整理今日或指定時間範圍的工作摘要，例如：
 
@@ -39,7 +39,7 @@
 - 使用 `gh` 補充 PR 編號與 closing issue 關聯。
 - 輸出適合直接貼到 standup / 日報的簡短條列。
 
-若 `gh` 不可用、repo 非 git、或 session 有進入但沒有 commit，此 skill 會要求 agent 保留資料缺口說明，而不是直接忽略。
+若 `gh` 不可用或未登入，此 skill 會要求 agent 預設先停止並建議安裝 GitHub CLI 或執行 `gh auth login`；只有使用者強烈堅持時才降級繼續並保留 PR / issue 補證缺口。repo 非 git、或 session 有進入但沒有 commit 時，也會要求 agent 保留資料缺口說明，而不是直接忽略。
 
 ## gh-body-file
 

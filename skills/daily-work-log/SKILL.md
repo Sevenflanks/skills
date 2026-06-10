@@ -17,7 +17,7 @@ Use this skill when:
 
 - The user asks for a daily work log, work journal, standup summary, or asks what was done today.
 - The user wants work summarized from OpenCode sessions, git commits, PRs, or issues.
-- The user needs repo-grouped bullets such as `repo-a`, `repo-b`, or similar folder-based sections.
+- The user needs repo-grouped bullets such as `owner/repo`, `repo-a`, or similar repository sections.
 - The environment is Windows / PowerShell / OpenCode and repeatable local evidence collection matters.
 
 Do not use this skill when:
@@ -28,7 +28,7 @@ Do not use this skill when:
 
 ## Core rule
 
-Do not hand-assemble repo, commit, or PR data from memory. Run the helper script first and treat its JSON as the source of truth. In `session` source mode, repo discovery queries `opencode db --format json` for session evidence first. If GitHub CLI is unavailable or repo discovery is partial, report the gap explicitly instead of guessing.
+Do not hand-assemble repo, commit, or PR data from memory. Run the helper script first and treat its JSON as the source of truth. In `session` source mode, repo discovery queries `opencode db --format json` for session evidence first. If GitHub CLI is unavailable or unauthenticated, stop and recommend installing or logging into `gh` unless the user strongly insists on degraded output. If repo discovery is partial, report the gap explicitly instead of guessing.
 
 ## Workflow
 
@@ -49,14 +49,18 @@ Do not hand-assemble repo, commit, or PR data from memory. Run the helper script
    - In `session` mode, treat session-derived repo discovery as including both session-start directories and touched external repo evidence that can be resolved to git repo or worktree roots from `permission=external_directory` or `permission=read` log entries.
 
 3. **Inspect collection gaps before writing the summary**
-   - Check `meta.ghAvailable`.
+   - Check `meta.ghAvailable` and `meta.ghViewer`.
+   - If GitHub CLI is unavailable or not authenticated, stop before writing the daily log. Tell the user to install `gh` or run `gh auth login`, then rerun collection.
+   - Continue without GitHub evidence only when the user strongly insists on a degraded report. In that case, state the PR / issue supplement gap explicitly in the final notes.
    - Check repo `warnings` and top-level `warnings` / `errors`.
    - Note repos that are not git repos, repos with session activity but no commits, and repos with commits but no PR/issue supplement.
    - Only include paths that resolve to git repo or worktree roots. Surface skipped or unresolved paths through warnings or final notes.
    - Treat PR supplement as relevant only when it can be tied back to the day's commit / branch / hash evidence; do not attach every updated PR from the same repo.
 
-4. **Summarize by folder name**
-   - Group by repo folder name only, not absolute path.
+4. **Summarize by GitHub repo name**
+   - Group by GitHub repo name from `repos[].githubRepo` first, such as `owner/repo`.
+   - If `githubRepo` is unavailable for a repo, fall back to `repos[].name` repo folder name.
+   - Never use absolute paths as final group headings.
    - Prefer short bullets, ideally within 30 Chinese characters.
    - Default to 2-5 bullets per repo. If a repo would exceed that, merge nearby commits into theme-level bullets instead of listing every commit-shaped fragment.
    - Prefer bullets that preserve issue / PR numbers such as `PR #219` or `#217`.
@@ -65,7 +69,7 @@ Do not hand-assemble repo, commit, or PR data from memory. Run the helper script
    - Keep separate bullets when two changes are materially different.
 
 5. **State data gaps honestly**
-   - If `gh` is unavailable, explicitly say PR / issue links were not supplemented.
+   - If the user strongly insisted on continuing without available/authenticated `gh`, explicitly say PR / issue links were not supplemented.
    - If a repo had session activity but no commits, say so.
    - If a directory is not a git repo, say so instead of dropping it silently.
 
@@ -123,10 +127,11 @@ When a repo has many commits, summarize themes instead of dumping commits. Use c
 - Only paths resolvable to git repo or worktree roots are included in repo results.
 - Repo discovery gaps, skipped paths, and partial evidence are reported through warnings and final notes.
 - Stash noise such as `refs/stash`, `index on ...`, or `untracked files on ...` is excluded from summary-worthy commits.
-- GitHub supplement is attempted only when `gh` is available and authenticated.
+- GitHub supplement is required by default. If `gh` is unavailable or unauthenticated, stop and recommend installing GitHub CLI or running `gh auth login` unless the user strongly insists on continuing without GitHub evidence.
 - GitHub supplement is filtered by commit / branch / hash relevance; do not attach unrelated updated PRs from the same repo.
 - Missing GitHub supplement is reported as a warning, not silently ignored.
-- Final output is grouped by folder name only.
+- Final output is grouped by `repos[].githubRepo` GitHub repo name first, with `repos[].name` folder name as fallback only when GitHub repo name is unavailable.
+- Final output never uses absolute paths as group headings.
 - Each repo defaults to 2-5 bullets unless there is a strong reason to exceed that.
 - Final bullets stay concise and preserve PR / issue identifiers when available.
 - Final bullets are independently understandable; avoid fragments that only make sense when read together.
@@ -136,7 +141,7 @@ When a repo has many commits, summarize themes instead of dumping commits. Use c
 Use grouped bullets like this:
 
 ```text
-- **repo-a**
+- **sevenflanks/repo-a**
   - 修首建參數遺失，PR #49
   - 新增 skills 功能
 
@@ -148,14 +153,14 @@ Use grouped bullets like this:
 If there is a global gap, append a short note after the grouped list, for example:
 
 ```text
-註：GitHub CLI 不可用，PR / issue 關聯未補證。
+註：依你的要求先在未登入 GitHub CLI 的狀態下產生日報，PR / issue 關聯未補證。
 ```
 
 ## Examples
 
 ```text
-Input: 幫我整理今天的工作日誌，按目錄分組，最好帶 PR 跟 issue。
-Output: Run the PowerShell helper for today's range, inspect JSON warnings, then return grouped bullets by repo folder with PR / issue numbers where supported.
+Input: 幫我整理今天的工作日誌，最好帶 PR 跟 issue。
+Output: Run the PowerShell helper for today's range, inspect JSON warnings, then return grouped bullets by GitHub repo name from `githubRepo`, falling back to repo folder name only when needed.
 ```
 
 ```text
@@ -173,6 +178,8 @@ Output: Run the helper with explicit From/To plus `-SourceMode mixed -ScanRoots 
 | DB 回傳空陣列時繼續讀 log 湊 repo | DB 成功且回傳 `[]` 代表 session discovery 沒有 repo，不 fallback。 |
 | DB 查詢失敗就停止 session discovery | 依序 fallback 到 `storage/directory-readme`，再讀 OpenCode logs，並保留 warning。 |
 | 看見非 git repo 就忽略 | 明講「今日有 session，非 git repo」。 |
-| `gh` 失敗時假裝沒有 PR | 保留 warning，並在最終輸出說明未補證。 |
+| `gh` 失敗時假裝沒有 PR | 預設停止並建議安裝或登入 `gh`；若使用者強烈堅持才保留 warning 並在最終輸出說明未補證。 |
+| `gh` 不存在或未登入時直接降級產生日報 | 先停止並建議安裝 `gh` 或執行 `gh auth login`；只有使用者強烈堅持才降級繼續。 |
+| 一律用資料夾名稱當分組標題 | 優先使用 `githubRepo` 的 GitHub repo name，缺失時才 fallback 到 repo folder name。 |
 | 把相鄰 commit 片段拆成多條半句 | 合併成一條能單獨理解的日誌句；若無法說清楚就不要列。 |
 | 把同一 repo 的 commit 幾乎逐條照抄 | 先歸納成 2-5 條主題句，再保留最重要的 PR / issue。 |
