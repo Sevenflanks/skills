@@ -103,7 +103,7 @@ Treat collector JSON as source of truth:
 
 ## Optional evidence compaction
 
-For high-volume evidence, pipe collector JSON through `scripts/format-daily-work-log-evidence.ps1`. It reads collector JSON from stdin, emits pure JSON, preserves `meta`, `warnings`, `errors`, and returns compact repo evidence: `name`, `commitCount`, `shownCommits`, `prs`, `lowSignalPrRefs`, `warnings`.
+For high-volume evidence, pipe collector JSON through `scripts/format-daily-work-log-evidence.ps1`. It reads collector JSON from stdin, emits pure JSON, preserves `meta`, `warnings`, `errors`, and returns compact repo evidence: `name`, `githubRepo`, `commitCount`, `shownCommits`, `prs`, `lowSignalPrRefs`, `warnings`.
 
 ```powershell
 pwsh -NoProfile -File "<path-to-skill>\scripts\collect-daily-work-log.ps1" |
