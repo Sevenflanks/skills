@@ -52,6 +52,24 @@ end {
     return ($Subject -match '^(refs/stash|index on |untracked files on )')
   }
 
+  function Format-DateValue {
+    param($Value)
+
+    if ($null -eq $Value) {
+      return $null
+    }
+
+    if ($Value -is [datetimeoffset]) {
+      return $Value.ToString('o')
+    }
+
+    if ($Value -is [datetime]) {
+      return $Value.ToString('yyyy-MM-ddTHH:mm:ss')
+    }
+
+    return [string]$Value
+  }
+
   function Format-PrReference {
     param($PullRequest)
 
@@ -118,7 +136,8 @@ end {
           hash = Get-PropertyValue -Object $commit -Name 'hash'
           subject = $subject
           author = Get-PropertyValue -Object $commit -Name 'author'
-          authorDate = Get-PropertyValue -Object $commit -Name 'authorDate'
+          authorEmail = Get-PropertyValue -Object $commit -Name 'authorEmail'
+          authorDate = if ($null -ne (Get-PropertyValue -Object $commit -Name 'authorDate')) { Format-DateValue -Value (Get-PropertyValue -Object $commit -Name 'authorDate') } else { Format-DateValue -Value (Get-PropertyValue -Object $commit -Name 'date') }
         })
       }
 
@@ -145,6 +164,7 @@ end {
         shownCommits = @($summaryCommits | Select-Object -First $MaxCommitsPerRepo)
         prs = @($prTexts)
         lowSignalPrRefs = @($lowSignalPrRefs)
+        sessionEvidence = @((ConvertTo-Array -Value (Get-PropertyValue -Object $repo -Name 'sessionEvidence')) | Select-Object -First 5)
         warnings = @($repoWarnings)
       })
     }
