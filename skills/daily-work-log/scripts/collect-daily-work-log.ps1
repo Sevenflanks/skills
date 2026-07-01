@@ -1310,7 +1310,9 @@ function Test-PrMatchesCommits {
     [object[]]$Commits,
     [object]$Pr,
     [object]$PrDetails,
-    [object]$CurrentIdentity
+    [object]$CurrentIdentity,
+    [datetimeoffset]$FromRange,
+    [datetimeoffset]$ToRange
   )
 
   $commitHashes = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
@@ -1347,9 +1349,26 @@ function Test-PrMatchesCommits {
   if (-not [string]::IsNullOrWhiteSpace($prAuthor) -and
       $CurrentIdentity -and
       -not [string]::IsNullOrWhiteSpace([string]$CurrentIdentity.ghLogin) -and
-      $prAuthor -ieq [string]$CurrentIdentity.ghLogin -and
-      @($PrDetails.commits).Count -gt 0) {
-    return $true
+      $prAuthor -ieq [string]$CurrentIdentity.ghLogin) {
+    foreach ($prCommit in @($PrDetails.commits)) {
+      foreach ($dateProperty in @('committedDate', 'authoredDate')) {
+        $rawDate = Get-ObjectPropertyValue -Object $prCommit -Name $dateProperty
+        if ($null -eq $rawDate -or [string]::IsNullOrWhiteSpace([string]$rawDate)) {
+          continue
+        }
+
+        try {
+          $commitDate = [datetimeoffset]::Parse([string]$rawDate)
+        }
+        catch {
+          continue
+        }
+
+        if ($commitDate -ge $FromRange -and $commitDate -le $ToRange) {
+          return $true
+        }
+      }
+    }
   }
 
   return $false
@@ -1408,7 +1427,7 @@ function Get-GhContext {
       continue
     }
 
-    if (-not (Test-PrMatchesCommits -Commits $Commits -Pr $pr -PrDetails $prDetails -CurrentIdentity $CurrentIdentity)) {
+    if (-not (Test-PrMatchesCommits -Commits $Commits -Pr $pr -PrDetails $prDetails -CurrentIdentity $CurrentIdentity -FromRange $FromRange -ToRange $ToRange)) {
       continue
     }
 

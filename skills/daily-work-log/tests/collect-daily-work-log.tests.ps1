@@ -163,6 +163,20 @@ if ($Arguments.Count -ge 2 -and $Arguments[0] -eq 'pr' -and $Arguments[1] -eq 'l
       baseRefName = 'main'
       closingIssuesReferences = @()
       author = [ordered]@{ login = 'test-user' }
+    },
+    [ordered]@{
+      number = 4
+      title = 'Stale current user authored PR'
+      url = 'https://github.com/sevenflanks/fixture-repo/pull/4'
+      updatedAt = '2026-05-29T07:00:00Z'
+      mergedAt = '2026-05-29T07:30:00Z'
+      closedAt = $null
+      state = 'MERGED'
+      isDraft = $false
+      headRefName = 'feature/stale-current-user-pr'
+      baseRefName = 'main'
+      closingIssuesReferences = @()
+      author = [ordered]@{ login = 'test-user' }
     }
   ) | ConvertTo-Json -Compress -Depth 8
   exit 0
@@ -170,7 +184,8 @@ if ($Arguments.Count -ge 2 -and $Arguments[0] -eq 'pr' -and $Arguments[1] -eq 'l
 
 if ($Arguments.Count -ge 3 -and $Arguments[0] -eq 'pr' -and $Arguments[1] -eq 'view') {
   $oid = if ($Arguments[2] -eq '1') { $env:DAILY_WORK_LOG_FAKE_PR_MATCH_HASH } elseif ($Arguments[2] -eq '3') { '3333333333333333333333333333333333333333' } else { '0000000000000000000000000000000000000000' }
-  [ordered]@{ number = [int]$Arguments[2]; commits = @([ordered]@{ oid = $oid }) } | ConvertTo-Json -Compress -Depth 5
+  $commitDate = if ($Arguments[2] -eq '3') { '2026-05-29T08:00:00Z' } elseif ($Arguments[2] -eq '4') { '2026-05-30T08:00:00Z' } else { $null }
+  [ordered]@{ number = [int]$Arguments[2]; commits = @([ordered]@{ oid = $oid; authoredDate = $commitDate; committedDate = $commitDate }) } | ConvertTo-Json -Compress -Depth 5
   exit 0
 }
 
@@ -931,6 +946,7 @@ Describe 'collect-daily-work-log session discovery' {
       ($prNumbers -contains 1) | Should Be $true
       ($prNumbers -contains 2) | Should Be $false
       ($prNumbers -contains 3) | Should Be $true
+      ($prNumbers -contains 4) | Should Be $false
     }
     finally {
       if (Test-Path -LiteralPath $testRoot.Root) { Remove-Item -LiteralPath $testRoot.Root -Recurse -Force -ErrorAction SilentlyContinue }
