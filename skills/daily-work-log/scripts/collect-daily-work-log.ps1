@@ -13,6 +13,12 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $script:GitRepoRootCache = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+$script:NoisyDirectoryNames = [System.Collections.Generic.HashSet[string]]::new(
+  [string[]]@('node_modules', '.output', 'dist', 'build', 'target', '.gradle', '.mvn', '.nuxt', '.next'),
+  [System.StringComparer]::OrdinalIgnoreCase
+)
+$script:MaxGitMarkerDepth = 6
+$script:MaxGitMarkers = 5000
 
 function Add-WarningMessage {
   param(
@@ -29,7 +35,8 @@ function Add-PathItem {
   param(
     [System.Collections.Generic.Dictionary[string, object]]$Map,
     [string]$Path,
-    [string]$Source
+    [string]$Source,
+    [object]$SessionEvidence = $null
   )
 
   if ([string]::IsNullOrWhiteSpace($Path)) {
@@ -41,10 +48,99 @@ function Add-PathItem {
     $Map[$normalized] = [ordered]@{
       path = $normalized
       source = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+      sessionEvidence = [System.Collections.Generic.List[object]]::new()
     }
   }
 
   $null = $Map[$normalized].source.Add($Source)
+  if ($null -ne $SessionEvidence) {
+    $Map[$normalized].sessionEvidence.Add($SessionEvidence)
+  }
+}
+
+function Get-ObjectPropertyValue {
+  param(
+    [object]$Object,
+    [string]$Name
+  )
+
+  if ($null -eq $Object) {
+    return $null
+  }
+
+  $property = $Object.PSObject.Properties[$Name]
+  if (-not $property) {
+    return $null
+  }
+
+  return $property.Value
+}
+
+function New-SessionCandidate {
+  param(
+    [string]$Path,
+    [object]$Evidence
+  )
+
+  return [ordered]@{
+    path = $Path
+    evidence = $Evidence
+  }
+}
+
+function New-SessionEvidence {
+  param(
+    [string]$Source,
+    [string]$Path,
+    [object]$Session = $null
+  )
+
+  $evidence = [ordered]@{
+    source = $Source
+    path = $Path
+  }
+
+  foreach ($mapping in @(
+    @{ Input = 'id'; Output = 'sessionId' },
+    @{ Input = 'title'; Output = 'title' },
+    @{ Input = 'time_created'; Output = 'timeCreated' },
+    @{ Input = 'time_updated'; Output = 'timeUpdated' },
+    @{ Input = 'updatedAt'; Output = 'updatedAt' }
+  )) {
+    $value = Get-ObjectPropertyValue -Object $Session -Name $mapping.Input
+    if ($null -ne $value -and -not [string]::IsNullOrWhiteSpace([string]$value)) {
+      $evidence[$mapping.Output] = $value
+    }
+  }
+
+  return [pscustomobject]$evidence
+}
+
+function Copy-SessionEvidenceForSource {
+  param(
+    [object]$Evidence,
+    [string]$Source
+  )
+
+  $copy = [ordered]@{ source = $Source }
+  if ($Evidence -is [System.Collections.IDictionary]) {
+    foreach ($key in @($Evidence.Keys)) {
+      if ([string]$key -eq 'source') {
+        continue
+      }
+      $copy[[string]$key] = $Evidence[$key]
+    }
+  }
+  else {
+    foreach ($property in @($Evidence.PSObject.Properties)) {
+      if ($property.Name -eq 'source') {
+        continue
+      }
+      $copy[$property.Name] = $property.Value
+    }
+  }
+
+  return [pscustomobject]$copy
 }
 
 function Resolve-TimeZoneInfo {
@@ -313,7 +409,7 @@ function Get-SessionDirectoriesFromDb {
     return @()
   }
 
-  $paths = [System.Collections.Generic.List[string]]::new()
+  $paths = [System.Collections.Generic.List[object]]::new()
   $seen = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
   $seenCandidates = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
   $unresolvedCount = 0
@@ -348,10 +444,15 @@ function Get-SessionDirectoriesFromDb {
 
       $repoRoot = Resolve-GitRepoRootFromPath -Path $candidatePath
       if ($repoRoot -and $seen.Add($repoRoot)) {
-        $paths.Add($repoRoot)
+        $paths.Add((New-SessionCandidate -Path $repoRoot -Evidence (New-SessionEvidence -Source 'session' -Path $candidatePath -Session $row)))
       }
       elseif (-not $repoRoot) {
-        $unresolvedCount += 1
+        if ((Test-Path -LiteralPath $candidatePath -PathType Container) -and $seen.Add($candidatePath)) {
+          $paths.Add((New-SessionCandidate -Path $candidatePath -Evidence (New-SessionEvidence -Source 'session' -Path $candidatePath -Session $row)))
+        }
+        else {
+          $unresolvedCount += 1
+        }
       }
     }
   }
@@ -413,7 +514,7 @@ function Get-SessionDirectoriesFromDirectoryReadme {
 
   $fromMilliseconds = ConvertTo-EpochMilliseconds -Value $FromRange
   $toMilliseconds = ConvertTo-EpochMilliseconds -Value $ToRange
-  $paths = [System.Collections.Generic.List[string]]::new()
+  $paths = [System.Collections.Generic.List[object]]::new()
   $seen = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
   $hadParseFailure = $false
   $unresolvedCount = 0
@@ -469,10 +570,23 @@ function Get-SessionDirectoriesFromDirectoryReadme {
 
       $repoRoot = Resolve-GitRepoRootFromPath -Path $candidate
       if ($repoRoot -and $seen.Add($repoRoot)) {
-        $paths.Add($repoRoot)
+        $paths.Add((New-SessionCandidate -Path $repoRoot -Evidence (New-SessionEvidence -Source 'directory-readme' -Path $candidate -Session $session)))
       }
       elseif (-not $repoRoot) {
-        $unresolvedCount += 1
+        try {
+          $candidate = [System.IO.Path]::GetFullPath($candidate)
+        }
+        catch {
+          $unresolvedCount += 1
+          continue
+        }
+
+        if ((Test-Path -LiteralPath $candidate -PathType Container) -and $seen.Add($candidate)) {
+          $paths.Add((New-SessionCandidate -Path $candidate -Evidence (New-SessionEvidence -Source 'directory-readme' -Path $candidate -Session $session)))
+        }
+        else {
+          $unresolvedCount += 1
+        }
       }
     }
   }
@@ -509,7 +623,7 @@ function Get-SessionDirectoriesFromLogs {
     return @()
   }
 
-  $paths = [System.Collections.Generic.List[string]]::new()
+  $paths = [System.Collections.Generic.List[object]]::new()
   $seen = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
   $unresolvedCount = 0
   $logFiles = Get-ChildItem -LiteralPath $logRoot -File -Filter '*.log' | Sort-Object Name
@@ -541,9 +655,25 @@ function Get-SessionDirectoriesFromLogs {
 
         $repoRoot = Resolve-GitRepoRootFromPath -Path $candidate
         if ($repoRoot -and $seen.Add($repoRoot)) {
-          $paths.Add($repoRoot)
+          $paths.Add((New-SessionCandidate -Path $repoRoot -Evidence (New-SessionEvidence -Source 'log' -Path $candidate)))
         }
         elseif (-not $repoRoot) {
+          try {
+            $candidate = [System.IO.Path]::GetFullPath($candidate)
+          }
+          catch {
+            $unresolvedCount += 1
+            continue
+          }
+
+          if (Test-Path -LiteralPath $candidate -PathType Container) {
+            $nestedRepos = @(Get-NestedGitRepositories -Root $candidate -Warnings $Warnings)
+            if (@($nestedRepos).Count -gt 0 -and $seen.Add($candidate)) {
+              $paths.Add((New-SessionCandidate -Path $candidate -Evidence (New-SessionEvidence -Source 'log' -Path $candidate)))
+              continue
+            }
+          }
+
           $unresolvedCount += 1
         }
       }
@@ -588,11 +718,12 @@ function Get-ScanRepositories {
         }
       }
 
-      $gitMarkers = Get-ChildItem -LiteralPath $root -Force -Filter '.git' -Recurse -ErrorAction SilentlyContinue |
-        Where-Object { -not [string]::IsNullOrWhiteSpace($_.FullName) }
+      if (-not (Test-SafeExpansionRoot -Path $root)) {
+        Add-WarningMessage -List $Warnings -Message ("Skipped unsafe scan root: {0}" -f $root)
+        continue
+      }
 
-      foreach ($gitMarker in $gitMarkers) {
-        $repoPath = Split-Path -Path $gitMarker.FullName -Parent
+      foreach ($repoPath in @(Get-NestedGitRepositories -Root $root -Warnings $Warnings)) {
         if (-not [string]::IsNullOrWhiteSpace($repoPath) -and $seen.Add($repoPath)) {
           $repos.Add($repoPath)
         }
@@ -615,14 +746,29 @@ function Invoke-Native {
 
   $resolvedFilePath = $FilePath
   $resolvedArguments = [System.Collections.Generic.List[string]]::new()
+  $appendOriginalArguments = $true
   $command = Get-Command $FilePath -ErrorAction SilentlyContinue
   if ($command -and $command.Source -and [System.IO.Path]::GetExtension($command.Source) -ieq '.ps1') {
     $pwshCommand = Get-Command pwsh -ErrorAction SilentlyContinue
     if ($pwshCommand -and $pwshCommand.Source) {
       $resolvedFilePath = $pwshCommand.Source
+      $scriptPathBytes = [System.Text.Encoding]::UTF8.GetBytes($command.Source)
+      $scriptPathBase64 = [Convert]::ToBase64String($scriptPathBytes)
+      $argumentJson = @($Arguments) | ConvertTo-Json -Compress
+      $argumentBytes = [System.Text.Encoding]::UTF8.GetBytes($argumentJson)
+      $argumentBase64 = [Convert]::ToBase64String($argumentBytes)
+      $encodedCommandText = @"
+`$scriptPath = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('$scriptPathBase64'))
+`$argumentJson = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('$argumentBase64'))
+`$scriptArguments = @(`$argumentJson | ConvertFrom-Json)
+& `$scriptPath @scriptArguments
+exit `$LASTEXITCODE
+"@
+      $encodedCommand = [Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes($encodedCommandText))
       $null = $resolvedArguments.Add('-NoProfile')
-      $null = $resolvedArguments.Add('-File')
-      $null = $resolvedArguments.Add($command.Source)
+      $null = $resolvedArguments.Add('-EncodedCommand')
+      $null = $resolvedArguments.Add($encodedCommand)
+      $appendOriginalArguments = $false
     }
   }
 
@@ -631,8 +777,10 @@ function Invoke-Native {
   foreach ($arg in $resolvedArguments) {
     $null = $psi.ArgumentList.Add($arg)
   }
-  foreach ($arg in $Arguments) {
-    $null = $psi.ArgumentList.Add($arg)
+  if ($appendOriginalArguments) {
+    foreach ($arg in $Arguments) {
+      $null = $psi.ArgumentList.Add($arg)
+    }
   }
   if ($WorkingDirectory) {
     $psi.WorkingDirectory = $WorkingDirectory
@@ -726,6 +874,199 @@ function Resolve-GitRepoRoot {
   return $null
 }
 
+function Test-SafeExpansionRoot {
+  param([string]$Path)
+
+  if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path -LiteralPath $Path -PathType Container)) {
+    return $false
+  }
+
+  try {
+    $fullPath = [System.IO.Path]::GetFullPath($Path).TrimEnd([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar)
+    $rootPath = ([System.IO.Path]::GetPathRoot($fullPath)).TrimEnd([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar)
+  }
+  catch {
+    return $false
+  }
+
+  if ($fullPath -ieq $rootPath) {
+    return $false
+  }
+
+  $homePath = [Environment]::GetFolderPath('UserProfile')
+  if (-not [string]::IsNullOrWhiteSpace($homePath)) {
+    $normalizedHome = [System.IO.Path]::GetFullPath($homePath).TrimEnd([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar)
+    if ($fullPath -ieq $normalizedHome) {
+      return $false
+    }
+  }
+
+  return $true
+}
+
+function Test-NoisyGitMarkerPath {
+  param([string]$Path)
+
+  if ([string]::IsNullOrWhiteSpace($Path)) {
+    return $false
+  }
+
+  foreach ($segment in ([string]$Path -split '[\\/]')) {
+    if ($script:NoisyDirectoryNames.Contains($segment)) {
+      return $true
+    }
+  }
+
+  return $false
+}
+
+function Find-GitMarkersBounded {
+  param([string]$Root)
+
+  $markers = [System.Collections.Generic.List[string]]::new()
+  $pending = [System.Collections.Generic.Queue[object]]::new()
+  $pending.Enqueue([pscustomobject]@{ Path = $Root; Depth = 0 })
+  $visitedDirectories = 0
+
+  while ($pending.Count -gt 0 -and $visitedDirectories -lt $script:MaxGitMarkers) {
+    $current = $pending.Dequeue()
+    $visitedDirectories += 1
+
+    $markerPath = Join-Path ([string]$current.Path) '.git'
+    if (Test-Path -LiteralPath $markerPath) {
+      $markers.Add((Get-Item -LiteralPath $markerPath -Force).FullName)
+    }
+
+    if ([int]$current.Depth -ge $script:MaxGitMarkerDepth) {
+      continue
+    }
+
+    foreach ($child in @(Get-ChildItem -LiteralPath ([string]$current.Path) -Force -Directory -ErrorAction SilentlyContinue)) {
+      if ($child.Name -eq '.git' -or $script:NoisyDirectoryNames.Contains($child.Name)) {
+        continue
+      }
+
+      $pending.Enqueue([pscustomobject]@{ Path = $child.FullName; Depth = ([int]$current.Depth + 1) })
+    }
+  }
+
+  return $markers
+}
+
+function Find-GitMarkersFast {
+  param(
+    [string]$Root,
+    [System.Collections.Generic.List[string]]$Warnings
+  )
+
+  $markers = [System.Collections.Generic.List[string]]::new()
+  $seenMarkers = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+  $rgCommand = Get-Command rg -ErrorAction SilentlyContinue
+  if ($rgCommand) {
+    $rgArgs = [System.Collections.Generic.List[string]]::new()
+    foreach ($arg in @('--files', '-uu', '--max-depth', ([string]$script:MaxGitMarkerDepth), '-g', '.git')) {
+      $rgArgs.Add($arg)
+    }
+    foreach ($name in $script:NoisyDirectoryNames) {
+      $rgArgs.Add('-g')
+      $rgArgs.Add(('!{0}/**' -f $name))
+    }
+    $rgArgs.Add($Root)
+
+    $result = Invoke-Native -FilePath 'rg' -Arguments @($rgArgs) -WorkingDirectory $Root
+    if ($result.ExitCode -eq 0 -and -not [string]::IsNullOrWhiteSpace($result.StdOut)) {
+      foreach ($marker in @($result.StdOut -split "`r?`n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })) {
+        if (Test-NoisyGitMarkerPath -Path $marker) {
+          continue
+        }
+        if ($markers.Count -ge $script:MaxGitMarkers) {
+          Add-WarningMessage -List $Warnings -Message ("Git marker discovery hit result limit under: {0}" -f $Root)
+          break
+        }
+        if ($seenMarkers.Add([string]$marker)) {
+          $markers.Add([string]$marker)
+        }
+      }
+    }
+    if ($result.ExitCode -gt 1) {
+      Add-WarningMessage -List $Warnings -Message ("rg git marker discovery failed under: {0}" -f $Root)
+    }
+  }
+
+  foreach ($marker in @(Find-GitMarkersBounded -Root $Root)) {
+    if (Test-NoisyGitMarkerPath -Path $marker) {
+      continue
+    }
+    if ($markers.Count -ge $script:MaxGitMarkers) {
+      Add-WarningMessage -List $Warnings -Message ("Git marker discovery hit result limit under: {0}" -f $Root)
+      break
+    }
+    if ($seenMarkers.Add([string]$marker)) {
+      $markers.Add([string]$marker)
+    }
+  }
+
+  return @($markers)
+}
+
+function Get-NestedGitRepositories {
+  param(
+    [string]$Root,
+    [System.Collections.Generic.List[string]]$Warnings
+  )
+
+  $repos = [System.Collections.Generic.List[string]]::new()
+  $seen = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+  if (-not (Test-SafeExpansionRoot -Path $Root)) {
+    return $repos
+  }
+
+  foreach ($marker in @(Find-GitMarkersFast -Root $Root -Warnings $Warnings)) {
+    $markerPath = if ([System.IO.Path]::IsPathRooted([string]$marker)) { [string]$marker } else { Join-Path $Root ([string]$marker) }
+    if (Test-NoisyGitMarkerPath -Path $markerPath) {
+      continue
+    }
+    $repoCandidate = Split-Path -Path $markerPath -Parent
+    if ([string]::IsNullOrWhiteSpace($repoCandidate)) {
+      continue
+    }
+
+    $resolved = Resolve-GitRepoRoot -Path $repoCandidate
+    if (-not [string]::IsNullOrWhiteSpace($resolved) -and $seen.Add($resolved)) {
+      $repos.Add($resolved)
+    }
+  }
+
+  return $repos
+}
+
+function Resolve-SessionCandidatePaths {
+  param(
+    [string]$Path,
+    [System.Collections.Generic.List[string]]$Warnings
+  )
+
+  $items = [System.Collections.Generic.List[object]]::new()
+  $repoRoot = Resolve-GitRepoRootFromPath -Path $Path
+  if (-not [string]::IsNullOrWhiteSpace($repoRoot)) {
+    $items.Add([ordered]@{ path = $repoRoot; source = 'session' })
+    return $items
+  }
+
+  if (Test-Path -LiteralPath $Path -PathType Container) {
+    if (Test-SafeExpansionRoot -Path $Path) {
+      foreach ($nestedRepo in Get-NestedGitRepositories -Root $Path -Warnings $Warnings) {
+        $items.Add([ordered]@{ path = $nestedRepo; source = 'session-expanded' })
+      }
+    }
+    else {
+      Add-WarningMessage -List $Warnings -Message ("Skipped unsafe session expansion root: {0}" -f $Path)
+    }
+  }
+
+  return $items
+}
+
 function Parse-GithubRepo {
   param([string]$RemoteUrl)
   if ([string]::IsNullOrWhiteSpace($RemoteUrl)) {
@@ -738,6 +1079,98 @@ function Parse-GithubRepo {
   }
 
   return $null
+}
+
+function Get-NativeStdOutOrNull {
+  param(
+    [string]$FilePath,
+    [string[]]$Arguments,
+    [string]$WorkingDirectory
+  )
+
+  try {
+    $result = Invoke-Native -FilePath $FilePath -Arguments $Arguments -WorkingDirectory $WorkingDirectory
+    if ($result.ExitCode -eq 0 -and -not [string]::IsNullOrWhiteSpace($result.StdOut)) {
+      return $result.StdOut.Trim()
+    }
+  }
+  catch {
+    return $null
+  }
+
+  return $null
+}
+
+function Resolve-CurrentIdentity {
+  param([string]$WorkingDirectory)
+
+  $ghLogin = Get-NativeStdOutOrNull -FilePath 'gh' -Arguments @('api', 'user', '--jq', '.login') -WorkingDirectory $WorkingDirectory
+  $ghName = Get-NativeStdOutOrNull -FilePath 'gh' -Arguments @('api', 'user', '--jq', '.name') -WorkingDirectory $WorkingDirectory
+  $gitName = Get-NativeStdOutOrNull -FilePath 'git' -Arguments @('config', '--get', 'user.name') -WorkingDirectory $WorkingDirectory
+  $gitEmail = Get-NativeStdOutOrNull -FilePath 'git' -Arguments @('config', '--get', 'user.email') -WorkingDirectory $WorkingDirectory
+
+  $tokens = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+  foreach ($token in @($ghLogin, $ghName, $gitName, $gitEmail)) {
+    if (-not [string]::IsNullOrWhiteSpace($token)) {
+      $null = $tokens.Add($token.Trim())
+    }
+  }
+
+  return [ordered]@{
+    ghLogin = $ghLogin
+    ghName = $ghName
+    gitName = $gitName
+    gitEmail = $gitEmail
+    tokens = @($tokens)
+    canFilter = $tokens.Count -gt 0
+  }
+}
+
+function Test-CommitMatchesIdentity {
+  param(
+    [object]$Commit,
+    [object]$CurrentIdentity
+  )
+
+  if (-not $CurrentIdentity -or -not $CurrentIdentity.canFilter) {
+    return $true
+  }
+
+  foreach ($candidate in @($Commit.author, $Commit.authorEmail)) {
+    if ([string]::IsNullOrWhiteSpace($candidate)) {
+      continue
+    }
+    foreach ($token in @($CurrentIdentity.tokens)) {
+      if (-not [string]::IsNullOrWhiteSpace($token) -and $candidate.Trim() -ieq ([string]$token).Trim()) {
+        return $true
+      }
+    }
+  }
+
+  return $false
+}
+
+function Test-BotAuthor {
+  param([object]$Commit)
+
+  return (($Commit.author -match '\[bot\]') -or ($Commit.authorEmail -match '\[bot\]|bot@|github-actions'))
+}
+
+function Test-ReleaseOrDeploySubject {
+  param([string]$Subject)
+
+  if ([string]::IsNullOrWhiteSpace($Subject)) { return $false }
+  return $Subject -match '(?i)\b(release|deploy)\b'
+}
+
+function Get-IssueTokensFromCommit {
+  param([object]$Commit)
+
+  $tokens = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+  foreach ($issue in @($Commit.issuesMentioned)) {
+    if (-not [string]::IsNullOrWhiteSpace($issue)) { $null = $tokens.Add([string]$issue) }
+  }
+  return $tokens
 }
 
 function Get-BranchHintsFromRefs {
@@ -770,10 +1203,11 @@ function Get-CommitData {
   param(
     [string]$RepositoryPath,
     [datetimeoffset]$FromRange,
-    [datetimeoffset]$ToRange
+    [datetimeoffset]$ToRange,
+    [object]$CurrentIdentity
   )
 
-  $format = '%H%x1f%h%x1f%aI%x1f%an%x1f%s%x1f%D%x1e'
+  $format = '%H%x1f%h%x1f%aI%x1f%an%x1f%ae%x1f%s%x1f%D%x1f__DWL_END__%x1e'
   $args = @(
     'log', '--all',
     ('--since={0}' -f $FromRange.ToString('o')),
@@ -785,14 +1219,15 @@ function Get-CommitData {
     throw ("git log failed: {0}" -f $result.StdErr)
   }
 
-  $records = [System.Collections.Generic.List[object]]::new()
+  $allRecords = [System.Collections.Generic.List[object]]::new()
   $entries = $result.StdOut -split [char]0x1e
   foreach ($entry in $entries) {
     if ([string]::IsNullOrWhiteSpace($entry)) { continue }
-    $parts = $entry.Trim() -split [char]0x1f
-    if ($parts.Count -lt 6) { continue }
-    $refs = $parts[5]
-    $subject = $parts[4]
+    $normalizedEntry = $entry.Trim("`r", "`n")
+    $parts = $normalizedEntry.Split([char]0x1f)
+    if ($parts.Count -lt 7) { continue }
+    $refs = $parts[6]
+    $subject = $parts[5]
     if ($refs -match 'refs/stash') { continue }
     if ($subject -match '^(index on|untracked files on) ') { continue }
     $issueMatches = [regex]::Matches(("{0} {1}" -f $subject, $refs), '#\d+')
@@ -802,19 +1237,45 @@ function Get-CommitData {
         $issuesMentioned.Add($issueMatch.Value)
       }
     }
-    $records.Add([ordered]@{
+    $commitRecord = [ordered]@{
       hash = $parts[0]
       short = $parts[1]
       date = $parts[2]
       author = $parts[3]
+      authorEmail = $parts[4]
       subject = $subject
       refs = $refs
       branchHints = (Get-BranchHintsFromRefs -Refs $refs)
       issuesMentioned = $issuesMentioned
-    })
+    }
+    $allRecords.Add($commitRecord)
   }
 
-  return $records
+  $currentRecords = [System.Collections.Generic.List[object]]::new()
+  $currentRecordHashes = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+  $currentIssueTokens = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+  foreach ($record in $allRecords) {
+    if (Test-CommitMatchesIdentity -Commit $record -CurrentIdentity $CurrentIdentity) {
+      $currentRecords.Add($record)
+      $null = $currentRecordHashes.Add([string]$record.hash)
+      foreach ($issueToken in Get-IssueTokensFromCommit -Commit $record) { $null = $currentIssueTokens.Add($issueToken) }
+    }
+  }
+
+  if (-not $CurrentIdentity -or -not $CurrentIdentity.canFilter) { return $allRecords }
+
+  foreach ($record in $allRecords) {
+    if (-not (Test-BotAuthor -Commit $record)) { continue }
+    if (-not (Test-ReleaseOrDeploySubject -Subject $record.subject)) { continue }
+    foreach ($issueToken in Get-IssueTokensFromCommit -Commit $record) {
+      if ($currentIssueTokens.Contains($issueToken) -and $currentRecordHashes.Add([string]$record.hash)) {
+        $currentRecords.Add($record)
+        break
+      }
+    }
+  }
+
+  return $currentRecords
 }
 
 function Get-PrDetails {
@@ -848,7 +1309,8 @@ function Test-PrMatchesCommits {
   param(
     [object[]]$Commits,
     [object]$Pr,
-    [object]$PrDetails
+    [object]$PrDetails,
+    [object]$CurrentIdentity
   )
 
   $commitHashes = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
@@ -881,6 +1343,15 @@ function Test-PrMatchesCommits {
     }
   }
 
+  $prAuthor = if ($Pr.author) { [string]$Pr.author.login } else { $null }
+  if (-not [string]::IsNullOrWhiteSpace($prAuthor) -and
+      $CurrentIdentity -and
+      -not [string]::IsNullOrWhiteSpace([string]$CurrentIdentity.ghLogin) -and
+      $prAuthor -ieq [string]$CurrentIdentity.ghLogin -and
+      @($PrDetails.commits).Count -gt 0) {
+    return $true
+  }
+
   return $false
 }
 
@@ -891,6 +1362,7 @@ function Get-GhContext {
     [datetimeoffset]$FromRange,
     [datetimeoffset]$ToRange,
     [object[]]$Commits,
+    [object]$CurrentIdentity,
     [System.Collections.Generic.List[string]]$Warnings
   )
 
@@ -936,7 +1408,7 @@ function Get-GhContext {
       continue
     }
 
-    if (-not (Test-PrMatchesCommits -Commits $Commits -Pr $pr -PrDetails $prDetails)) {
+    if (-not (Test-PrMatchesCommits -Commits $Commits -Pr $pr -PrDetails $prDetails -CurrentIdentity $CurrentIdentity)) {
       continue
     }
 
@@ -977,8 +1449,21 @@ try {
   $resolvedTo = $range.To
 
   if ($SourceMode -in @('session', 'mixed')) {
-    foreach ($path in Get-SessionDirectories -FromRange $resolvedFrom -ToRange $resolvedTo -TimezoneId $Timezone -OverrideLogRoot $OpenCodeLogRoot -OverrideStorageRoot $OpenCodeStorageRoot -Warnings $warnings) {
-      Add-PathItem -Map $repoMap -Path $path -Source 'session'
+    $unresolvedSessionPathCount = 0
+    foreach ($sessionCandidate in Get-SessionDirectories -FromRange $resolvedFrom -ToRange $resolvedTo -TimezoneId $Timezone -OverrideLogRoot $OpenCodeLogRoot -OverrideStorageRoot $OpenCodeStorageRoot -Warnings $warnings) {
+      $path = [string]$sessionCandidate.path
+      $resolvedItems = @(Resolve-SessionCandidatePaths -Path $path -Warnings $warnings)
+      if (@($resolvedItems).Count -eq 0) {
+        $unresolvedSessionPathCount++
+        continue
+      }
+
+      foreach ($item in $resolvedItems) {
+        Add-PathItem -Map $repoMap -Path $item.path -Source $item.source -SessionEvidence (Copy-SessionEvidenceForSource -Evidence $sessionCandidate.evidence -Source $item.source)
+      }
+    }
+    if ($unresolvedSessionPathCount -gt 0) {
+      Add-WarningMessage -List $warnings -Message 'Some OpenCode session paths could not be resolved to git repositories.'
     }
   }
 
@@ -1009,6 +1494,12 @@ try {
     Add-WarningMessage -List $warnings -Message 'GitHub CLI not found; PR / issue supplement unavailable.'
   }
 
+  $currentIdentity = Resolve-CurrentIdentity -WorkingDirectory $PWD.Path
+  $authorScope = if ($currentIdentity.canFilter) { 'current' } else { 'all' }
+  if (-not $currentIdentity.canFilter) {
+    Add-WarningMessage -List $warnings -Message 'Current author identity could not be resolved; author filtering was not applied.'
+  }
+
   $repos = [System.Collections.Generic.List[object]]::new()
   foreach ($item in $repoMap.Values | Sort-Object path) {
     $repoPath = $item.path
@@ -1024,6 +1515,7 @@ try {
         isGitRepo = $false
         commits = @()
         prs = @()
+        sessionEvidence = @($item.sessionEvidence)
         warnings = @('Directory is not a git repository.')
       })
       continue
@@ -1034,14 +1526,19 @@ try {
     $githubRepo = $null
 
     try {
-      $commits = Get-CommitData -RepositoryPath $repoPath -FromRange $resolvedFrom -ToRange $resolvedTo
+      $commits = Get-CommitData -RepositoryPath $repoPath -FromRange $resolvedFrom -ToRange $resolvedTo -CurrentIdentity $currentIdentity
     }
     catch {
       Add-WarningMessage -List $repoWarnings -Message $_.Exception.Message
     }
 
     if (@($commits).Count -eq 0) {
-      Add-WarningMessage -List $repoWarnings -Message 'No commits found in the selected range.'
+      if ($authorScope -eq 'current') {
+        Add-WarningMessage -List $repoWarnings -Message 'No current-user commits found in the selected range.'
+      }
+      else {
+        Add-WarningMessage -List $repoWarnings -Message 'No commits found in the selected range.'
+      }
 
       $repos.Add([ordered]@{
         name = $repoName
@@ -1049,8 +1546,9 @@ try {
         source = $sources
         isGitRepo = $true
         githubRepo = $null
-        commits = $commits
-        prs = $prs
+        commits = @($commits)
+        prs = @($prs)
+        sessionEvidence = @($item.sessionEvidence)
         warnings = $repoWarnings
       })
       continue
@@ -1062,7 +1560,7 @@ try {
     }
 
     if ($ghAvailable) {
-      $prs = Get-GhContext -RepositoryPath $repoPath -GithubRepo $githubRepo -FromRange $resolvedFrom -ToRange $resolvedTo -Commits $commits -Warnings $repoWarnings
+      $prs = Get-GhContext -RepositoryPath $repoPath -GithubRepo $githubRepo -FromRange $resolvedFrom -ToRange $resolvedTo -Commits $commits -CurrentIdentity $currentIdentity -Warnings $repoWarnings
     }
 
     $repos.Add([ordered]@{
@@ -1071,8 +1569,9 @@ try {
       source = $sources
       isGitRepo = $true
       githubRepo = $githubRepo
-      commits = $commits
-      prs = $prs
+      commits = @($commits)
+      prs = @($prs)
+      sessionEvidence = @($item.sessionEvidence)
       warnings = $repoWarnings
     })
   }
@@ -1087,6 +1586,13 @@ try {
       scanRoots = $ScanRoots
       ghAvailable = $ghAvailable
       ghViewer = $ghViewer
+      authorScope = $authorScope
+      currentIdentity = [ordered]@{
+        ghLogin = $currentIdentity.ghLogin
+        ghName = $currentIdentity.ghName
+        gitName = $currentIdentity.gitName
+        gitEmail = $currentIdentity.gitEmail
+      }
     }
     repos = $repos
     warnings = $warnings
@@ -1107,6 +1613,13 @@ catch {
       scanRoots = $ScanRoots
       ghAvailable = $false
       ghViewer = $null
+      authorScope = 'all'
+      currentIdentity = [ordered]@{
+        ghLogin = $null
+        ghName = $null
+        gitName = $null
+        gitEmail = $null
+      }
     }
     repos = @()
     warnings = $warnings
