@@ -4,7 +4,7 @@ description: Use when the user wants a daily work log, wants today's work summar
 license: MIT
 metadata:
   author: sevenflankse
-  version: 0.1.3
+  version: 0.1.4
 ---
 
 # Daily Work Log
