@@ -240,6 +240,63 @@
         "Output preserves `PR #238 [MERGED]` or equivalent low-signal PR reference.",
         "Noop PR is not described as substantive work."
       ]
+    },
+    {
+      "id": 14,
+      "prompt": "幫我整理今天工作日誌。這個專案之前可能有特殊蒐集習慣，但我現在沒講清楚。",
+      "expected_output": "先嘗試 recall daily-work-log / 工作日誌 / 日誌 / repo discovery / scan root / current cwd / 使用者提到的 repo 或 project 等偏好；若沒有命中則安靜使用預設 collector，不報錯。",
+      "files": [],
+      "expectations": [
+        "蒐集前會嘗試 recall user 或 project-specific daily-log collection preferences。",
+        "recall 查詢詞包含 `daily-work-log`、`工作日誌`、`日誌`、current cwd、user-mentioned repo/project、`scan root`、`repo discovery`。",
+        "recall 失敗或沒有結果不會阻擋 collector，也不會要求使用者補偏好。",
+        "不把 project-specific collection habits 寫回 runtime skill 文件。"
+      ],
+      "assertions": [
+        "Before collection, the agent attempts to recall user or project-specific daily-log collection preferences.",
+        "Recall search includes daily-work-log, 工作日誌, 日誌, current cwd, user-mentioned repo or project, scan root, and repo discovery terms.",
+        "Recall failure or no result does not block collection.",
+        "The behavior stays generalized rather than relying on a hard-coded project rule."
+      ]
+    },
+    {
+      "id": 15,
+      "prompt": "OpenCode session 目錄是某個大型工作資料夾，該資料夾本身不是 git repo，但底下有多個 repo 和 worktree。請整理今天工作日誌。",
+      "expected_output": "collector 在 session mode 自動安全展開 nested git repos / worktrees，優先用快速 .git marker discovery，來源可標為 session-expanded，不要求使用者手動提供 ScanRoots。",
+      "files": [],
+      "expectations": [
+        "Safe aggregate session directories are expanded into nested git repositories or worktrees.",
+        "Expansion uses fast `.git` marker discovery rather than requiring a manually supplied scan root.",
+        "Expanded session-derived repos can preserve source evidence such as `session-expanded`.",
+        "The behavior is generalized and does not depend on a hard-coded project name."
+      ],
+      "assertions": [
+        "Safe aggregate session directories are expanded into nested git repositories or worktrees.",
+        "The agent does not ask the user to manually provide ScanRoots for safe aggregate session expansion.",
+        "Expanded session evidence is treated as collector evidence rather than a guessed repo list.",
+        "The behavior is generalized and does not depend on a hard-coded project name."
+      ]
+    },
+    {
+      "id": 16,
+      "prompt": "同一個 repo 今天有我、其他同事、bot release commit；另有一個 repo 只有我今天的 session activity 但沒有 commit。請整理我的今日工作日誌。",
+      "expected_output": "預設只列目前使用者相關 commit/PR；release/deploy bot commit 只有 PR-chain 關聯才列；無本人 commit 但有 session evidence 的 repo 由 agent 根據 sessionEvidence 摘成一條短工作紀錄。若目前使用者 identity 無法解析，helper 以 warning 說明並 fallback 到 all authors。",
+      "files": [],
+      "expectations": [
+        "Default `authorScope` is `current` and output filters commits and PRs to current-user evidence.",
+        "Current-user identity matching is broad, including available git and GitHub viewer evidence.",
+        "If current identity cannot be resolved, helper warns and falls back to all-author behavior.",
+        "Release or deploy bot commits require PR-chain evidence to current-user work.",
+        "Repos with session evidence but no current-user commits are summarized as one short work-log bullet when evidence is sufficient.",
+        "The PowerShell collector does not generate natural-language summaries; the agent writes the one-line summary from `sessionEvidence`."
+      ],
+      "assertions": [
+        "Default output filters commits and PRs to current-user evidence.",
+        "Identity fallback warns before falling back to all authors when current-user identity cannot be resolved.",
+        "Release or deploy bot commits require PR-chain evidence to current-user work.",
+        "Repos with session evidence but no current-user commits are summarized as one short work-log bullet when evidence is sufficient.",
+        "The response does not claim that the collector generated the natural-language summary."
+      ]
     }
   ]
 }

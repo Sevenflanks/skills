@@ -32,7 +32,14 @@ Do not hand-assemble repo, commit, or PR data from memory. Run the helper script
 
 ## Workflow
 
-1. **Confirm scope and defaults**
+1. **Recall collection preferences before collecting**
+   - Before running the helper, try to recall user or project-specific daily-log collection preferences.
+   - Search terms should include `daily-work-log`, `工作日誌`, `日誌`, the current working directory, user-mentioned repo / project names, `scan root`, and `repo discovery`.
+   - If useful context is found, translate it into helper parameters or final-summary rules.
+   - If recall is unavailable, fails, or returns no useful result, stay silent and continue with the default helper workflow.
+   - Do not add project-specific rules to this skill; project-specific collection habits belong in memory.
+
+2. **Confirm scope and defaults**
    - If the user does not specify a clear time range, default range is today in the configured timezone.
    - This default is about missing explicit time range, not about auto-triggering on completely blank input.
    - The helper defaults to `Asia/Taipei`; override `From`, `To`, or `Timezone` when the user needs another range or timezone.
@@ -41,14 +48,21 @@ Do not hand-assemble repo, commit, or PR data from memory. Run the helper script
    - In `session` mode, the helper asks `opencode db --format json` for session evidence before reading any file-based OpenCode sources.
    - If the DB command is unavailable, fails, or returns invalid JSON, fallback order is DB, then `storage/directory-readme`, then OpenCode logs.
    - If the DB query succeeds and returns empty `[]`, treat that as authoritative for session discovery and do not fallback to file-based sources.
+   - Default `authorScope` is `current`; broad identity matching uses current-user git config and GitHub viewer evidence when available.
+   - If the current identity cannot be resolved, the helper warns and falls back to all authors instead of silently pretending current-user filtering happened.
 
-2. **Run the bundled collector**
+3. **Run the bundled collector**
    - Use `skills/daily-work-log/scripts/collect-daily-work-log.ps1`.
    - Keep the script output pure JSON on `stdout`.
    - Do not append human text, markdown, or logging noise to `stdout`.
    - In `session` mode, treat session-derived repo discovery as including both session-start directories and touched external repo evidence that can be resolved to git repo or worktree roots from `permission=external_directory` or `permission=read` log entries.
+   - In `session` mode, if a session path is a safe aggregate directory rather than a git repo, the collector expands nested git repos / worktrees using fast `.git` marker discovery.
+   - The default author scope is the current user. Commits and PRs from other authors are excluded unless they are release / deploy bot commits with PR-chain evidence back to current-user work.
+   - If a repo has session evidence but no current-user commits, keep it in the final report as one short agent-written session summary when evidence is sufficient; do not invent details.
+   - The collector preserves session-derived evidence with source `session-expanded` when a safe aggregate directory contributes nested repo / worktree matches.
+   - The PowerShell collector does not generate natural-language summaries. The agent writes any one-line session summary from `sessionEvidence`.
 
-3. **Inspect collection gaps before writing the summary**
+4. **Inspect collection gaps before writing the summary**
    - Check `meta.ghAvailable` and `meta.ghViewer`.
    - If GitHub CLI is unavailable or not authenticated, stop before writing the daily log. Tell the user to install `gh` or run `gh auth login`, then rerun collection.
    - Continue without GitHub evidence only when the user strongly insists on a degraded report. In that case, state the PR / issue supplement gap explicitly in the final notes.
@@ -57,7 +71,7 @@ Do not hand-assemble repo, commit, or PR data from memory. Run the helper script
    - Only include paths that resolve to git repo or worktree roots. Surface skipped or unresolved paths through warnings or final notes.
    - Treat PR supplement as relevant only when it can be tied back to the day's commit / branch / hash evidence; do not attach every updated PR from the same repo.
 
-4. **Summarize by GitHub repo name**
+5. **Summarize by GitHub repo name**
    - Group by GitHub repo name from `repos[].githubRepo` first, such as `owner/repo`.
    - If `githubRepo` is unavailable for a repo, fall back to `repos[].name` repo folder name.
    - Never use absolute paths as final group headings.
@@ -68,7 +82,7 @@ Do not hand-assemble repo, commit, or PR data from memory. Run the helper script
    - If a bullet only makes sense together with neighboring bullets, merge them into one clearer sentence or drop the weaker fragment.
    - Keep separate bullets when two changes are materially different.
 
-5. **State data gaps honestly**
+6. **State data gaps honestly**
    - If the user strongly insisted on continuing without available/authenticated `gh`, explicitly say PR / issue links were not supplemented.
    - If a repo had session activity but no commits, say so.
    - If a directory is not a git repo, say so instead of dropping it silently.
@@ -95,15 +109,15 @@ pwsh -NoProfile -File "<path-to-skill>\scripts\collect-daily-work-log.ps1" `
 
 Treat collector JSON as source of truth:
 
-- `meta`: `generatedAt`, `timezone`, `from`, `to`, `sourceMode`, `scanRoots`, `ghAvailable`, `ghViewer`.
+- `meta`: `generatedAt`, `timezone`, `from`, `to`, `sourceMode`, `scanRoots`, `ghAvailable`, `ghViewer`, `authorScope`, `currentIdentity`.
 - `warnings` / `errors`: global evidence gaps or failures.
-- `repos[]`: `name`, `path`, `source`, `isGitRepo`, optional `githubRepo`, `commits[]`, `prs[]`, `warnings[]`.
-- `commits[]`: commit evidence from `git log --all`; ignore stash noise before summarizing.
+- `repos[]`: `name`, `path`, `source`, `isGitRepo`, optional `githubRepo`, optional `sessionEvidence`, `commits[]`, `prs[]`, `warnings[]`.
+- `commits[]`: commit evidence from `git log --all`, including `authorEmail`; ignore stash noise before summarizing.
 - `prs[]`: PR evidence tied to commit / branch / hash relevance; preserve PR and issue numbers when useful.
 
 ## Optional evidence compaction
 
-For high-volume evidence, pipe collector JSON through `scripts/format-daily-work-log-evidence.ps1`. It reads collector JSON from stdin, emits pure JSON, preserves `meta`, `warnings`, `errors`, and returns compact repo evidence: `name`, `githubRepo`, `commitCount`, `shownCommits`, `prs`, `lowSignalPrRefs`, `warnings`.
+For high-volume evidence, pipe collector JSON through `scripts/format-daily-work-log-evidence.ps1`. It reads collector JSON from stdin, emits pure JSON, preserves `meta`, `warnings`, `errors`, and returns compact repo evidence: `name`, `githubRepo`, `commitCount`, `shownCommits`, `prs`, `lowSignalPrRefs`, `sessionEvidence`, `warnings`.
 
 ```powershell
 pwsh -NoProfile -File "<path-to-skill>\scripts\collect-daily-work-log.ps1" |
@@ -129,7 +143,10 @@ When a repo has many commits, summarize themes instead of dumping commits. Use c
 - Stash noise such as `refs/stash`, `index on ...`, or `untracked files on ...` is excluded from summary-worthy commits.
 - GitHub supplement is required by default. If `gh` is unavailable or unauthenticated, stop and recommend installing GitHub CLI or running `gh auth login` unless the user strongly insists on continuing without GitHub evidence.
 - GitHub supplement is filtered by commit / branch / hash relevance; do not attach unrelated updated PRs from the same repo.
+- Release / deploy bot commits are only included when PR-chain evidence ties them back to current-user work.
 - Missing GitHub supplement is reported as a warning, not silently ignored.
+- If no current-user identity can be resolved, warn that `authorScope` fell back to `all` and summarize all authors from the collected evidence.
+- Repos with session evidence but no current-user commits remain eligible for one short agent-written session summary when the evidence is sufficient.
 - Final output is grouped by `repos[].githubRepo` GitHub repo name first, with `repos[].name` folder name as fallback only when GitHub repo name is unavailable.
 - Final output never uses absolute paths as group headings.
 - Each repo defaults to 2-5 bullets unless there is a strong reason to exceed that.
