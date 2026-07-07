@@ -1,6 +1,6 @@
 ---
 name: code-intent-comments
-description: Use when adding or changing code with class responsibilities, core business logic, unusual decisions, user CRs, compatibility, legacy behavior, or high-risk areas where future maintainers may need plain-language context, even if the user did not explicitly ask for comments.
+description: Use during development or code review when editing or reviewing touched code that implements spec/SRS/design-plan decisions involving business rules, compatibility behavior, monetary reconciliation, state transitions, approval/permission rules, DB write boundaries, legacy/new flow coexistence, framework workarounds, user-confirmed CR behavior, high-risk invariants, failure-handling behavior, or nearby unclear comments.
 license: MIT
 metadata:
   author: sevenflankse
@@ -27,6 +27,8 @@ metadata:
 - 併發、鎖、同步點、長時間任務、非阻斷失敗策略。
 - DB 寫入、排序穩定性、下游欄位污染、資料來源不一致。
 - 既有註解不足、模糊、太口語，且位置在本次 touched code 附近。
+
+Skill 觸發只代表需要評估 touched code 是否值得補意圖型註解。不要因為 skill 被載入就預設要加註解；若 code、命名、測試已能說清楚原因與限制，就不要新增註解。
 
 純 typo、格式調整、明顯 config rename，或名稱與測試已經能說清楚的程式碼，不需要使用這個 skill。
 
