@@ -69,6 +69,66 @@
         "保留 DB 或 cache 等常見技術詞即可",
         "避免 perf、opt、proc、w/ 這類不必要縮寫"
       ]
+    },
+    {
+      "id": 7,
+      "prompt": "你正在依設計調整 Java 獎勵金額對帳邏輯：RewardResult 已出金額要和 pending 未攤分金額一起維持總額守恆，最後一筆承接 rounding 尾差。使用者沒有要求你加註解，請完成這個開發判斷。",
+      "expected_output": "應進入 comment value decision gate；若 touched code 的金額守恆或尾差承接不是由命名與測試完整表達，應在該區塊補白話註解說明總額守恆、pending/paid 對帳與不可簡化原因；不得逐行翻譯加總或 if 判斷。",
+      "files": [],
+      "expectations": [
+        "有明確判斷是否需要意圖型註解，而不是因為使用者沒說加註解就完全忽略",
+        "若建議補註解，內容說明總額守恆或 pending/paid 對帳原因",
+        "若建議補註解，內容說明 rounding 尾差不可被簡化掉的原因",
+        "沒有逐行翻譯加總或 if 判斷"
+      ]
+    },
+    {
+      "id": 8,
+      "prompt": "你正在依使用者確認過的 CR 修改簽核設定：MODULE 可以不選；但如果有選 MODULE，就仍要驗證角色與權限。請判斷這段 touched code 是否需要留下維護脈絡。",
+      "expected_output": "應判斷這是 user-confirmed CR 與 approval/permission rule；若程式邏輯容易被誤簡化成完全不驗證 MODULE，應補精簡註解說明 optional 只代表可不選，有選仍要驗證角色與權限。不得加入低資訊流程標籤。",
+      "files": [],
+      "expectations": [
+        "辨識 MODULE optional 與 selected-then-validate 是不同規則",
+        "註解或建議說明使用者確認過的行為",
+        "註解或建議說明有選 MODULE 仍要驗證角色與權限",
+        "沒有加入 初始化、檢核、呼叫商業邏輯 這類低資訊註解"
+      ]
+    },
+    {
+      "id": 9,
+      "prompt": "你正在 review 一個 PR diff。touched code 中新增 legacy JSP redirect 到 Nuxt login 的 context-path 處理；同一檔案遠處有一些口語註解但不在本次 diff。請只針對這次 review 判斷是否需要提出 intent comment 建議。",
+      "expected_output": "應只針對 touched redirect/context-path workaround 評估是否需要 intent comment，說明 legacy/new flow coexistence 或 framework routing 限制；不應要求整理遠處無關註解，也不應把 review 階段誤解成直接修改全檔。",
+      "files": [],
+      "expectations": [
+        "只聚焦 touched code 的 comment gap",
+        "提到 legacy/new flow coexistence 或 framework routing 限制",
+        "沒有要求整理遠處無關註解",
+        "沒有把 review 階段誤解成必須直接改 code"
+      ]
+    },
+    {
+      "id": 10,
+      "prompt": "你正在幫我 review 一份 SRS，內容描述金額對帳、狀態轉換與權限規則，但目前還沒有要修改或 review touched code。請判斷此階段是否要要求補程式註解。",
+      "expected_output": "應判斷此階段只需要保存決策脈絡，不要求補程式註解；真正是否補 intent comment 應延後到 development 或 code review touched code 時決定。",
+      "files": [],
+      "expectations": [
+        "明確說明 SRS/planning-only 階段不要求補程式註解",
+        "保留金額、狀態、權限等決策脈絡供後續 development 使用",
+        "指出 development 或 code review touched code 時才判斷是否補註解",
+        "沒有產生任何具體程式註解"
+      ]
+    },
+    {
+      "id": 11,
+      "prompt": "你修改一個 Java enum transition test，method 名稱是 shouldRejectCancelledToApprovedTransition，enum 名稱與測試名稱已完整說明狀態轉換規則，沒有舊資料相容、CR 或 workaround。請判斷是否需要補註解。",
+      "expected_output": "應判斷不需要新增註解；雖然 prompt 含有 state transition 這類 trigger 詞，但 code、命名與測試已能說清楚 intent，不應因高風險詞彙出現就補低資訊註解。",
+      "files": [],
+      "expectations": [
+        "明確判斷不需要新增註解",
+        "說明 method name、enum name 或 test name 已表達規則",
+        "沒有因 state transition 詞彙而強迫補註解",
+        "沒有新增低資訊註解"
+      ]
     }
   ]
 }
