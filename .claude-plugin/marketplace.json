@@ -49,8 +49,8 @@
     {
       "name": "playwright-server-lifecycle",
       "source": "skills/playwright-server-lifecycle",
-      "description": "管理 Playwright/browser 驗證所需的本機 dev server 背景啟動、PID/log、ready check 與 cleanup。",
-      "version": "0.1.0",
+      "description": "管理 Playwright / browser 本機 listener 與 temporary HTTP servers 的分類、process ownership tree、completed / passed 分離、失敗安全 cleanup、port release 與 callback。",
+      "version": "0.1.1",
       "keywords": [
         "playwright",
         "browser",
@@ -58,7 +58,12 @@
         "powershell",
         "windows",
         "opencode",
-        "cleanup"
+        "cleanup",
+        "listener",
+        "process-ownership",
+        "recovery",
+        "temporary-http-server",
+        "callback"
       ]
     }
   ]
