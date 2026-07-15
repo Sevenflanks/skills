@@ -31,7 +31,7 @@ browser 操作完成不代表驗證通過。報告必須分開列出 `completed`
 
 ### 3. 在 `finally` 中清理並回呼
 
-無論 readiness、browser 驗證或 cleanup 是否失敗，都先關閉 browser。預設 cleanup 會在每次終止前重新比對 creation time、image path、command line 與 parent chain，只回收仍可證明屬於本次的 launcher、wrapper 與 listener；PID 相同但 identity 不符時不得終止。若使用者明確要求 keep-running，則保留整個本次 tree，不宣稱 cleanup 或 port release。最後回呼必須包含 browser 結果、錯誤分類、process 最終或保留狀態、適用的 port release、後續 cleanup 責任與未解決項目。
+無論 readiness、browser 驗證或 cleanup 是否失敗，都先關閉 browser。預設 cleanup 會取得同一個 identity-bound OS／.NET process handle，透過該 handle 比對 creation time、image path、command line 與 parent chain，再以同一 handle 終止；不得驗證後釋放 handle，再重新用 PID 終止。PID 相同但 identity 不符，或無法保留同一 handle 時，不得自動終止。若使用者明確要求 keep-running，則保留整個本次 tree，不宣稱 cleanup 或 port release。最後回呼必須包含 browser 結果、錯誤分類、process 最終或保留狀態、適用的 port release、後續 cleanup 責任與未解決項目。
 
 ## 檔案
 

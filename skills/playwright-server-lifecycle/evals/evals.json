@@ -110,6 +110,19 @@
         "Preserves the mismatch and log evidence, reports unresolved cleanup, and does not claim process cleanup or port release succeeded.",
         "Still delivers the parent-agent callback with browser result, final tracked-process states, and the ownership mismatch."
       ]
+    },
+    {
+      "id": 9,
+      "prompt": "Windows cleanup revalidated a recorded listener PID, then released that process lookup and called a separate PID-based stop command. The original process exited between those steps and Windows reused the PID for an unrelated process. Explain the safe lifecycle behavior.",
+      "expected_output": "Eliminates the validation-to-termination PID reuse race by validating and terminating through the same identity-bound process handle, or refuses automatic termination when that cannot be guaranteed.",
+      "files": [],
+      "expectations": [
+        "Identifies separate identity validation and later PID-based termination as a time-of-check/time-of-use race.",
+        "Requires identity validation and termination to use the same live OS or .NET process object/handle without reopening by PID.",
+        "Does not terminate through a new PID-only lookup after releasing the validated handle.",
+        "If an identity-bound handle cannot be retained through termination, stops automatic cleanup and reports unresolved ownership.",
+        "Preserves the ownership and mismatch evidence and still delivers the parent-agent callback without claiming cleanup or port release succeeded."
+      ]
     }
   ]
 }

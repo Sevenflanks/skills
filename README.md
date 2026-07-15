@@ -69,7 +69,7 @@
 - temporary HTTP server，例如 `python -m http.server`
 - static viewer、preview server、Tomcat 或其他本機 listener
 
-Browser 報告會分開呈現 `completed` 與 `passed`，並區分 blocking 與 non-blocking errors。無論任何步驟是否失敗，`finally` 都會先重驗 process identity，再清理本次可證明 ownership 的 tree；若使用者明確要求 keep-running，則保留 listener 並交付後續 cleanup 證據。兩條路徑都會保留 callback 與無法安全回收時的 evidence。
+Browser 報告會分開呈現 `completed` 與 `passed`，並區分 blocking 與 non-blocking errors。無論任何步驟是否失敗，`finally` 都會透過同一個 identity-bound process handle 完成驗證與終止，避免 PID reuse 競態；若使用者明確要求 keep-running，則保留 listener 並交付後續 cleanup 證據。兩條路徑都會保留 callback 與無法安全回收時的 evidence。
 
 ## 倉庫結構
 
