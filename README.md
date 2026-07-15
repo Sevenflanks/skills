@@ -11,7 +11,7 @@
 | `code-intent-comments` | `0.1.0` | stable | 引導 agent 以白話繁中撰寫高價值程式註解，補足 class 責任、核心邏輯、CR、相容性與高風險脈絡。 | [`skills/code-intent-comments/`](skills/code-intent-comments/) |
 | `daily-work-log` | `0.1.4` | stable | 從 OpenCode session、跨 branch git commit 與 GitHub PR / issue 關聯蒐集證據，整理成每日工作日誌。 | [`skills/daily-work-log/`](skills/daily-work-log/) |
 | `gh-body-file` | `0.1.1` | stable | 在 Windows、PowerShell、OpenCode shell 環境中，安全使用 GitHub CLI 支援 `--body-file` 的指令。 | [`skills/gh-body-file/`](skills/gh-body-file/) |
-| `playwright-server-lifecycle` | `0.1.0` | stable | 管理 Playwright/browser 驗證所需的本機 dev server 背景啟動、PID/log、ready check 與 cleanup。 | [`skills/playwright-server-lifecycle/`](skills/playwright-server-lifecycle/) |
+| `playwright-server-lifecycle` | `0.1.1` | stable | 管理 Playwright / browser 本機 listener 的分類、process ownership tree、completed / passed 分離、失敗安全 cleanup、port release 與 callback。 | [`skills/playwright-server-lifecycle/`](skills/playwright-server-lifecycle/) |
 
 完整 catalog 可見 [`skills.json`](skills.json)。若需要 Claude plugin-style metadata，可見 [`.claude-plugin/marketplace.json`](.claude-plugin/marketplace.json)。新增、調整或移除 skill 時，請同步更新 catalog 並執行驗證。
 
@@ -61,18 +61,15 @@
 
 ## playwright-server-lifecycle
 
-`playwright-server-lifecycle` 會引導 agent 在使用 Playwright、browser automation、截圖或 UI smoke test 前，把本機 dev server 當成需要 lifecycle 管理的資源。它要求先檢查 port、用背景／detached process 啟動長時間 server、導出 stdout/stderr log、記錄 PID/port、以 ready check 驗證服務可用，並在測試完成後停止本次啟動的 server、確認 port 已釋放。
+`playwright-server-lifecycle` 會引導 agent 在使用 Playwright、browser automation、截圖或 UI smoke test 前，將任何本機 listener 視為需要 lifecycle 管理的資源，包含 temporary HTTP server、static viewer、dev server 與 preview server。它先分類目標，self-contained static HTML 優先用 `file://`，需要 listener 時才以 detached process 啟動，並記錄 launcher、wrapper、listener、port 與 logs 的 process ownership tree。
 
 適用於容易卡住 agent session 的情境，例如：
 
-- `pnpm dev`
-- `npm run dev`
-- `nuxt dev`
-- `vite`
-- `next dev`
-- Tomcat 或其他長時間 web server
+- `pnpm dev`、`npm run dev`、`nuxt dev`、`vite` 或 `next dev`
+- temporary HTTP server，例如 `python -m http.server`
+- static viewer、preview server、Tomcat 或其他本機 listener
 
-此 skill 特別針對 Windows／PowerShell／OpenCode shell 中以前景模式啟動 dev server 造成 session 卡住，或用 timeout 假裝背景啟動後留下殘留 process 的問題。
+Browser 報告會分開呈現 `completed` 與 `passed`，並區分 blocking 與 non-blocking errors。無論任何步驟是否失敗，`finally` 都會透過同一個 identity-bound process handle 完成驗證與終止，避免 PID reuse 競態；若使用者明確要求 keep-running，則保留 listener 並交付後續 cleanup 證據。兩條路徑都會保留 callback 與無法安全回收時的 evidence。
 
 ## 倉庫結構
 

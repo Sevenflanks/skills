@@ -1,34 +1,37 @@
 # playwright-server-lifecycle
 
-`playwright-server-lifecycle` 是一個 browser / Playwright 驗證輔助 skill，用來避免 agent 為了看 UI 而以前景模式啟動 dev server，導致 session 卡住或留下殘留 process。
+`playwright-server-lifecycle` 是一個 browser / Playwright 驗證輔助 skill，管理本機 listener 的分類、process ownership tree、browser 結果與失敗安全的 cleanup，避免 agent session 卡住或留下殘留 process。
 
 ## 解決的問題
 
-在 Windows、PowerShell、OpenCode shell 或類似環境中，直接執行 `pnpm dev`、`npm run dev`、`nuxt dev`、`vite`、Tomcat 等長時間 server，常會阻塞 agent session。即使用 timeout 中斷，也可能留下不清楚的 port / process 狀態。
+在 Windows、PowerShell、OpenCode shell 或類似環境中，任何本機 listener 都可能阻塞 agent session 或留下不清楚的 process 狀態，包含 temporary HTTP server、static viewer、dev server 與 preview server。以前景方式執行或以 timeout 假裝背景執行，都不能視為安全的啟動方式。
 
-此 skill 會要求 agent 將 server 視為需要 lifecycle 管理的資源：啟動前檢查、背景啟動、記錄 PID/port/log、用 Playwright 驗證、結束後停止並確認 port 釋放。
+此 skill 以三個閘門管理本次執行的資源：先分類 listener，再分開回報 browser 是否完成與是否通過，最後在 `finally` 中回收可證明屬於本次的 ownership tree 並確認 port 已釋放。
 
 ## 使用時機
 
 當任務需要：
 
 - 使用 Playwright 或 browser automation 驗證 UI。
-- 啟動本機 dev server 才能截圖、檢查登入頁或做 smoke test。
+- 啟動本機 listener、temporary HTTP server、static viewer、dev server 或 preview server 才能截圖、檢查登入頁或做 smoke test。
 - 在 Windows／PowerShell／OpenCode shell 中操作長時間前景命令。
-- 管理 server 的 stdout/stderr log、PID、port 與 cleanup。
+- 管理 launcher、wrapper、listener 的 PID、port、stdout / stderr log、process ownership 與 cleanup recovery。
 
 不適用於有限時間會自行結束的命令，例如 `pnpm build`、`pnpm test`、`mvn test`。
 
-## 主要流程
+## 三個閘門
 
-1. 啟動前先確認目標 port 是否已被占用。
-2. 若需啟動 server，使用背景／detached process，不要直接以前景執行 dev server。
-3. 將 stdout/stderr 導到 log 檔，並記錄 launcher PID 與 listener PID/port。
-4. 以 port 或 HTTP endpoint 輪詢 ready 狀態，不用固定 sleep 猜測。
-5. 用 Playwright 驗證 URL、標題、可見文字、console/network 狀態或截圖。
-6. 關閉 browser/page。
-7. 停止本次啟動的 server，確認 port 已釋放。
-8. 清理暫存 screenshot、MCP output 或測試 log，除非使用者要求保留。
+### 1. 建立 listener 前先分類
+
+先判斷目標是否真的需要 listener。self-contained static HTML 優先用 `file://` 直接開啟。需要 listener 時，先檢查目標 port 與既有 owner，只有符合使用者意圖時才重用外部 process，絕不納入 cleanup。以 detached 方式啟動本次 listener，並記錄命令、launcher、wrapper、listener、port、process creation time、image path、command line、parent chain 與 log，建立本次的 ownership tree。若使用者要求保留 listener，也要先記錄 keep-running 決策與後續 cleanup 責任。
+
+### 2. 分開回報 browser 結果
+
+browser 操作完成不代表驗證通過。報告必須分開列出 `completed` 與 `passed`，並將 console、page 與 network errors 分為 blocking 和 non-blocking。阻斷成功條件的錯誤會使 `passed=false`，即使導覽、互動或截圖已完成。
+
+### 3. 在 `finally` 中清理並回呼
+
+無論 readiness、browser 驗證或 cleanup 是否失敗，都先關閉 browser。預設 cleanup 會取得同一個 identity-bound OS／.NET process handle，透過該 handle 比對 creation time、image path、command line 與 parent chain，再以同一 handle 終止；不得驗證後釋放 handle，再重新用 PID 終止。PID 相同但 identity 不符，或無法保留同一 handle 時，不得自動終止。若使用者明確要求 keep-running，則保留整個本次 tree，不宣稱 cleanup 或 port release。最後回呼必須包含 browser 結果、錯誤分類、process 最終或保留狀態、適用的 port release、後續 cleanup 責任與未解決項目。
 
 ## 檔案
 

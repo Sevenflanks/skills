@@ -1,140 +1,57 @@
 ---
 name: playwright-server-lifecycle
-description: Use when Playwright or browser automation needs a local dev server, UI preview, screenshot target, login-page check, or smoke test server, especially on Windows/PowerShell/OpenCode where foreground `pnpm dev`, Vite, Nuxt, Next, Tomcat, or preview commands can hang/freeze the agent session, timeout leaves zombie processes, or PID/port/log cleanup is required.
+description: Use when Playwright or browser automation needs a local listener, temporary HTTP server, static viewer, dev or preview server, or Windows/PowerShell/OpenCode work shows hangs, zombies, unclear process ownership, cleanup failures, or missing callbacks.
 license: MIT
 metadata:
   author: sevenflankse
-  version: 0.1.0
+  version: 0.1.1
 ---
 
 # Playwright Server Lifecycle
 
-This skill keeps browser verification from freezing the agent session or leaving zombie dev servers. Treat a local server as a resource with a lifecycle: discover, start in the background, verify readiness, use Playwright, then stop and prove the port is released.
+Treat every listener created for browser work as a current-run resource. Record its ownership before browser work, report browser completion separately from success, then reconcile only that recorded tree.
 
-## When to use
+## Gate 1: Classify Before Creating a Listener
 
-Use this skill when:
+Classify the target before running any command that could listen, including dev servers, preview servers, temporary HTTP servers, `python -m http.server`, `py -3.11 -m http.server`, and static viewers.
 
-- A task needs Playwright, browser automation, screenshots, or UI smoke testing and the app is not already running.
-- You are about to run `pnpm dev`, `npm run dev`, `vite`, `nuxt dev`, `next dev`, `preview`, Tomcat, or another long-running server.
-- The shell is Windows, PowerShell, OpenCode, or another environment where foreground servers can block the session.
-- You need to report server PID/port/logs or clean up a server you started.
+- For self-contained static HTML, navigate Playwright to `file://` first. Do not create a server when the file, its inline assets, and the requested interaction work directly.
+- For a listener, inspect the target port and classify any existing owner as external or current-run. Reuse an external owner only when user intent permits it. Never terminate it, include it in cleanup, or start a duplicate listener on its port.
+- Never run a listener in the foreground or treat a timeout as background execution. Start only with a detached launcher, redirect logs, then prove readiness by port or HTTP condition.
+- Create a current-run ownership record before browser work: command shape, launcher PID, observed wrapper PID or PIDs, listener PID and port, process creation times, image paths, command lines, parent-chain identity, log paths, and the record location. `powershell -> py.exe -> python.exe` is an example tree shape, not a fixed command or PID list.
+- If the user explicitly asks to keep a current-run listener alive after browser automation, record that decision and who owns later cleanup before browser work starts. This preserves the listener; it does not turn it into an external owner.
 
-Do not use this skill when:
-
-- You are only running finite commands such as `pnpm build`, `pnpm test`, or `mvn test`.
-- The user explicitly asks to keep a server running after the task. Still record PID, port, logs, and the reason.
-
-## Core rule
-
-Never start a long-running server in the foreground. Do not run `pnpm dev` and rely on timeout to escape. A timeout is not background execution; it often leaves unclear process state.
-
-## Workflow
-
-1. **Inspect existing state**
-   - Check whether the expected port is already listening.
-   - If it is already listening, identify the owner and decide whether to reuse it instead of starting a duplicate.
-
-2. **Prepare logs and PID tracking**
-   - Choose stdout/stderr log files in the app directory or another task-local location.
-   - If you start a server, capture both the launcher PID and the actual listening PID/port.
-   - Prefer writing a PID file when the repo has a standard location for it.
-
-3. **Start detached from the agent shell**
-   - On Windows/PowerShell, start a separate hidden PowerShell process and run the dev server inside it.
-   - Redirect stdout and stderr to files.
-   - Avoid `Start-Process pnpm -RedirectStandardOutput ...` for Node package-manager shims when it has not been proven in that environment; launching a child PowerShell is usually safer because the agent shell returns after spawning the OS-owned process.
-
-4. **Wait by condition, not hope**
-   - Poll the target port or HTTP endpoint until ready.
-   - If readiness fails, read the logs before changing commands.
-
-5. **Run Playwright/browser verification**
-   - Navigate to the target URL.
-   - Capture objective evidence: URL, title, accessibility snapshot text, console errors/warnings, network failures, or screenshot path when useful.
-
-6. **Always clean up what you started**
-   - Close the browser/page.
-   - Stop the listening process that belongs to this run.
-   - Confirm the target port no longer listens.
-   - Remove temporary screenshots or MCP artifacts unless the user asked to keep them.
-
-## Windows / PowerShell pattern
-
-Adapt paths, port, and logs to the repo. This example starts a Nuxt UI server from the repo root.
+One concise Windows pattern is a detached PowerShell wrapper, not the listener in the agent shell:
 
 ```powershell
-# 1. Check existing listener first
-Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue |
-  Select-Object LocalAddress, LocalPort, OwningProcess
-
-# 2. Start in a detached hidden PowerShell; do not run pnpm dev directly in the agent shell
-$arg = "-NoProfile -ExecutionPolicy Bypass -Command Set-Location 'C:\path\to\repo\ui'; pnpm dev 1> .playwright-ui-dev.log 2> .playwright-ui-dev.err.log"
-$launcher = Start-Process powershell -ArgumentList $arg -WindowStyle Hidden -PassThru
-
-# 3. Wait for the actual listener
-$listener = $null
-for ($i = 0; $i -lt 80; $i++) {
-  Start-Sleep -Milliseconds 250
-  $listener = Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
-  if ($listener) { break }
-}
-
-[pscustomobject]@{
-  LauncherPid = $launcher.Id
-  PortReady = [bool]$listener
-  Port = $(if ($listener) { $listener.LocalPort } else { $null })
-  OwningProcess = $(if ($listener) { $listener.OwningProcess } else { $null })
-  StdoutLog = 'ui\.playwright-ui-dev.log'
-  StderrLog = 'ui\.playwright-ui-dev.err.log'
-}
+$launcher = Start-Process powershell -ArgumentList "-NoProfile -Command Set-Location 'C:\path\to\app'; py -3.11 -m http.server 3917 --bind 127.0.0.1 1> .server.log 2> .server.err.log" -WindowStyle Hidden -PassThru
 ```
 
-Stop only the server you started or the listener you positively identified for this run:
+**Completion criterion:** either `file://` is selected with no listener needed, or a detached listener strategy records its expected port, any existing-owner and keep-running decisions, command, launcher, wrappers, listener, process identities, logs, and current-run ownership before browser work starts.
 
-```powershell
-$listener = Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
-if ($listener) {
-  Stop-Process -Id $listener.OwningProcess -Force -ErrorAction SilentlyContinue
-}
-Start-Sleep -Seconds 1
-Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue
-```
+## Gate 2: Report Browser Completion and Result Separately
 
-## Required checks
+Define success criteria before navigation. Capture URL, visible or accessibility evidence, screenshot when requested, console errors, page errors, and network failures.
 
-Before Playwright:
+Report two independent fields:
 
-- Target port checked before starting.
-- Server started with a detached/background mechanism, not foreground plus timeout.
-- stdout and stderr are redirected to log files.
-- Readiness is proven by port or HTTP check.
+- `completed`: the requested navigation, interaction, screenshot, or check finished.
+- `passed`: the evidence met the task's success criteria.
 
-After Playwright:
+Classify every error as `blocking` or `non-blocking`. A blocking error changes `passed` to `false` even if `completed` is `true`. For example, navigation, clicking Save, and a screenshot can finish while `null.toFixed()` blocks page behavior, so report `completed=true`, `passed=false`, and list that error as blocking. A third-party-cookie warning that does not affect the requested title or visible balance is non-blocking and may leave `passed=true`, but still belongs in the report.
 
-- Browser/page is closed.
-- Server started by the agent is stopped unless the user explicitly asks to keep it.
-- Target port release is verified.
-- Final report includes command shape, URL reached, evidence observed, PID/port/logs, cleanup result, and any non-blocking warnings.
+**Completion criterion:** browser evidence contains `completed`, `passed`, separate blocking and non-blocking error lists, and URL, screen, or accessibility evidence sufficient to judge each success criterion.
 
-## Common mistakes
+## Gate 3: Cleanup and Callback in Finally
 
-| Mistake | Why it is unsafe | Correct behavior |
-| --- | --- | --- |
-| Running `pnpm dev` directly | Blocks the session indefinitely | Spawn a detached/background process |
-| Using timeout as escape hatch | May leave unclear process state | Start background, then stop explicitly |
-| Starting a duplicate server | Pollutes ports and confuses verification | Check existing listener first |
-| Killing by port without ownership thinking | Can stop a server the user wanted kept | Track PID or only stop this run's listener |
-| Ignoring logs when readiness fails | Leads to guessing | Read stdout/stderr before changing approach |
-| Leaving screenshots/MCP artifacts | Pollutes working tree | Clean artifacts unless requested |
+Put browser close, the cleanup-or-preserve decision, current-run reconciliation, port verification, and the parent-agent callback in `finally`. Run them after every outcome, including readiness failure, blocking browser failure, and cleanup failure.
 
-## Report template
+- Close the page and browser first.
+- If the user explicitly requested keep-running, preserve the recorded current-run launcher, wrappers, and listener. Report their live identities, PID/port/log evidence, and later-cleanup owner; do not terminate them or claim cleanup or port release.
+- Otherwise, reconcile only the recorded current-run launcher, wrapper, and listener tree. Acquire one live OS or .NET process object/handle for the candidate, validate its creation time, image path, command line, and parent chain against the ownership record, then terminate through that same identity-bound handle. Do not release the validated handle and reopen by PID for termination; that creates a time-of-check/time-of-use PID reuse race. Any identity mismatch, exited handle, or inability to retain the same handle through termination means ownership is unproven: do not terminate that process. If the listener exits first, recover recorded wrappers or launchers that remain as proven current-run orphans. If the launcher exits first, recover the recorded listener. Do not kill by name, PID alone, port-only lookup, or broad scan.
+- Record the final state of every tracked launcher, wrapper, and listener. Verify the target port is released after reconciliation.
+- If ownership cannot be proven or the port remains occupied, stop automatic termination. Preserve command, owner, PID, port, and log evidence, then report the unresolved state without claiming cleanup succeeded.
 
-```text
-Server lifecycle:
-- Pre-check: <port state>
-- Started: <command shape>, launcher PID <pid>, listener PID/port <pid>/<port>, logs <paths>
-- Browser evidence: <URL/title/key visible text/console/network summary>
-- Cleanup: <browser closed, server stopped, port released>
-- Remaining artifacts: <none or paths intentionally kept>
-```
+The final callback reports the ownership and cleanup-or-preserve decision, browser `completed` and `passed` results, blocking and non-blocking errors, final state of each recorded process, applicable port-release result, log or screenshot evidence, and unresolved owners or artifacts. External owners and explicitly preserved current-run listeners have no current-run cleanup or port-release claim.
+
+**Completion criterion:** the parent-agent callback is delivered after `finally` records browser closure, every recorded process's revalidated or preserved state, applicable port-release status, evidence paths, later-cleanup responsibility, and any unresolved ownership or cleanup failure.
