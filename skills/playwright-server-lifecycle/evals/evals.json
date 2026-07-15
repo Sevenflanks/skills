@@ -83,6 +83,33 @@
         "States that reuse requires clear user intent and ownership safety, otherwise it stops for clarification or uses a different approved target.",
         "If browser verification proceeds against the external service, reports that no current-run listener cleanup or port-release claim applies and still returns the requested callback with the ownership decision and browser evidence."
       ]
+    },
+    {
+      "id": 7,
+      "prompt": "Start a detached preview server for this Playwright task on port 4174 and leave it running after the screenshot because I want to inspect the page manually. Close the browser when automation finishes, but do not tear down the server. Report enough information so I can stop it later.",
+      "expected_output": "Treats the user's request as an explicit keep-running decision, preserves the current-run listener without claiming cleanup or port release, and returns a callback with ownership and later-cleanup evidence.",
+      "files": [],
+      "expectations": [
+        "Records the keep-running decision as part of the current-run ownership record before browser verification.",
+        "Still records command shape, launcher PID, wrapper PID or PIDs, listener PID/port, process identity evidence, and stdout/stderr log paths.",
+        "Closes the Playwright page and browser after automation but does not terminate the preserved launcher, wrapper, or listener tree.",
+        "Does not claim that process cleanup completed or that port 4174 was released.",
+        "Returns the parent-agent callback with browser completed/passed results, keep-running ownership state, PID/port/log evidence, and explicit later-cleanup responsibility."
+      ]
+    },
+    {
+      "id": 8,
+      "prompt": "Cleanup is about to stop a recorded Windows wrapper PID from this run, but the original process exited and Windows reused that PID for an unrelated program. The PID matches the ownership record, while creation time, image path, command line, and parent chain no longer match. Finish the Playwright lifecycle safely.",
+      "expected_output": "Revalidates process identity immediately before termination, refuses to stop the reused PID when identity evidence differs, preserves evidence, and reports unresolved cleanup without a false success claim.",
+      "files": [],
+      "expectations": [
+        "Requires the ownership record to include creation time, image path, command line, and parent-chain identity in addition to the PID.",
+        "Revalidates the recorded process identity immediately before every termination attempt rather than trusting the PID alone.",
+        "Treats any creation-time, image-path, command-line, or parent-chain mismatch as failed ownership proof.",
+        "Does not terminate the unrelated replacement process even though its PID matches the old record.",
+        "Preserves the mismatch and log evidence, reports unresolved cleanup, and does not claim process cleanup or port release succeeded.",
+        "Still delivers the parent-agent callback with browser result, final tracked-process states, and the ownership mismatch."
+      ]
     }
   ]
 }

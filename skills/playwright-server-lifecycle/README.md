@@ -23,7 +23,7 @@
 
 ### 1. 建立 listener 前先分類
 
-先判斷目標是否真的需要 listener。self-contained static HTML 優先用 `file://` 直接開啟。需要 listener 時，先檢查目標 port 與既有 owner，只有符合使用者意圖時才重用外部 process，絕不納入 cleanup。以 detached 方式啟動本次 listener，並記錄命令、launcher、wrapper、listener、port 與 log，建立本次的 ownership tree。
+先判斷目標是否真的需要 listener。self-contained static HTML 優先用 `file://` 直接開啟。需要 listener 時，先檢查目標 port 與既有 owner，只有符合使用者意圖時才重用外部 process，絕不納入 cleanup。以 detached 方式啟動本次 listener，並記錄命令、launcher、wrapper、listener、port、process creation time、image path、command line、parent chain 與 log，建立本次的 ownership tree。若使用者要求保留 listener，也要先記錄 keep-running 決策與後續 cleanup 責任。
 
 ### 2. 分開回報 browser 結果
 
@@ -31,7 +31,7 @@ browser 操作完成不代表驗證通過。報告必須分開列出 `completed`
 
 ### 3. 在 `finally` 中清理並回呼
 
-無論 readiness、browser 驗證或 cleanup 是否失敗，都先關閉 browser，再只回收可由記錄證明屬於本次的 launcher、wrapper 與 listener。確認 port 已釋放，保留無法證明 ownership 或未釋放 port 的命令、PID、owner 與 log 證據。最後回呼時必須包含 browser 結果、錯誤分類、process 最終狀態、port release 與未解決項目。
+無論 readiness、browser 驗證或 cleanup 是否失敗，都先關閉 browser。預設 cleanup 會在每次終止前重新比對 creation time、image path、command line 與 parent chain，只回收仍可證明屬於本次的 launcher、wrapper 與 listener；PID 相同但 identity 不符時不得終止。若使用者明確要求 keep-running，則保留整個本次 tree，不宣稱 cleanup 或 port release。最後回呼必須包含 browser 結果、錯誤分類、process 最終或保留狀態、適用的 port release、後續 cleanup 責任與未解決項目。
 
 ## 檔案
 

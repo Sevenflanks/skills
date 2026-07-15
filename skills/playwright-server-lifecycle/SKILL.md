@@ -18,7 +18,8 @@ Classify the target before running any command that could listen, including dev 
 - For self-contained static HTML, navigate Playwright to `file://` first. Do not create a server when the file, its inline assets, and the requested interaction work directly.
 - For a listener, inspect the target port and classify any existing owner as external or current-run. Reuse an external owner only when user intent permits it. Never terminate it, include it in cleanup, or start a duplicate listener on its port.
 - Never run a listener in the foreground or treat a timeout as background execution. Start only with a detached launcher, redirect logs, then prove readiness by port or HTTP condition.
-- Create a current-run ownership record before browser work: command shape, launcher PID, observed wrapper PID or PIDs, listener PID and port, log paths, and the record location. `powershell -> py.exe -> python.exe` is an example tree shape, not a fixed command or PID list.
+- Create a current-run ownership record before browser work: command shape, launcher PID, observed wrapper PID or PIDs, listener PID and port, process creation times, image paths, command lines, parent-chain identity, log paths, and the record location. `powershell -> py.exe -> python.exe` is an example tree shape, not a fixed command or PID list.
+- If the user explicitly asks to keep a current-run listener alive after browser automation, record that decision and who owns later cleanup before browser work starts. This preserves the listener; it does not turn it into an external owner.
 
 One concise Windows pattern is a detached PowerShell wrapper, not the listener in the agent shell:
 
@@ -26,7 +27,7 @@ One concise Windows pattern is a detached PowerShell wrapper, not the listener i
 $launcher = Start-Process powershell -ArgumentList "-NoProfile -Command Set-Location 'C:\path\to\app'; py -3.11 -m http.server 3917 --bind 127.0.0.1 1> .server.log 2> .server.err.log" -WindowStyle Hidden -PassThru
 ```
 
-**Completion criterion:** either `file://` is selected with no listener needed, or a detached listener strategy records its expected port, any existing-owner decision, command, launcher, wrappers, listener, logs, and current-run ownership before browser work starts.
+**Completion criterion:** either `file://` is selected with no listener needed, or a detached listener strategy records its expected port, any existing-owner and keep-running decisions, command, launcher, wrappers, listener, process identities, logs, and current-run ownership before browser work starts.
 
 ## Gate 2: Report Browser Completion and Result Separately
 
@@ -43,13 +44,14 @@ Classify every error as `blocking` or `non-blocking`. A blocking error changes `
 
 ## Gate 3: Cleanup and Callback in Finally
 
-Put browser close, current-run reconciliation, port release verification, and the parent-agent callback in `finally`. Run them after every outcome, including readiness failure, blocking browser failure, and cleanup failure.
+Put browser close, the cleanup-or-preserve decision, current-run reconciliation, port verification, and the parent-agent callback in `finally`. Run them after every outcome, including readiness failure, blocking browser failure, and cleanup failure.
 
 - Close the page and browser first.
-- Reconcile only the recorded current-run launcher, wrapper, and listener tree. If the listener exits first, recover recorded wrappers or launchers that remain as current-run orphans. If the launcher exits first, recover the recorded listener. Do not kill by name, port-only lookup, or broad scan.
+- If the user explicitly requested keep-running, preserve the recorded current-run launcher, wrappers, and listener. Report their live identities, PID/port/log evidence, and later-cleanup owner; do not terminate them or claim cleanup or port release.
+- Otherwise, reconcile only the recorded current-run launcher, wrapper, and listener tree. Immediately before every termination attempt, re-read the PID's creation time, image path, command line, and parent chain and compare them with the ownership record. Any mismatch means ownership is unproven: do not terminate that process. If the listener exits first, recover recorded wrappers or launchers that remain as proven current-run orphans. If the launcher exits first, recover the recorded listener. Do not kill by name, PID alone, port-only lookup, or broad scan.
 - Record the final state of every tracked launcher, wrapper, and listener. Verify the target port is released after reconciliation.
 - If ownership cannot be proven or the port remains occupied, stop automatic termination. Preserve command, owner, PID, port, and log evidence, then report the unresolved state without claiming cleanup succeeded.
 
-The final callback reports the ownership decision, browser `completed` and `passed` results, blocking and non-blocking errors, final state of each recorded process, port-release result, log or screenshot evidence, and unresolved owners or artifacts. An external owner has no current-run cleanup or port-release claim.
+The final callback reports the ownership and cleanup-or-preserve decision, browser `completed` and `passed` results, blocking and non-blocking errors, final state of each recorded process, applicable port-release result, log or screenshot evidence, and unresolved owners or artifacts. External owners and explicitly preserved current-run listeners have no current-run cleanup or port-release claim.
 
-**Completion criterion:** the parent-agent callback is delivered after `finally` records browser closure, every recorded process's final state, port-release status, evidence paths, and any unresolved ownership or cleanup failure.
+**Completion criterion:** the parent-agent callback is delivered after `finally` records browser closure, every recorded process's revalidated or preserved state, applicable port-release status, evidence paths, later-cleanup responsibility, and any unresolved ownership or cleanup failure.
