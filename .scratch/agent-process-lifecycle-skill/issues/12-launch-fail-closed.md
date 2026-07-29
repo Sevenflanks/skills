@@ -4,11 +4,11 @@
 
 **Blocked by:** 11, Launch 與 graceful Finalize Stop
 
-**Status:** ready-for-agent
+**Status:** completed
 
-- [ ] Launch 為 current user 建立 fresh、exclusive 且受 ACL 保護的 binding，並拒絕既有、concurrent、redirected、symlink 或 reparse target。
-- [ ] Launch 先建立 `preparing` record，再產生唯一 `Local\` named Job；production workload 不繼承 Job handle。
-- [ ] root workload 在 scoped ownership 與 stdio binding 完成 atomic establishment 前不得 resume。
-- [ ] assignment、stdio allowlist、readiness 或 record publication 任一 failure 都回傳 failed Launch result，並在同一次 invocation 嘗試 cleanup。
-- [ ] cleanup 不完整時回傳 unresolved 與 evidence，不得包裝成 success 或 clean completion。
-- [ ] public behavior 不要求 caller 管理 Job handle，也不要求 caller 重建 private ownership protocol。
+- [x] Launch 為 current user 建立 fresh、exclusive 且受 ACL 保護的 binding，並拒絕既有、concurrent、redirected、symlink 或 reparse target。
+- [x] Launch 先建立 `preparing` record，再產生唯一 `Local\` named Job；production workload 不繼承 Job handle。
+- [x] root workload 在 scoped ownership 與 stdio binding 完成 atomic establishment 前不得 resume。
+- [x] assignment、stdio allowlist、readiness 或 record publication 任一 failure 都回傳 failed Launch result，並在同一次 invocation 嘗試 cleanup。
+- [x] cleanup 不完整時回傳 unresolved 與 evidence，不得包裝成 success 或 clean completion。
+- [x] public behavior 不要求 caller 管理 Job handle，也不要求 caller 重建 private ownership protocol。
