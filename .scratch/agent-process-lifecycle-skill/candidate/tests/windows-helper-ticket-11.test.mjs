@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -15,6 +15,14 @@ const helperPath = resolve(
 
 function powerShellLiteral(value) {
   return `'${value.replaceAll("'", "''")}'`;
+}
+
+async function mkdtemp(prefix) {
+  const baseName = prefix.split(/[\\/]/u).at(-1).replace(/[^a-z0-9-]/giu, "");
+  const directory = join("C:\\", `${baseName}${randomUUID()}`);
+  const script = `$directory = ${powerShellLiteral(directory)}; $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User; $security = [Security.AccessControl.DirectorySecurity]::new(); $security.SetOwner($sid); $security.SetAccessRuleProtection($true, $false); $security.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($sid, [Security.AccessControl.FileSystemRights]::FullControl, [Security.AccessControl.AccessControlType]::Allow)); [IO.FileSystemAclExtensions]::CreateDirectory($security, $directory) | Out-Null`;
+  await execFile("pwsh", ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script], { windowsHide: true });
+  return directory;
 }
 
 async function runPowerShell(scriptPath) {
@@ -52,19 +60,27 @@ async function namedJobExists(name) {
   return stdout.trim() === "true";
 }
 
-async function cleanupCurrentRun(recordPath, stopEventName) {
-  if (!await pathExists(recordPath)) return null;
-  const record = JSON.parse(await readFile(recordPath, "utf8"));
-  if (!record.root || !record.holder || !record.events) return record;
+async function cleanupCurrentRun(recordPath, stopEventName, result) {
+  const record = await pathExists(recordPath)
+    ? JSON.parse(await readFile(recordPath, "utf8"))
+    : undefined;
+  const rootProcessId = result?.binding?.root_process_id ?? record?.root?.process_id;
+  const holderProcessId = result?.evidence?.job_holder_process_id ?? record?.holder?.process_id;
+  const jobName = result?.binding?.job_name ?? record?.job_name;
+  const rootIdentity = result?.binding?.root_identity ?? record?.root;
+  const holderIdentity = result?.binding?.holder_identity ?? record?.holder;
+  const finalizeEventName = record?.events?.finalize;
   const stopSignal = stopEventName
     ? `$stopEvent = [Threading.EventWaitHandle]::OpenExisting(${powerShellLiteral(stopEventName)}); try { $stopEvent.Set() | Out-Null } finally { $stopEvent.Dispose() };`
     : "";
-  const rootFallback = stopEventName ? "" : `if ($root) { Stop-Process -Id $root.Id -Force; $root.WaitForExit(2000) | Out-Null }`;
-  const cleanup = `$ErrorActionPreference = 'Stop'; ${stopSignal} $root = Get-Process -Id ${record.root.process_id} -ErrorAction SilentlyContinue; if ($root -and -not $root.WaitForExit(2000)) { ${rootFallback} }; if ($root -and -not $root.HasExited) { throw 'current-run root did not exit during test cleanup' }; $holderEvent = [Threading.EventWaitHandle]::OpenExisting(${powerShellLiteral(record.events.finalize)}); try { $holderEvent.Set() | Out-Null } finally { $holderEvent.Dispose() }; $holder = Get-Process -Id ${record.holder.process_id} -ErrorAction SilentlyContinue; if ($holder -and -not $holder.WaitForExit(2000)) { throw 'current-run holder did not exit during test cleanup' }`;
-  await execFile("pwsh", ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", cleanup], { windowsHide: true });
-  assert.equal(isAlive(record.root.process_id), false, "test cleanup removed the current-run workload");
-  assert.equal(isAlive(record.holder.process_id), false, "test cleanup removed the current-run holder");
-  assert.equal(await namedJobExists(record.job_name), false, "test cleanup removed the current-run named Job");
+  const resourcesRemain = isAlive(rootProcessId) || isAlive(holderProcessId) || await namedJobExists(jobName);
+  const cleanup = `Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public static class Ticket11CleanupNative { [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)] public static extern IntPtr OpenJobObjectW(uint access, bool inherit, string name); [DllImport("kernel32.dll", SetLastError=true)] public static extern bool TerminateJobObject(IntPtr job, uint exitCode); [DllImport("kernel32.dll", SetLastError=true)] public static extern bool CloseHandle(IntPtr handle); }'; ${stopSignal} $jobName = ${powerShellLiteral(jobName ?? "")}; if ($jobName) { $job = [Ticket11CleanupNative]::OpenJobObjectW(0x0010000c, $false, $jobName); if ($job -ne [IntPtr]::Zero) { try { [Ticket11CleanupNative]::TerminateJobObject($job, 124) | Out-Null } finally { [Ticket11CleanupNative]::CloseHandle($job) | Out-Null } } }; $eventName = ${powerShellLiteral(finalizeEventName ?? "")}; if ($eventName) { try { $holderEvent = [Threading.EventWaitHandle]::OpenExisting($eventName); try { $holderEvent.Set() | Out-Null } finally { $holderEvent.Dispose() } } catch { $missingHolderEvent = $_.Exception.Message } }; $identities = @(@{ id=${rootProcessId ?? 0}; creation=${powerShellLiteral(String(rootIdentity?.creation_time_filetime ?? ""))}; image=${powerShellLiteral(rootIdentity?.image_path ?? "")} }, @{ id=${holderProcessId ?? 0}; creation=${powerShellLiteral(String(holderIdentity?.creation_time_filetime ?? ""))}; image=${powerShellLiteral(holderIdentity?.image_path ?? "")} }); foreach ($identity in $identities) { if ($identity.id -gt 0) { $process = Get-Process -Id $identity.id -ErrorAction SilentlyContinue; if ($process -and -not $process.WaitForExit(2000)) { if (-not $identity.creation -or -not $identity.image -or [string]$process.StartTime.ToUniversalTime().ToFileTimeUtc() -ne $identity.creation -or -not [string]::Equals($process.Path, $identity.image, [StringComparison]::OrdinalIgnoreCase)) { throw "Refused PID fallback because identity is not proven: $($identity.id)" }; Stop-Process -Id $identity.id -Force; $process.WaitForExit(2000) | Out-Null } } }`;
+  if (resourcesRemain) {
+    await execFile("pwsh", ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", cleanup], { windowsHide: true });
+  }
+  assert.equal(isAlive(rootProcessId), false, "test cleanup removed the current-run workload");
+  assert.equal(isAlive(holderProcessId), false, "test cleanup removed the current-run holder");
+  assert.equal(await namedJobExists(jobName), false, "test cleanup removed the current-run named Job");
   await rm(recordPath, { force: true });
   assert.equal(await pathExists(recordPath), false, "test cleanup removed the current-run record");
   return record;
@@ -90,6 +106,7 @@ test("Launch and Finalize gracefully manage one Windows run across fresh PowerSh
   const launchScript = join(runtimeDirectory, "launch.ps1");
   const finalizeScript = join(runtimeDirectory, "finalize.ps1");
   let acceptanceCompleted = false;
+  let launch;
 
   try {
     await writeFile(
@@ -125,7 +142,7 @@ finally {
       "utf8",
     );
 
-    const launch = await runPowerShell(launchScript);
+    launch = await runPowerShell(launchScript);
     await writeFile(paths.launchResult, JSON.stringify(launch));
 
     assert.equal(launch.action, "Launch");
@@ -178,7 +195,7 @@ $result | ConvertTo-Json -Depth 12 -Compress
     assert.match(await readFile(paths.stderr, "utf8"), /workload-stderr-isolated/u);
     acceptanceCompleted = true;
   } finally {
-    if (!acceptanceCompleted) await cleanupCurrentRun(paths.record, paths.stopEvent);
+    if (!acceptanceCompleted) await cleanupCurrentRun(paths.record, paths.stopEvent, launch);
     await rm(runtimeDirectory, { recursive: true, force: true });
     if (acceptanceCompleted) {
       assert.equal(await pathExists(runtimeDirectory), false, "ticket fixture leaves no temporary artifacts");
@@ -205,17 +222,20 @@ test("blocking readiness callbacks return within their configured deadline", asy
   const workerPidPath = join(directory, "readiness-worker.pid");
   const childPidPath = join(directory, "readiness-child.pid");
   const timeoutStartedPath = join(directory, "readiness-timeout-started.txt");
-  let binding;
+  let launchFailure;
   try {
-    await writeFile(script, `try { & ${powerShellLiteral(helperPath)} -Action Finalize -RecordPath ${powerShellLiteral(join(directory, "warmup-missing.json"))} -GracefulAction {} } catch {}; [IO.File]::WriteAllText(${powerShellLiteral(timeoutStartedPath)}, [string][DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()); & ${powerShellLiteral(helperPath)} -Action Launch -RecordPath ${powerShellLiteral(record)} -Executable $PSHOME\\pwsh.exe -ArgumentList @('-NoLogo','-NoProfile','-NonInteractive','-Command','Start-Sleep -Seconds 20') -WorkingDirectory ${powerShellLiteral(directory)} -StdoutPath ${powerShellLiteral(join(directory, "stdout.log"))} -StderrPath ${powerShellLiteral(join(directory, "stderr.log"))} -ReadinessIdentity 'blocking-regression' -ReadinessContext @{ worker_pid_path = ${powerShellLiteral(workerPidPath)}; child_pid_path = ${powerShellLiteral(childPidPath)} } -ReadinessCheck { param($context) [IO.File]::WriteAllText($context.worker_pid_path, [string]$PID); $child = Start-Process -FilePath $PSHOME\\pwsh.exe -ArgumentList @('-NoLogo','-NoProfile','-NonInteractive','-Command','Start-Sleep -Seconds 20') -PassThru; [IO.File]::WriteAllText($context.child_pid_path, [string]$child.Id); Start-Sleep -Seconds 8; $false } -ReadinessDeadlineMilliseconds 1000 -RequestedDisposition Stop`, "utf8");
-    await assert.rejects(runPowerShell(script));
+    await writeFile(script, `try { & ${powerShellLiteral(helperPath)} -Action Finalize -RecordPath ${powerShellLiteral(join(directory, "warmup-missing.json"))} -GracefulAction {} } catch { $warmupFailure = $_.Exception.Message }; [IO.File]::WriteAllText(${powerShellLiteral(timeoutStartedPath)}, [string][DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()); $result = & ${powerShellLiteral(helperPath)} -Action Launch -RecordPath ${powerShellLiteral(record)} -Executable $PSHOME\\pwsh.exe -ArgumentList @('-NoLogo','-NoProfile','-NonInteractive','-Command','Start-Sleep -Seconds 20') -WorkingDirectory ${powerShellLiteral(directory)} -StdoutPath ${powerShellLiteral(join(directory, "stdout.log"))} -StderrPath ${powerShellLiteral(join(directory, "stderr.log"))} -ReadinessIdentity 'blocking-regression' -ReadinessContext @{ worker_pid_path = ${powerShellLiteral(workerPidPath)}; child_pid_path = ${powerShellLiteral(childPidPath)} } -ReadinessCheck { param($context) [IO.File]::WriteAllText($context.worker_pid_path, [string]$PID); $child = Start-Process -FilePath $PSHOME\\pwsh.exe -ArgumentList @('-NoLogo','-NoProfile','-NonInteractive','-Command','Start-Sleep -Seconds 20') -PassThru; [IO.File]::WriteAllText($context.child_pid_path, [string]$child.Id); Start-Sleep -Seconds 8; $false } -ReadinessDeadlineMilliseconds 1000 -RequestedDisposition Stop; $result | ConvertTo-Json -Depth 12 -Compress`, "utf8");
+    launchFailure = await runPowerShell(script);
     assert.ok(Date.now() - Number(await readFile(timeoutStartedPath, "utf8")) < 3500, "blocking readiness callback exceeded its coarse deadline bound");
-    binding = JSON.parse(await readFile(record, "utf8"));
-    assert.equal(isAlive(binding.root.process_id), true, "ticket 12 cleanup remains outside this regression");
+    assert.equal(launchFailure.lifecycle_result.status, "failed");
+    assert.equal(launchFailure.lifecycle_result.failure_kind, "readiness");
+    assert.equal(launchFailure.lifecycle_result.cleanup.status, "completed");
+    assert.equal(launchFailure.lifecycle_result.cleanup.root_absent, true, "ticket 12 cleanup removes the workload after readiness failure");
+    assert.equal(await pathExists(record), false, "ticket 12 cleanup removes the preparing record after readiness failure");
     assert.equal(isAlive(Number(await readFile(workerPidPath, "utf8"))), false, "timed-out readiness worker is absent");
     assert.equal(isAlive(Number(await readFile(childPidPath, "utf8"))), false, "timed-out readiness child is absent");
   } finally {
-    await cleanupCurrentRun(record);
+    await cleanupCurrentRun(record, undefined, launchFailure);
     await rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
   }
 });
@@ -233,15 +253,16 @@ test("blocking graceful callbacks stop at their deadline and leave only test-sco
   const launchPath = join(directory, "launch.ps1");
   const finalizePath = join(directory, "finalize.ps1");
   let record;
+  let launch;
   try {
     await writeFile(workloadPath, `param([string]$ReadyPath, [string]$StopEventName)
 $stopEvent = [Threading.EventWaitHandle]::OpenExisting($StopEventName)
 try { [IO.File]::WriteAllText($ReadyPath, 'ready'); $stopEvent.WaitOne(15000) | Out-Null } finally { $stopEvent.Dispose() }`, "utf8");
     await writeFile(launchPath, `$stopEvent = [Threading.EventWaitHandle]::new($false, [Threading.EventResetMode]::ManualReset, ${powerShellLiteral(stopEventName)})
 try { & ${powerShellLiteral(helperPath)} -Action Launch -RecordPath ${powerShellLiteral(recordPath)} -Executable $PSHOME\\pwsh.exe -ArgumentList @('-NoLogo','-NoProfile','-NonInteractive','-File',${powerShellLiteral(workloadPath)},'-ReadyPath',${powerShellLiteral(readyPath)},'-StopEventName',${powerShellLiteral(stopEventName)}) -WorkingDirectory ${powerShellLiteral(directory)} -StdoutPath ${powerShellLiteral(join(directory, "stdout.log"))} -StderrPath ${powerShellLiteral(join(directory, "stderr.log"))} -ReadinessIdentity 'graceful-timeout-ready' -ReadinessContext @{ ready_path = ${powerShellLiteral(readyPath)} } -ReadinessCheck { param($context) Test-Path -LiteralPath $context.ready_path } -ReadinessDeadlineMilliseconds 5000 -RequestedDisposition Stop | ConvertTo-Json -Depth 12 -Compress } finally { $stopEvent.Dispose() }`, "utf8");
-    const launch = await runPowerShell(launchPath);
+    launch = await runPowerShell(launchPath);
     record = JSON.parse(await readFile(recordPath, "utf8"));
-    await writeFile(finalizePath, `try { & ${powerShellLiteral(helperPath)} -Action Finalize -RecordPath ${powerShellLiteral(join(directory, "warmup-missing.json"))} -GracefulAction {} } catch {}; [IO.File]::WriteAllText(${powerShellLiteral(timeoutStartedPath)}, [string][DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()); & ${powerShellLiteral(helperPath)} -Action Finalize -RecordPath ${powerShellLiteral(recordPath)} -Disposition Stop -GracefulDeadlineMilliseconds 1000 -GracefulContext @{ action_log_path = ${powerShellLiteral(actionLog)}; worker_pid_path = ${powerShellLiteral(workerPidPath)}; child_pid_path = ${powerShellLiteral(childPidPath)} } -GracefulAction { param($binding) [IO.File]::AppendAllText($binding.graceful_context.action_log_path, "called" + [Environment]::NewLine); [IO.File]::WriteAllText($binding.graceful_context.worker_pid_path, [string]$PID); $child = Start-Process -FilePath $PSHOME\\pwsh.exe -ArgumentList @('-NoLogo','-NoProfile','-NonInteractive','-Command','Start-Sleep -Seconds 20') -PassThru; [IO.File]::WriteAllText($binding.graceful_context.child_pid_path, [string]$child.Id); Start-Sleep -Seconds 8 }`, "utf8");
+    await writeFile(finalizePath, `try { & ${powerShellLiteral(helperPath)} -Action Finalize -RecordPath ${powerShellLiteral(join(directory, "warmup-missing.json"))} -GracefulAction {} } catch { $warmupFailure = $_.Exception.Message }; [IO.File]::WriteAllText(${powerShellLiteral(timeoutStartedPath)}, [string][DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()); & ${powerShellLiteral(helperPath)} -Action Finalize -RecordPath ${powerShellLiteral(recordPath)} -Disposition Stop -GracefulDeadlineMilliseconds 1000 -GracefulContext @{ action_log_path = ${powerShellLiteral(actionLog)}; worker_pid_path = ${powerShellLiteral(workerPidPath)}; child_pid_path = ${powerShellLiteral(childPidPath)} } -GracefulAction { param($binding) [IO.File]::AppendAllText($binding.graceful_context.action_log_path, "called" + [Environment]::NewLine); [IO.File]::WriteAllText($binding.graceful_context.worker_pid_path, [string]$PID); $child = Start-Process -FilePath $PSHOME\\pwsh.exe -ArgumentList @('-NoLogo','-NoProfile','-NonInteractive','-Command','Start-Sleep -Seconds 20') -PassThru; [IO.File]::WriteAllText($binding.graceful_context.child_pid_path, [string]$child.Id); Start-Sleep -Seconds 8 }`, "utf8");
     await assert.rejects(runPowerShell(finalizePath));
     assert.ok(Date.now() - Number(await readFile(timeoutStartedPath, "utf8")) < 3500, "blocking graceful callback exceeded its millisecond deadline bound");
     assert.equal((await readFile(actionLog, "utf8")).trim().split(/\r?\n/u).length, 1, "graceful callback ran exactly once");
@@ -250,7 +271,7 @@ try { & ${powerShellLiteral(helperPath)} -Action Launch -RecordPath ${powerShell
     assert.equal(isAlive(launch.binding.root_process_id), true, "helper did not force-stop the workload");
     assert.equal(await namedJobExists(launch.binding.job_name), true, "helper did not terminate the named Job");
   } finally {
-    await cleanupCurrentRun(recordPath, stopEventName);
+    await cleanupCurrentRun(recordPath, stopEventName, launch);
     await rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
     assert.equal(await pathExists(directory), false, "graceful callback fixture leaves no temporary artifacts");
   }

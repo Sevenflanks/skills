@@ -205,7 +205,11 @@ namespace CandidateAgentProcessLifecycle
         {
             IntPtr job = CreateJobObjectW(IntPtr.Zero, name);
             if (job == IntPtr.Zero) ThrowLastError("CreateJobObjectW");
-            if (Marshal.GetLastWin32Error() == 183) throw new InvalidOperationException("A fresh Job name already exists.");
+            if (Marshal.GetLastWin32Error() == 183)
+            {
+                CloseHandle(job);
+                throw new InvalidOperationException("A fresh Job name already exists.");
+            }
             return job;
         }
 
@@ -269,6 +273,16 @@ namespace CandidateAgentProcessLifecycle
         public static void TerminateUnassignedCallbackWorker(IntPtr process)
         {
             if (!TerminateProcess(process, 124)) ThrowLastError("TerminateProcess(unassigned callback worker)");
+        }
+
+        public static void TerminateCurrentProcess(IntPtr process)
+        {
+            if (!TerminateProcess(process, 124)) ThrowLastError("TerminateProcess(current-run process)");
+        }
+
+        public static void TerminateLaunchJob(IntPtr job)
+        {
+            if (!TerminateJobObject(job, 124)) ThrowLastError("TerminateJobObject(current-run launch)");
         }
 
         public static void Resume(IntPtr thread)
@@ -405,17 +419,270 @@ function New-RunId {
     return [Convert]::ToHexString($bytes).ToLowerInvariant()
 }
 
+function Get-CurrentUserSid {
+    return [Security.Principal.WindowsIdentity]::GetCurrent().User
+}
+
+function Get-TrustedRecordParentSids {
+    return @(
+        (Get-CurrentUserSid).Value,
+        'S-1-5-18', # LocalSystem owns Windows-managed root paths.
+        'S-1-5-32-544', # BUILTIN\Administrators is trusted for machine-wide path administration.
+        'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464' # Windows TrustedInstaller owns protected system paths.
+    )
+}
+
+function Test-RecordParentMutationRight {
+    param([Parameter(Mandatory)][Security.AccessControl.FileSystemRights]$Rights)
+
+    $mutationRights = [Security.AccessControl.FileSystemRights]::Delete -bor
+        [Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles -bor
+        [Security.AccessControl.FileSystemRights]::ChangePermissions -bor
+        [Security.AccessControl.FileSystemRights]::TakeOwnership
+    return (($Rights -band $mutationRights) -ne 0)
+}
+
+function Assert-RecordParentDirectorySecurity {
+    param([Parameter(Mandatory)][IO.DirectoryInfo]$Directory)
+
+    $security = [IO.FileSystemAclExtensions]::GetAccessControl($Directory)
+    $trustedSids = Get-TrustedRecordParentSids
+    # TEST-INJECTION: parent-owner-check
+    if ($trustedSids -notcontains $security.GetOwner([Security.Principal.SecurityIdentifier]).Value) {
+        throw "RecordPath parent has an untrusted owner: $($Directory.FullName)"
+    }
+    foreach ($rule in $security.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
+        if ($rule.AccessControlType -ne [Security.AccessControl.AccessControlType]::Allow -or
+            ($rule.PropagationFlags -band [Security.AccessControl.PropagationFlags]::InheritOnly) -ne 0 -or
+            $trustedSids -contains $rule.IdentityReference.Value) {
+            continue
+        }
+        if (Test-RecordParentMutationRight -Rights $rule.FileSystemRights) {
+            throw "RecordPath parent allows an untrusted principal to mutate entries: $($Directory.FullName)"
+        }
+    }
+}
+
+function Assert-SafeRecordParent {
+    param([Parameter(Mandatory)][string]$Path)
+
+    $fullPath = [IO.Path]::GetFullPath($Path)
+    $directoryPath = [IO.Path]::GetDirectoryName($fullPath)
+    if ([string]::IsNullOrWhiteSpace($directoryPath)) { throw 'RecordPath must have a parent directory.' }
+
+    $directory = [IO.DirectoryInfo]::new($directoryPath)
+    while ($null -ne $directory) {
+        if (-not $directory.Exists) { throw "RecordPath parent does not exist: $($directory.FullName)" }
+        if (($directory.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw "RecordPath parent is a reparse point: $($directory.FullName)" }
+        Assert-RecordParentDirectorySecurity -Directory $directory
+        $directory = $directory.Parent
+    }
+
+    return $fullPath
+}
+
+function Ensure-SafeRecordParent {
+    param([Parameter(Mandatory)][string]$Path)
+
+    $fullPath = [IO.Path]::GetFullPath($Path)
+    $directoryPath = [IO.Path]::GetDirectoryName($fullPath)
+    if ([string]::IsNullOrWhiteSpace($directoryPath)) { throw 'RecordPath must have a parent directory.' }
+
+    $missingDirectories = [Collections.Generic.Stack[IO.DirectoryInfo]]::new()
+    $existingAncestor = [IO.DirectoryInfo]::new($directoryPath)
+    while (-not $existingAncestor.Exists) {
+        $missingDirectories.Push($existingAncestor)
+        if ($null -eq $existingAncestor.Parent) { throw "RecordPath parent has no existing safe ancestor: $directoryPath" }
+        $existingAncestor = $existingAncestor.Parent
+    }
+    Assert-SafeRecordParent -Path (Join-Path $existingAncestor.FullName 'record-parent-check') | Out-Null
+
+    while ($missingDirectories.Count -gt 0) {
+        $missingDirectory = $missingDirectories.Pop()
+        if (-not $missingDirectory.Exists) {
+            [IO.FileSystemAclExtensions]::CreateDirectory((New-CurrentUserDirectorySecurity), $missingDirectory.FullName) | Out-Null
+        }
+        $missingDirectory = [IO.DirectoryInfo]::new($missingDirectory.FullName)
+        if (($missingDirectory.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw "RecordPath parent is a reparse point: $($missingDirectory.FullName)" }
+        Assert-RecordParentDirectorySecurity -Directory $missingDirectory
+    }
+    return Assert-SafeRecordParent -Path $fullPath
+}
+
+function Assert-CurrentUserProtectedRecord {
+    param([Parameter(Mandatory)][string]$Path)
+
+    $security = [IO.FileSystemAclExtensions]::GetAccessControl([IO.FileInfo]::new($Path))
+    $currentSid = Get-CurrentUserSid
+    if (-not $security.AreAccessRulesProtected -or $security.GetOwner([Security.Principal.SecurityIdentifier]).Value -ne $currentSid.Value) {
+        throw 'The record ACL is not protected for the current user.'
+    }
+
+    $allowsCurrentUser = $false
+    foreach ($rule in $security.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
+        if ($rule.AccessControlType -ne [Security.AccessControl.AccessControlType]::Allow) { continue }
+        if ($rule.IdentityReference.Value -ne $currentSid.Value) {
+            throw 'The record ACL allows an unapproved principal.'
+        }
+        if ($rule.IdentityReference.Value -eq $currentSid.Value -and
+            (($rule.FileSystemRights -band [Security.AccessControl.FileSystemRights]::FullControl) -eq [Security.AccessControl.FileSystemRights]::FullControl)) {
+            $allowsCurrentUser = $true
+        }
+    }
+    if (-not $allowsCurrentUser) { throw 'The current user does not have full control of the record.' }
+}
+
+function Assert-FreshRecordPath {
+    param([Parameter(Mandatory)][string]$Path)
+
+    $fullPath = Assert-SafeRecordParent -Path $Path
+    $item = Get-Item -LiteralPath $fullPath -Force -ErrorAction SilentlyContinue
+    if ($null -ne $item) {
+        if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'RecordPath target is a reparse point.' }
+        throw 'RecordPath must be fresh for Launch.'
+    }
+    return $fullPath
+}
+
+function Assert-ExistingRecordPath {
+    param([Parameter(Mandatory)][string]$Path)
+
+    $fullPath = Assert-SafeRecordParent -Path $Path
+    $item = Get-Item -LiteralPath $fullPath -Force -ErrorAction SilentlyContinue
+    if ($null -eq $item -or $item.PSIsContainer) { throw 'The expected record file is absent.' }
+    if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'RecordPath target is a reparse point.' }
+    Assert-CurrentUserProtectedRecord -Path $fullPath
+    return $fullPath
+}
+
+function New-CurrentUserFileSecurity {
+    $currentSid = Get-CurrentUserSid
+    $security = [Security.AccessControl.FileSecurity]::new()
+    $security.SetOwner($currentSid)
+    $security.SetAccessRuleProtection($true, $false)
+    $security.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($currentSid, [Security.AccessControl.FileSystemRights]::FullControl, [Security.AccessControl.AccessControlType]::Allow))
+    return $security
+}
+
+function New-CurrentUserDirectorySecurity {
+    $currentSid = Get-CurrentUserSid
+    $security = [Security.AccessControl.DirectorySecurity]::new()
+    $security.SetOwner($currentSid)
+    $security.SetAccessRuleProtection($true, $false)
+    $security.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($currentSid, [Security.AccessControl.FileSystemRights]::FullControl, [Security.AccessControl.AccessControlType]::Allow))
+    return $security
+}
+
+function Write-ProtectedJsonFile {
+    param([Parameter(Mandatory)][object]$Record, [Parameter(Mandatory)][string]$Path, [ref]$CreatedByCurrentInvocation)
+
+    Assert-SafeRecordParent -Path $Path | Out-Null
+    $stream = $null
+    if ($PSBoundParameters.ContainsKey('CreatedByCurrentInvocation')) { $CreatedByCurrentInvocation.Value = $false }
+    try {
+        # TEST-INJECTION: preparing-before-create
+        $stream = [IO.FileSystemAclExtensions]::Create(
+            [IO.FileInfo]::new($Path),
+            [IO.FileMode]::CreateNew,
+            [Security.AccessControl.FileSystemRights]::FullControl,
+            [IO.FileShare]::None,
+            4096,
+            [IO.FileOptions]::WriteThrough,
+            (New-CurrentUserFileSecurity)
+        )
+        if ($PSBoundParameters.ContainsKey('CreatedByCurrentInvocation')) { $CreatedByCurrentInvocation.Value = $true }
+        # TEST-INJECTION: preparing-record-after-create
+        $writer = [IO.StreamWriter]::new($stream, [Text.UTF8Encoding]::new($false), 4096, $true)
+        try {
+            $writer.Write(($Record | ConvertTo-Json -Depth 12 -Compress))
+            $writer.Flush()
+            $stream.Flush($true)
+        }
+        finally {
+            $writer.Dispose()
+        }
+    }
+    catch {
+        throw
+    }
+    finally {
+        if ($stream) { $stream.Dispose() }
+    }
+}
+
+function New-PreparingRecord {
+    param([Parameter(Mandatory)][string]$Path)
+
+    $fullPath = Ensure-SafeRecordParent -Path $Path
+    $fullPath = Assert-FreshRecordPath -Path $fullPath
+    $recordCreated = $false
+    $createdByWrite = $false
+    try {
+        Write-ProtectedJsonFile -Path $fullPath -CreatedByCurrentInvocation ([ref]$createdByWrite) -Record ([ordered]@{
+            schema_version = 1
+            state = 'preparing'
+            created_at_utc = [DateTimeOffset]::UtcNow.ToString('O')
+        })
+        $recordCreated = $true
+        # TEST-INJECTION: preparing-record-validation
+        Assert-CurrentUserProtectedRecord -Path $fullPath
+        return $fullPath
+    }
+    catch {
+        if ($recordCreated -or $createdByWrite) {
+            try {
+                Assert-ExistingRecordPath -Path $fullPath | Out-Null
+                # TEST-INJECTION: preparing-record-delete
+                [IO.File]::Delete($fullPath)
+            }
+            catch {
+                $failure = [InvalidOperationException]::new("Preparing record creation failed and its exact current-run record could not be removed: $($_.Exception.Message)")
+                $failure.Data['AgentProcessLifecycle.CreatedByCurrentInvocation'] = $true
+                $failure.Data['AgentProcessLifecycle.CleanupIncomplete'] = $true
+                throw $failure
+            }
+        }
+        throw
+    }
+}
+
 function Write-Record {
     param([Parameter(Mandatory)][object]$Record, [Parameter(Mandatory)][string]$DestinationPath)
 
-    $temporaryPath = "$DestinationPath.$([Guid]::NewGuid().ToString('N')).tmp"
-    [IO.File]::WriteAllText($temporaryPath, ($Record | ConvertTo-Json -Depth 12 -Compress))
+    $fullPath = Assert-ExistingRecordPath -Path $DestinationPath
+    $temporaryPath = Join-Path ([IO.Path]::GetDirectoryName($fullPath)) ".$(Split-Path -Leaf $fullPath).$([Guid]::NewGuid().ToString('N')).tmp"
+    $backupPath = "$temporaryPath.backup"
+    $cleanupErrors = [Collections.Generic.List[string]]::new()
     try {
-        [IO.File]::Move($temporaryPath, $DestinationPath, $true)
+        Write-ProtectedJsonFile -Path $temporaryPath -Record $Record
+        # TEST-INJECTION: write-record-after-temp-create
+        $fullPath = Assert-ExistingRecordPath -Path $fullPath
+        # TEST-INJECTION: write-record-before-replace
+        [IO.File]::Replace($temporaryPath, $fullPath, $backupPath)
+        Assert-CurrentUserProtectedRecord -Path $fullPath
     }
     finally {
-        if ([IO.File]::Exists($temporaryPath)) {
-            [IO.File]::Delete($temporaryPath)
+        foreach ($artifact in @($temporaryPath, $backupPath)) {
+            try {
+                if ([IO.File]::Exists($artifact)) {
+                    if ($artifact -eq $temporaryPath) { # TEST-INJECTION: write-record-temp-delete
+                        [IO.File]::Delete($artifact)
+                    }
+                    else { # TEST-INJECTION: write-record-backup-delete
+                        [IO.File]::Delete($artifact)
+                    }
+                }
+                if ([IO.File]::Exists($artifact)) { $cleanupErrors.Add("Artifact remained: $artifact") }
+            }
+            catch {
+                $cleanupErrors.Add("Artifact cleanup failed for ${artifact}: $($_.Exception.Message)")
+            }
+        }
+        if ($cleanupErrors.Count -gt 0) {
+            $failure = [InvalidOperationException]::new($cleanupErrors -join ' ')
+            $failure.Data['AgentProcessLifecycle.ArtifactPaths'] = @($temporaryPath, $backupPath)
+            $failure.Data['AgentProcessLifecycle.ArtifactCleanupIncomplete'] = $true
+            throw $failure
         }
     }
 }
@@ -515,6 +782,126 @@ function Get-RemainingMilliseconds {
     return [Math]::Max(0, $DeadlineMilliseconds - [int]$Watch.ElapsedMilliseconds)
 }
 
+function Invoke-LaunchFailureCleanup {
+    param(
+        [object]$Root,
+        [bool]$RootAssigned,
+        [object]$Holder,
+        [IntPtr]$JobHandle,
+        [object]$FinalizeEvent,
+        [string]$JobName,
+        [string]$CleanupRecordPath,
+        [bool]$RecordCreated,
+        [string[]]$ArtifactPaths = @()
+    )
+
+    $errors = [Collections.Generic.List[string]]::new()
+    $rootAbsent = $null
+    $holderAbsent = $null
+    $namedJobAbsent = $null
+    $recordAbsent = $null
+    $artifactStates = [Collections.Generic.List[object]]::new()
+
+    try {
+        if ($Root) {
+            if ($RootAssigned -and $JobHandle -ne [IntPtr]::Zero) {
+                [CandidateAgentProcessLifecycle.Native]::TerminateLaunchJob($JobHandle)
+                $wait = [Diagnostics.Stopwatch]::StartNew()
+                while ([CandidateAgentProcessLifecycle.Native]::ActiveProcessCount($JobHandle) -ne 0 -and $wait.ElapsedMilliseconds -lt 1000) { [Threading.Thread]::Sleep(20) }
+                $rootAbsent = ([CandidateAgentProcessLifecycle.Native]::ActiveProcessCount($JobHandle) -eq 0)
+                if (-not $rootAbsent) { $errors.Add('The current-run Job did not empty during Launch cleanup.') }
+            }
+            else {
+                [CandidateAgentProcessLifecycle.Native]::TerminateCurrentProcess($Root.ProcessHandle)
+                $rootAbsent = [CandidateAgentProcessLifecycle.Native]::WaitForExit($Root.ProcessHandle, 1000)
+                if (-not $rootAbsent) { $errors.Add('The unassigned suspended root did not exit during Launch cleanup.') }
+            }
+        }
+        else {
+            $rootAbsent = $true
+        }
+    }
+    catch {
+        $errors.Add($_.Exception.Message)
+    }
+
+    foreach ($artifactPath in $ArtifactPaths) {
+        try {
+            $before = [IO.File]::Exists($artifactPath)
+            if ($before) {
+                # TEST-INJECTION: launch-cleanup-artifact-delete
+                [IO.File]::Delete($artifactPath)
+            }
+            $after = [IO.File]::Exists($artifactPath)
+            $artifactStates.Add([ordered]@{ path = $artifactPath; existed_before_cleanup = $before; absent = -not $after })
+            if ($after) { $errors.Add("Publication artifact remained: $artifactPath") }
+        }
+        catch {
+            $artifactStates.Add([ordered]@{ path = $artifactPath; existed_before_cleanup = [IO.File]::Exists($artifactPath); absent = $false })
+            $errors.Add("Publication artifact cleanup failed for ${artifactPath}: $($_.Exception.Message)")
+        }
+    }
+
+    try {
+        if ($Holder) {
+            if ($FinalizeEvent) { $FinalizeEvent.Set() | Out-Null }
+            $holderAbsent = [CandidateAgentProcessLifecycle.Native]::WaitForExit($Holder.ProcessHandle, 1000)
+            if (-not $holderAbsent) { $errors.Add('The current-run Job holder did not exit during Launch cleanup.') }
+        }
+        else {
+            $holderAbsent = $true
+        }
+    }
+    catch {
+        $errors.Add($_.Exception.Message)
+    }
+
+    try {
+        if ($JobHandle -ne [IntPtr]::Zero) { [CandidateAgentProcessLifecycle.Native]::Close($JobHandle) }
+        if ($JobName) {
+            $namedJobAbsent = -not [CandidateAgentProcessLifecycle.Native]::NamedJobExists($JobName)
+            if (-not $namedJobAbsent) { $errors.Add('The current-run named Job remained after Launch cleanup.') }
+        }
+        else {
+            $namedJobAbsent = $true
+        }
+    }
+    catch {
+        $errors.Add($_.Exception.Message)
+    }
+
+    try {
+        if ($RecordCreated) {
+            if ([IO.File]::Exists($CleanupRecordPath)) {
+                Assert-ExistingRecordPath -Path $CleanupRecordPath | Out-Null
+                # TEST-INJECTION: launch-cleanup-record-delete
+                [IO.File]::Delete($CleanupRecordPath)
+            }
+            $recordAbsent = -not [IO.File]::Exists($CleanupRecordPath)
+            if (-not $recordAbsent) { $errors.Add('The preparing record remained after Launch cleanup.') }
+        }
+        else {
+            $recordAbsent = $true
+        }
+    }
+    catch {
+        $errors.Add($_.Exception.Message)
+    }
+
+    # TEST-INJECTION: cleanup-verification
+    $complete = $errors.Count -eq 0
+    return [ordered]@{
+        attempted = ($null -ne $Root -or $null -ne $Holder -or $JobHandle -ne [IntPtr]::Zero -or $RecordCreated)
+        status = if ($complete) { 'completed' } else { 'unresolved' }
+        root_absent = $rootAbsent
+        holder_absent = $holderAbsent
+        named_job_absent = $namedJobAbsent
+        record_absent = $recordAbsent
+        publication_artifacts = @($artifactStates)
+        errors = @($errors)
+    }
+}
+
 function Invoke-Launch {
     foreach ($name in 'Executable', 'WorkingDirectory', 'StdoutPath', 'StderrPath', 'ReadinessIdentity') {
         if (-not (Get-Variable -Name $name -ValueOnly)) {
@@ -524,25 +911,33 @@ function Invoke-Launch {
     if ($null -eq $ReadinessCheck) {
         throw 'ReadinessCheck is required for Launch.'
     }
-    if ([IO.File]::Exists($RecordPath)) {
-        throw 'RecordPath must be fresh for Launch.'
-    }
-
-    $recordDirectory = Split-Path -Parent $RecordPath
-    [IO.Directory]::CreateDirectory($recordDirectory) | Out-Null
-    [IO.File]::WriteAllText($RecordPath, '{}')
-
-    $runId = New-RunId
-    $namePrefix = "Local\AgentProcessLifecycle.$runId"
+    $failureKind = 'record-preparation'
+    $recordCreated = $false
+    $recordPathForRun = $RecordPath
+    $runId = $null
+    $namePrefix = $null
+    $jobName = $null
     $jobHandle = [IntPtr]::Zero
     $root = $null
+    $rootAssigned = $false
+    $stdioIsolated = $false
+    $readinessSucceeded = $false
     $holder = $null
     $finalizeEvent = $null
     $holderReadyEvent = $null
     $holderExitedEvent = $null
+    $publicationArtifacts = @()
+    $rootIdentity = $null
+    $holderIdentity = $null
 
     try {
-        $jobHandle = [CandidateAgentProcessLifecycle.Native]::CreateNamedJob("$namePrefix.Job")
+        $recordPathForRun = New-PreparingRecord -Path $RecordPath
+        $recordCreated = $true
+        $runId = New-RunId
+        $namePrefix = "Local\AgentProcessLifecycle.$runId"
+        $jobName = "$namePrefix.Job"
+        $failureKind = 'job-creation'
+        $jobHandle = [CandidateAgentProcessLifecycle.Native]::CreateNamedJob($jobName)
         $created = $false
         $finalizeEvent = [Threading.EventWaitHandle]::new($false, [Threading.EventResetMode]::ManualReset, "$namePrefix.Finalize", [ref]$created)
         if (-not $created) { throw 'Fresh Finalize event name already exists.' }
@@ -569,49 +964,94 @@ function Invoke-Launch {
         if (-not $holderReadyEvent.WaitOne(5000)) {
             throw 'The Job handle holder did not become ready.'
         }
+        $holderIdentity = [ordered]@{
+            process_id = $holder.ProcessId
+            creation_time_filetime = [CandidateAgentProcessLifecycle.Native]::CreationTimeFileTime($holder.ProcessHandle)
+            image_path = [CandidateAgentProcessLifecycle.Native]::ImagePath($holder.ProcessHandle)
+        }
 
+        $failureKind = 'stdio-isolation'
+        # TEST-INJECTION: workload-job-handle-probe
         $root = [CandidateAgentProcessLifecycle.Native]::StartSuspended($Executable, $ArgumentList, $WorkingDirectory, $StdoutPath, $StderrPath)
+        $rootIdentity = [ordered]@{
+            process_id = $root.ProcessId
+            creation_time_filetime = [CandidateAgentProcessLifecycle.Native]::CreationTimeFileTime($root.ProcessHandle)
+            image_path = [CandidateAgentProcessLifecycle.Native]::ImagePath($root.ProcessHandle)
+        }
+        $stdioIsolated = $true
+        # TEST-INJECTION: stdio-isolation
+        $failureKind = 'job-assignment'
+        # TEST-INJECTION: job-assignment
         [CandidateAgentProcessLifecycle.Native]::Assign($jobHandle, $root.ProcessHandle)
+        $rootAssigned = $true
         $record = [ordered]@{
             schema_version = 1
             state = 'bound'
             run_id = $runId
             job_name = "$namePrefix.Job"
-            root = [ordered]@{
-                process_id = $root.ProcessId
-                creation_time_filetime = [CandidateAgentProcessLifecycle.Native]::CreationTimeFileTime($root.ProcessHandle)
-                image_path = [CandidateAgentProcessLifecycle.Native]::ImagePath($root.ProcessHandle)
-            }
-            holder = [ordered]@{
-                process_id = $holder.ProcessId
-                creation_time_filetime = [CandidateAgentProcessLifecycle.Native]::CreationTimeFileTime($holder.ProcessHandle)
-                image_path = [CandidateAgentProcessLifecycle.Native]::ImagePath($holder.ProcessHandle)
-            }
+            executable = [IO.Path]::GetFullPath($Executable)
+            arguments = @($ArgumentList)
+            working_directory = [IO.Path]::GetFullPath($WorkingDirectory)
+            root = $rootIdentity
+            holder = $holderIdentity
             stdio = [ordered]@{ stdout_path = [IO.Path]::GetFullPath($StdoutPath); stderr_path = [IO.Path]::GetFullPath($StderrPath) }
-            readiness = [ordered]@{ identity = $ReadinessIdentity; deadline_milliseconds = $ReadinessDeadlineMilliseconds }
+            readiness = [ordered]@{ identity = $ReadinessIdentity; deadline_milliseconds = $ReadinessDeadlineMilliseconds; result = $null; completed_at_utc = $null }
             requested_disposition = $RequestedDisposition
+            later_owner = $null
             events = [ordered]@{ finalize = "$namePrefix.Finalize"; holder_exited = "$namePrefix.HolderExited" }
         }
-        Write-Record -Record $record -DestinationPath $RecordPath
+        $failureKind = 'record-publication'
+        # TEST-INJECTION: bound-record-publication
+        Write-Record -Record $record -DestinationPath $recordPathForRun
         [CandidateAgentProcessLifecycle.Native]::Resume($root.ThreadHandle)
 
+        $failureKind = 'readiness'
         $readinessElapsed = Wait-Readiness -Check $ReadinessCheck -Context $ReadinessContext -DeadlineMilliseconds $ReadinessDeadlineMilliseconds
+        $readinessSucceeded = $true
         $record.state = 'ready'
         $record.readiness.result = 'succeeded'
         $record.readiness.elapsed_milliseconds = $readinessElapsed
-        Write-Record -Record $record -DestinationPath $RecordPath
+        $record.readiness.completed_at_utc = [DateTimeOffset]::UtcNow.ToString('O')
+        $failureKind = 'record-publication'
+        # TEST-INJECTION: ready-record-publication
+        Write-Record -Record $record -DestinationPath $recordPathForRun
 
         return [ordered]@{
             action = 'Launch'
             tier = 'windows-self-managed'
             requested_disposition = $RequestedDisposition
-            binding = [ordered]@{ run_id = $runId; job_name = $record.job_name; record_path = $RecordPath; root_process_id = $root.ProcessId }
+            binding = [ordered]@{ run_id = $runId; job_name = $record.job_name; record_path = $recordPathForRun; root_process_id = $root.ProcessId; root_identity = $rootIdentity; holder_identity = $holderIdentity }
             stdio = [ordered]@{ isolated = $true; stdout_path = $record.stdio.stdout_path; stderr_path = $record.stdio.stderr_path }
             readiness = [ordered]@{ identity = $ReadinessIdentity; succeeded = $true; deadline_milliseconds = $ReadinessDeadlineMilliseconds; elapsed_milliseconds = $readinessElapsed }
             lifecycle_result = [ordered]@{ status = 'success'; operation = 'launch' }
             downstream_result = $DownstreamResult
             final_disposition = [ordered]@{ requested = $RequestedDisposition; status = 'pending' }
-            evidence = [ordered]@{ record_path = $RecordPath; named_job_retained = $true; job_holder_process_id = $holder.ProcessId }
+            evidence = [ordered]@{ record_path = $recordPathForRun; named_job_retained = $true; job_holder_process_id = $holder.ProcessId; root_identity = $rootIdentity; holder_identity = $holderIdentity }
+        }
+    }
+    catch {
+        $recordCreated = $recordCreated -or ($_.Exception.Data['AgentProcessLifecycle.CreatedByCurrentInvocation'] -eq $true)
+        $failureException = $_.Exception
+        while ($failureException -and -not $failureException.Data['AgentProcessLifecycle.ArtifactPaths']) { $failureException = $failureException.InnerException }
+        if ($failureException -and $failureException.Data['AgentProcessLifecycle.ArtifactPaths']) { $publicationArtifacts = @($failureException.Data['AgentProcessLifecycle.ArtifactPaths']) }
+        if ($publicationArtifacts.Count -eq 0 -and $failureKind -eq 'record-publication') {
+            $publicationArtifacts = @(Get-ChildItem -LiteralPath ([IO.Path]::GetDirectoryName($recordPathForRun)) -Force -File -Filter ".$(Split-Path -Leaf $recordPathForRun).*tmp*" | ForEach-Object FullName)
+        }
+        $cleanup = Invoke-LaunchFailureCleanup -Root $root -RootAssigned $rootAssigned -Holder $holder -JobHandle $jobHandle -FinalizeEvent $finalizeEvent -JobName $jobName -CleanupRecordPath $recordPathForRun -RecordCreated $recordCreated -ArtifactPaths $publicationArtifacts
+        $jobHandle = [IntPtr]::Zero
+        $status = if ($cleanup.status -eq 'completed') { 'failed' } else { 'unresolved' }
+        return [ordered]@{
+            action = 'Launch'
+            tier = 'windows-self-managed'
+            requested_disposition = $RequestedDisposition
+            binding = [ordered]@{ run_id = $runId; job_name = $jobName; record_path = $recordPathForRun; root_process_id = if ($root) { $root.ProcessId } else { $null }; root_identity = $rootIdentity; holder_identity = $holderIdentity }
+            stdio = [ordered]@{ isolated = $stdioIsolated; stdout_path = $StdoutPath; stderr_path = $StderrPath }
+            readiness = [ordered]@{ identity = $ReadinessIdentity; succeeded = $readinessSucceeded; deadline_milliseconds = $ReadinessDeadlineMilliseconds }
+            lifecycle_result = [ordered]@{ status = $status; operation = 'launch'; failure_kind = $failureKind; cleanup = $cleanup; unresolved_reason = if ($status -eq 'unresolved') { ($cleanup.errors -join ' ') } else { $null }; error = $_.Exception.Message }
+            downstream_result = $DownstreamResult
+            final_disposition = [ordered]@{ requested = $RequestedDisposition; status = 'not-established' }
+            later_owner = $null
+            evidence = [ordered]@{ record_path = $recordPathForRun; cleanup = $cleanup; job_holder_process_id = if ($holder) { $holder.ProcessId } else { $null }; root_identity = $rootIdentity; holder_identity = $holderIdentity }
         }
     }
     finally {
