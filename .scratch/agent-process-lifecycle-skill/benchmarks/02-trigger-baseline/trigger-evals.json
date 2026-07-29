@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "prompts": [
+    {"id": "listener-local-server", "label": "positive", "body": "Open the local marketing site in Chromium and click through the sign-up flow. Start the preview on an unused loopback port, wait until the page responds, capture the result, and tear it down when the check finishes."},
+    {"id": "gui-local-app", "label": "positive", "body": "Launch the Windows desktop sample app so I can inspect its settings dialog, take a screenshot after it renders, and close every process started for this check before you return."},
+    {"id": "watcher-without-port", "label": "positive", "body": "Start the local asset compiler in watch mode, edit the sample stylesheet, wait for its next successful rebuild, and stop the watch command once the compiled file is confirmed."},
+    {"id": "finite-detached-job", "label": "positive", "body": "Kick off the local report export in the background because it takes several minutes. Return only after the CSV appears, the export command has exited, and no helper process is left behind."},
+    {"id": "timeout-residual-process", "label": "positive", "body": "The previous command timed out while starting a local conversion utility. Find out whether its child is still running, collect enough details to identify it safely, and clean up only work that came from this request."},
+    {"id": "keep-running-handoff", "label": "positive", "body": "Start the local webhook relay for the next developer and leave it available after this task. Give them the address, process details, logs, and a clear note about who will stop it later."},
+    {"id": "orphan-wrapper", "label": "positive", "body": "A PowerShell launcher already returned, but the Node-based file monitor it started is still preventing this session from ending. Trace the remaining child, decide whether it belongs to this run, and resolve the leftover safely."},
+    {"id": "readiness-failure", "label": "positive", "body": "Bring up the local preview for a browser smoke test. If it never becomes reachable, preserve the useful logs, close anything started for the attempt, and report why the preview was unavailable."},
+    {"id": "sync-long-command", "label": "negative", "body": "Run the repository's full test suite, which can take twenty minutes, wait for the command to finish normally, and summarize its exit code and failures."},
+    {"id": "observe-external-service", "label": "negative", "body": "Check the health endpoint of the staging API that the platform team already operates and report its HTTP status and response time. Do not change that service."},
+    {"id": "framework-complete-ownership", "label": "negative", "body": "Use the test framework's built-in preview fixture for this browser test. Its documented setup waits for readiness and its teardown always shuts the preview down; just use the fixture result in the test."},
+    {"id": "docker-runtime", "label": "negative", "body": "Inspect the checkout service container with Docker, report whether its health check is passing, and use Docker commands if the container needs attention."},
+    {"id": "kubernetes-runtime", "label": "negative", "body": "Check whether the payments deployment has completed its rollout in the Kubernetes cluster and report the rollout status from the cluster."},
+    {"id": "windows-service-runtime", "label": "negative", "body": "Check the Print Spooler status on this Windows machine and use the Windows Service manager if it must be restarted."},
+    {"id": "remote-ci", "label": "negative", "body": "Start the release validation workflow in the hosted CI system, follow the run until it finishes, and link the resulting job summary."},
+    {"id": "ide-owned-service", "label": "negative", "body": "Use the development server that Visual Studio Code has already started for this workspace to inspect the home page; leave the editor-managed server alone when you finish."}
+  ]
+}
