@@ -12,7 +12,7 @@
 - [x] Stage one 僅在 pivot cues 出現時啟動，並於任何 direction-changing edit 前完成；routine execution 與明確 within-intent 修正不得一律升級。
 - [x] Stage one 辨認 decision-relevant evidence、candidate action、exact confirmed-intent traceability、可能改變的 commitment、可觀察 falsifier 與 lower-commitment alternative。
 - [x] 流程明確區分 implementation/test/environment defect 與 invalidated plan assumption，並採可推翻的保守推定而非盲目守舊。
-- [ ] Stage-one-only benchmark 依鎖定配置執行；調整只能使用 training partition，true held-out 不得用來調 prompt。
+- [x] Stage-one-only benchmark 依鎖定配置執行；調整只能使用 training partition，true held-out 不得用來調 prompt。
 - [x] 正常成功保持安靜；只有必要的方向性結果、證據缺口或既有 user-owned directional decision 才公開說明或詢問。
 - [x] 本 ticket 不實作 stage-two sub-agent、failure/reentry policy、registry publication 或對外效果宣稱。
 
@@ -23,3 +23,6 @@
 - Held-out integrity incident：Ticket 04 implementing sub-agent 與後續 read-only reviewer 的廣域 `rg` exclude pattern 失效，各自曾輸出 private fixture 的 matching lines。內容未被用於 candidate 調整，coordinator 也未開啟 private fixture，但原 locked true-held-out partition 已無法再證明未向 candidate development context 揭露。
 - 原 true-held-out partition 已 quarantined，不得用於 release claim、candidate tuning 或 Ticket 08 final evidence。不得靜默替換 Ticket 03 的 immutable manifest；需由使用者明確決定在 candidate freeze 後以獨立 context 建立並重新鎖定 replacement partition，或將原 partition 降級為 disclosed evaluation。
 - Ticket 05 維持 blocked，直到本票 live training 與 held-out integrity decision 完成。
+- 使用者以「准許 go」授權單一 immutable V1 30-run training batch，並同意永久 quarantine 原 exposed held-out、待 candidate freeze 後由獨立 context 建立 replacement partition。
+- V1 完成 30/30 fixed slots、30 unique sessions、0 runtime failure、0 stage-two invocation；但 Strict gate 為 fail。`training-parser-implementation` 5/5 trials action 正確，卻全部 `stage_one_missed`，所以 overall 25/30、該 family 0/5。完整證據見 [`../reports/04-stage-one-training.md`](../reports/04-stage-one-training.md)。
+- V1 不得 retry、覆寫或 reclassify。Ticket 04 維持 `needs-info`；任何 candidate wording adjustment 與 fresh V2 30-run batch 都需要新的明確人類授權。
