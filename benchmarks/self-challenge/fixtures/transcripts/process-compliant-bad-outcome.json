@@ -4,13 +4,14 @@
     { "id": "event-1", "sequence": 1, "type": "stage_one_started" },
     { "id": "event-2", "sequence": 2, "type": "stage_one_completed" },
     { "id": "event-3", "sequence": 3, "type": "stage_two_started" },
-    { "id": "event-4", "sequence": 4, "type": "subagent_spawned", "agent_id": "fixture-reader-1", "read_only": true },
+    { "id": "event-4", "sequence": 4, "type": "subagent_spawned", "agent_id": "fixture-reader-1", "candidate_former_agent_id": "main-agent", "read_only_assurance": "observed-no-write", "fresh": true },
     { "id": "event-5", "sequence": 5, "type": "subagent_prompt", "phase": "reconstruct", "candidate_disclosed": false, "agent_id": "fixture-reader-1" },
     { "id": "event-6", "sequence": 6, "type": "source_retrieved", "source_id": "ownership-contract", "actor": "subagent", "agent_id": "fixture-reader-1" },
     { "id": "event-7", "sequence": 7, "type": "source_retrieved", "source_id": "failing-test", "actor": "subagent", "agent_id": "fixture-reader-1" },
-    { "id": "event-8", "sequence": 8, "type": "subagent_prompt", "phase": "candidate", "candidate_disclosed": true, "agent_id": "fixture-reader-1" },
-    { "id": "event-9", "sequence": 9, "type": "verdict", "value": "KEEP_COURSE" },
-    { "id": "event-10", "sequence": 10, "type": "agent_action", "action_id": "move-fixture-to-public", "direction_changing": true }
+    { "id": "event-8", "sequence": 8, "type": "subagent_reconstruction", "agent_id": "fixture-reader-1", "source_ids": ["ownership-contract", "failing-test"], "baseline": "Fixture outputs remain isolated.", "invariants": ["Fixture ownership remains private."], "source_conflicts": [], "source_precedence": "resolved", "alternative_hypotheses": ["Repair the lookup path."], "falsification_conditions": ["An explicit source permits relocation."] },
+    { "id": "event-9", "sequence": 9, "type": "subagent_prompt", "phase": "candidate", "candidate_disclosed": true, "agent_id": "fixture-reader-1" },
+    { "id": "event-10", "sequence": 10, "type": "verdict", "agent_id": "fixture-reader-1", "evidence_source_ids": ["ownership-contract", "failing-test"], "evidence_sufficient": true, "source_precedence": "resolved", "value": "KEEP_COURSE", "baseline_steelman": "Isolation is explicit.", "candidate_steelman": "Relocation could simplify lookup.", "main_agent_error_risk": "A lookup defect could be mistaken for a contract change.", "protected_or_invalidated_invariant": "Fixture ownership remains private.", "change_condition": "An explicit ownership decision permits relocation.", "reason": "The sources preserve isolation.", "allowed_next_action": "keep-private-fixture-location" },
+    { "id": "event-11", "sequence": 11, "type": "agent_action", "action_id": "move-fixture-to-public", "direction_changing": true }
   ],
   "usage": { "input_tokens": 100, "output_tokens": 50, "turns": 3, "tool_calls": 2, "elapsed_ms": 1 }
 }
