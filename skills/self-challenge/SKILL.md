@@ -9,7 +9,7 @@ metadata:
 
 # Self-Challenge
 
-Use this candidate to question an imminent direction transition before acting on it. It is a short stage-one reflection, not an approval gate, final review, debugging workflow, or a reason to defend the current plan blindly.
+Use this candidate to question an imminent direction transition before acting on it. It starts with a short stage-one reflection, not an approval gate, final review, debugging workflow, or a reason to defend the current plan blindly.
 
 ## Scope
 
@@ -18,8 +18,6 @@ Run stage one when an observable pivot cue appears: a blocker, failing evidence,
 Failing evidence that motivates replacing an implementation mechanism or semantic boundary is a stage-one cue; run stage one before continuing quietly within intent.
 
 Do not escalate routine typo correction, ordinary within-intent debugging, a fallback already authorized by confirmed intent, initial exploration without a confirmed baseline, directly verifiable review feedback, or final artifact review. Continue these cases quietly.
-
-This candidate covers stage one only. Do not create a sub-agent, implement a stage-two policy, add retry or reentry behavior, or introduce a new user approval gate.
 
 ## Stage-One Check
 
@@ -35,6 +33,19 @@ Distinguish an implementation, test, or environment defect from evidence that in
 Apply a rebuttable conservative presumption: confirmed intent is the current best baseline, so a deviation needs evidence. Treat evidence that invalidates the baseline as a reason to revise course rather than a reason to preserve it by default.
 
 Choose among confirmed-intent sources only when recency and clarity form one unique, evidence-backed ordering. Unresolved precedence is missing decision-relevant evidence: block the direction-changing edit and return to the existing decision process.
+
+## Stage-Two Successful Path
+
+After stage one, deepen only when an imminent candidate action may affect confirmed intent or decision-relevant directional uncertainty remains. Repeated candidate changes are supporting evidence for that judgment, not an automatic escalation rule.
+
+Open exactly one fresh challenger that did not participate in forming the candidate. Use runtime-enforced read-only permissions when the runtime supplies capability evidence; otherwise claim only observed-no-write. The challenger may retrieve sources, but must not edit, revise a plan, authorize a scope change, create another challenger, or invoke `self-challenge`.
+
+Use the same challenger handle for two sequential prompts:
+
+1. Round one gives ordered authoritative source IDs and content or retrieval instructions, problem evidence, constraints, and non-goals. Do not disclose the candidate. Require a source-first reconstruction of the baseline, invariants, source conflicts and precedence, alternative hypotheses, and falsification conditions.
+2. Round two discloses the candidate only after reconstruction. Require a bilateral steelman of preserving and changing direction, the main agent's likely error risk, the protected or invalidated invariant, evidence source IDs, the condition that would change the conclusion, one evidence-backed verdict, its reason, and one allowed next action.
+
+Apply evidence-first precedence before selecting a verdict. Insufficient decision-relevant evidence or unresolved source precedence requires `MORE_EVIDENCE` and blocks the direction-changing action. With sufficient evidence, use `REPLAN_REQUIRED` when confirmed intent needs revision, `ADAPT_WITHIN_INTENT` when commitments stay stable, or `KEEP_COURSE` when the deviation lacks support. A verdict does not edit or revise the plan, authorize scope, or create a new approval gate.
 
 ## Continue Or Disclose
 
