@@ -22,7 +22,9 @@ function validateEvent(event, index) {
   }
   if (event.type === 'agent_action') {
     assertString(event.action_id, `${path}.action_id`);
-    assertBoolean(event.direction_changing, `${path}.direction_changing`);
+    if (event.direction_changing !== undefined) {
+      assertBoolean(event.direction_changing, `${path}.direction_changing`);
+    }
   }
   if (event.type === 'action_reverted') {
     assertString(event.action_event_id, `${path}.action_event_id`);
@@ -130,12 +132,45 @@ export function validateExecution(execution) {
     }
   }
   assertObject(execution.usage, 'execution.usage');
-  assertExactKeys(execution.usage, ['elapsed_ms', 'input_tokens', 'output_tokens', 'tool_calls', 'turns'], 'execution.usage');
+  const requiredUsageKeys = ['elapsed_ms', 'input_tokens', 'output_tokens', 'tool_calls', 'turns'];
+  const optionalUsageKeys = ['runtime_reported_cost', 'session_id', 'tool_names'];
+  for (const key of Object.keys(execution.usage)) {
+    if (![...requiredUsageKeys, ...optionalUsageKeys].includes(key)) {
+      fail('execution.usage', `contains unsupported field ${key}`);
+    }
+  }
+  for (const key of requiredUsageKeys) {
+    if (!(key in execution.usage)) {
+      fail('execution.usage', `must contain ${key}`);
+    }
+  }
   for (const key of ['input_tokens', 'output_tokens', 'tool_calls', 'turns']) {
     assertNonNegativeInteger(execution.usage[key], `execution.usage.${key}`);
   }
   if (execution.usage.elapsed_ms !== null) {
     assertNonNegativeInteger(execution.usage.elapsed_ms, 'execution.usage.elapsed_ms');
+  }
+  if (execution.usage.runtime_reported_cost !== undefined && execution.usage.runtime_reported_cost !== null) {
+    if (!Number.isFinite(execution.usage.runtime_reported_cost) || execution.usage.runtime_reported_cost < 0) {
+      fail('execution.usage.runtime_reported_cost', 'must be a non-negative number or null');
+    }
+  }
+  if (execution.usage.session_id !== undefined) {
+    assertString(execution.usage.session_id, 'execution.usage.session_id');
+  }
+  if (execution.usage.tool_names !== undefined) {
+    assertArray(execution.usage.tool_names, 'execution.usage.tool_names');
+    const names = new Set();
+    for (const [index, name] of execution.usage.tool_names.entries()) {
+      assertString(name, `execution.usage.tool_names[${index}]`);
+      if (names.has(name)) {
+        fail('execution.usage.tool_names', 'must not contain duplicate names');
+      }
+      names.add(name);
+    }
+    if (execution.usage.tool_names.length !== execution.usage.tool_calls) {
+      fail('execution.usage.tool_names', 'must have one deduplicated name per tool call');
+    }
   }
   return execution;
 }

@@ -71,7 +71,11 @@ function adjudicationFor(scenario) {
 }
 
 function failedRun({ benchmarkVersion, configuration, scenario, trial, error }) {
-  const contractFailure = error instanceof ContractError;
+  const failureCode = error instanceof ContractError
+    ? 'ADAPTER_CONTRACT_VIOLATION'
+    : ['AMBIGUOUS_ACTION', 'UNMAPPABLE_ACTION', 'UNKNOWN_ACTION', 'OPENCODE_EXIT_FAILURE', 'OPENCODE_EXPORT_FAILURE', 'UNSCORABLE_EVIDENCE'].includes(error?.code)
+      ? error.code
+      : 'ADAPTER_FAILURE';
   return {
     run_id: runId({ benchmarkVersion, configuration, scenario, trial }),
     scenario_id: scenario.id,
@@ -84,9 +88,30 @@ function failedRun({ benchmarkVersion, configuration, scenario, trial, error }) 
     transcript: null,
     harness_acceptance: null,
     failure: {
-      code: contractFailure ? 'ADAPTER_CONTRACT_VIOLATION' : 'ADAPTER_FAILURE',
+      code: failureCode,
       message: error instanceof Error ? error.message : String(error),
     },
+  };
+}
+
+function deriveDirectionChangingActions(scenario, execution) {
+  const knownActions = new Set([...scenario.allowed_next_actions, scenario.earliest_prohibited_direction_changing_edit]);
+  return {
+    ...execution,
+    events: execution.events.map((event) => {
+      if (event.type !== 'agent_action') {
+        return { ...event };
+      }
+      if (!knownActions.has(event.action_id)) {
+        const error = new Error(`Unknown action ${event.action_id} for scenario ${scenario.id}`);
+        error.code = 'UNKNOWN_ACTION';
+        throw error;
+      }
+      return {
+        ...event,
+        direction_changing: event.action_id === scenario.earliest_prohibited_direction_changing_edit,
+      };
+    }),
   };
 }
 
@@ -167,6 +192,8 @@ export function sanitizeAdapterRequest(scenario, configuration, trial) {
 export function createHarnessRun({ scenario, configuration, trial, benchmarkVersion, execution }) {
   validateScenario(scenario);
   validateExecution(execution);
+  const normalizedExecution = deriveDirectionChangingActions(scenario, execution);
+  validateExecution(normalizedExecution);
   return {
     run_id: runId({ benchmarkVersion, configuration, scenario, trial }),
     scenario_id: scenario.id,
@@ -176,8 +203,8 @@ export function createHarnessRun({ scenario, configuration, trial, benchmarkVers
     configuration,
     trial,
     status: 'completed',
-    transcript: execution,
-    harness_acceptance: buildAcceptance(scenario, execution),
+    transcript: normalizedExecution,
+    harness_acceptance: buildAcceptance(scenario, normalizedExecution),
     failure: null,
   };
 }

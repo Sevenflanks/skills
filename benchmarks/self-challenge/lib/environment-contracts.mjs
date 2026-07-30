@@ -15,6 +15,12 @@ function assertFiniteNumber(value, path, minimum, maximum = Number.POSITIVE_INFI
   }
 }
 
+function assertNullableFiniteNumber(value, path, minimum, maximum = Number.POSITIVE_INFINITY) {
+  if (value !== null) {
+    assertFiniteNumber(value, path, minimum, maximum);
+  }
+}
+
 function validateCatalog(catalog) {
   assertArray(catalog, 'benchmark environment.skill_catalog');
   if (catalog.length === 0) {
@@ -71,9 +77,11 @@ export function validateEnvironment(environment) {
   validateCatalog(environment.skill_catalog);
   assertObject(environment.sampling_settings, 'benchmark environment.sampling_settings');
   assertExactKeys(environment.sampling_settings, ['seed', 'temperature', 'top_p'], 'benchmark environment.sampling_settings');
-  assertNonNegativeInteger(environment.sampling_settings.seed, 'benchmark environment.sampling_settings.seed');
-  assertFiniteNumber(environment.sampling_settings.temperature, 'benchmark environment.sampling_settings.temperature', 0);
-  assertFiniteNumber(environment.sampling_settings.top_p, 'benchmark environment.sampling_settings.top_p', 0, 1);
+  if (environment.sampling_settings.seed !== null) {
+    assertNonNegativeInteger(environment.sampling_settings.seed, 'benchmark environment.sampling_settings.seed');
+  }
+  assertNullableFiniteNumber(environment.sampling_settings.temperature, 'benchmark environment.sampling_settings.temperature', 0);
+  assertNullableFiniteNumber(environment.sampling_settings.top_p, 'benchmark environment.sampling_settings.top_p', 0, 1);
   validateTools(environment.tool_availability);
   return environment;
 }
