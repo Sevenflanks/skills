@@ -1718,6 +1718,7 @@ function New-FinalizeStopArtifactCleanupFailureResult {
         [Parameter(Mandatory)][string]$RecordPath,
         [Parameter(Mandatory)][string[]]$ArtifactPaths,
         [Parameter(Mandatory)][string]$ErrorMessage,
+        [Parameter(Mandatory)][bool]$TerminationAttempted,
         [Parameter(Mandatory)][bool]$ForcedTerminationUsed,
         [Parameter(Mandatory)][int]$GracefulActionInvocations,
         [Parameter(Mandatory)][string]$GracefulActionOutcome,
@@ -1746,6 +1747,7 @@ function New-FinalizeStopArtifactCleanupFailureResult {
             authority_verified = $true
             graceful_action_invocations = $GracefulActionInvocations
             graceful_action_outcome = $GracefulActionOutcome
+            termination_attempted = $TerminationAttempted
             forced_termination_used = $ForcedTerminationUsed
             owned_tree_empty = $OwnedTreeEmpty
             root_process_absent = $RootAbsent
@@ -1753,8 +1755,70 @@ function New-FinalizeStopArtifactCleanupFailureResult {
             named_job_absent = $true
             record_path = $RecordPath
             record_present = $true
+            record_cleanup_attempted = $true
+            record_cleanup_completed = $false
             record_state = $Record['state']
             publication_artifacts = @($ArtifactPaths)
+            responsibility_status = 'transfer-required-not-completed'
+        }
+    }
+}
+
+function New-FinalizePostAuthorityFailureResult {
+    param(
+        [Parameter(Mandatory)][Collections.IDictionary]$Record,
+        [Parameter(Mandatory)][string]$RecordPath,
+        [Parameter(Mandatory)][string]$ReasonCode,
+        [Parameter(Mandatory)][string[]]$MissingEvidence,
+        [Parameter(Mandatory)][string]$ErrorMessage,
+        [Parameter(Mandatory)][int]$GracefulActionInvocations,
+        [Parameter(Mandatory)][string]$GracefulActionOutcome,
+        [Parameter(Mandatory)][bool]$TerminationAttempted,
+        [Parameter(Mandatory)][bool]$ForcedTerminationUsed,
+        [Parameter(Mandatory)][bool]$OwnedTreeEmpty,
+        [Parameter(Mandatory)][bool]$RootAbsent,
+        [Parameter(Mandatory)][bool]$HolderAbsent,
+        [Parameter(Mandatory)][bool]$NamedJobAbsent,
+        [Parameter(Mandatory)][bool]$RecordPresent,
+        [Parameter(Mandatory)][bool]$RecordCleanupAttempted,
+        [Parameter(Mandatory)][bool]$RecordCleanupCompleted
+    )
+
+    # Authority 已驗證後不可退回 rejection 或拋出 raw error；保留未完成事實，交給明確的 reconciliation owner。
+    return [ordered]@{
+        action = 'Finalize'
+        tier = 'windows-self-managed'
+        requested_disposition = $Disposition
+        binding = [ordered]@{ run_id = $Record['run_id']; job_name = $Record['job_name']; root_process_id = $Record['root']['process_id'] }
+        stdio = [ordered]@{ isolated = $true; stdout_path = $Record['stdio']['stdout_path']; stderr_path = $Record['stdio']['stderr_path'] }
+        readiness = [ordered]@{ identity = $Record['readiness']['identity']; succeeded = ($Record['readiness']['result'] -eq 'succeeded') }
+        lifecycle_result = [ordered]@{
+            status = 'unresolved'
+            operation = 'finalize-post-authority-failure'
+            failure_kind = 'post-authority-finalization'
+            cleanup = [ordered]@{ attempted = ($TerminationAttempted -or $RecordCleanupAttempted); status = 'unresolved'; result = $ReasonCode }
+            unresolved_reason = $ErrorMessage
+            error = $ErrorMessage
+        }
+        downstream_result = $DownstreamResult
+        final_disposition = [ordered]@{ requested = $Disposition; status = 'unresolved' }
+        later_owner = 'lifecycle-reconciliation-owner'
+        evidence = [ordered]@{
+            authority_verified = $true
+            reason_code = $ReasonCode
+            missing_evidence = @($MissingEvidence)
+            graceful_action_invocations = $GracefulActionInvocations
+            graceful_action_outcome = $GracefulActionOutcome
+            termination_attempted = $TerminationAttempted
+            forced_termination_used = $ForcedTerminationUsed
+            owned_tree_empty = $OwnedTreeEmpty
+            root_process_absent = $RootAbsent
+            job_holder_absent = $HolderAbsent
+            named_job_absent = $NamedJobAbsent
+            record_path = $RecordPath
+            record_present = $RecordPresent
+            record_cleanup_attempted = $RecordCleanupAttempted
+            record_cleanup_completed = $RecordCleanupCompleted
             responsibility_status = 'transfer-required-not-completed'
         }
     }
@@ -1888,9 +1952,16 @@ function Invoke-Finalize {
     $authorityVerified = $false
     $gracefulActionInvocations = 0
     $gracefulActionOutcome = 'not-provided'
+    $terminationAttempted = $false
     $forcedTerminationUsed = $false
     $ownedTreeEmpty = $false
     $rootAbsent = $false
+    $holderAbsent = $false
+    $namedJobAbsent = $false
+    $recordCleanupAttempted = $false
+    $recordCleanupCompleted = $false
+    $postAuthorityReasonCode = 'finalization-failed'
+    $postAuthorityMissingEvidence = @('completed-final-disposition')
     $callbackCleanupFailure = $null
     try {
         try {
@@ -2084,20 +2155,34 @@ function Invoke-Finalize {
         }
 
         if (-not $ownedTreeEmpty) {
-            $forcedTerminationUsed = $true
             $forcedDeadlineMilliseconds = [Math]::Min(5000, [Math]::Max(1000, $GracefulDeadlineMilliseconds))
             # 只對剛完成 membership 驗證且仍保留中的 Job handle 強制停止，不能改以 PID 重新找目標。
+            $postAuthorityReasonCode = 'termination-failed'
+            $postAuthorityMissingEvidence = @('successful-owned-job-termination')
+            $terminationAttempted = $true
+            # TEST-INJECTION: finalize-forced-termination
             [CandidateAgentProcessLifecycle.Native]::TerminateFinalizedWorkloadJob($jobHandle)
+            $forcedTerminationUsed = $true
+            $postAuthorityReasonCode = 'empty-job-unconfirmed'
+            $postAuthorityMissingEvidence = @('empty-owned-job')
+            # TEST-INJECTION: finalize-empty-job-confirmation
             $ownedTreeEmpty = Wait-ForEmptyJob -JobHandle $jobHandle -DeadlineMilliseconds $forcedDeadlineMilliseconds
             if (-not $ownedTreeEmpty) { throw 'The owned Job did not empty after bounded forced Stop.' }
+            $postAuthorityReasonCode = 'root-exit-unconfirmed'
+            $postAuthorityMissingEvidence = @('absent-owned-root')
             $rootAbsent = [CandidateAgentProcessLifecycle.Native]::WaitForExit($rootHandle, [uint32]$forcedDeadlineMilliseconds)
             if (-not $rootAbsent) { throw 'The owned root did not exit after bounded forced Stop.' }
         }
         else {
+            $postAuthorityReasonCode = 'root-exit-unconfirmed'
+            $postAuthorityMissingEvidence = @('absent-owned-root')
             $rootAbsent = [CandidateAgentProcessLifecycle.Native]::WaitForExit($rootHandle, 0)
             if (-not $rootAbsent) { throw 'The owned Job emptied without confirming root exit.' }
         }
 
+        $postAuthorityReasonCode = 'holder-release-failed'
+        $postAuthorityMissingEvidence = @('absent-job-holder')
+        # TEST-INJECTION: finalize-holder-release
         $finalizeEvent.Set() | Out-Null
         if (-not $holderExitedEvent.WaitOne(1000)) {
             throw 'The Job handle holder did not exit within the graceful deadline.'
@@ -2105,19 +2190,29 @@ function Invoke-Finalize {
         if (-not [CandidateAgentProcessLifecycle.Native]::WaitForExit($holderHandle, 1000)) {
             throw 'The Job handle holder did not terminate within the graceful deadline.'
         }
+        $holderAbsent = $true
         [CandidateAgentProcessLifecycle.Native]::Close($holderHandle)
         $holderHandle = [IntPtr]::Zero
         [CandidateAgentProcessLifecycle.Native]::Close($rootHandle)
         $rootHandle = [IntPtr]::Zero
         [CandidateAgentProcessLifecycle.Native]::Close($jobHandle)
         $jobHandle = [IntPtr]::Zero
+        $postAuthorityReasonCode = 'job-release-unconfirmed'
+        $postAuthorityMissingEvidence = @('absent-named-job')
+        # TEST-INJECTION: finalize-job-release-confirmation
         $namedJobAbsent = -not [CandidateAgentProcessLifecycle.Native]::NamedJobExists([string]$record['job_name'])
         if (-not $namedJobAbsent) {
             throw 'The named Job remained after the holder released its handle.'
         }
+        $postAuthorityReasonCode = 'record-cleanup-failed'
+        $postAuthorityMissingEvidence = @('removed-run-record')
+        $recordCleanupAttempted = $true
         Assert-ExistingRecordPath -Path $recordPathForFinalize | Out-Null
         Remove-FinalizeScopedPublicationArtifacts -RecordPath $recordPathForFinalize | Out-Null
         [IO.File]::Delete($recordPathForFinalize)
+        $recordPresent = [IO.File]::Exists($recordPathForFinalize)
+        if ($recordPresent) { throw 'The exact run record remained after Finalize cleanup.' }
+        $recordCleanupCompleted = $true
 
         return [ordered]@{
             action = 'Finalize'
@@ -2134,7 +2229,7 @@ function Invoke-Finalize {
             }
             downstream_result = $DownstreamResult
             final_disposition = [ordered]@{ requested = 'Stop'; status = if ($callbackCleanupFailure) { 'unresolved' } else { 'completed' } }
-            evidence = [ordered]@{ authority_verified = $authorityVerified; graceful_action_invocations = $gracefulActionInvocations; graceful_action_outcome = $gracefulActionOutcome; callback_cleanup_failure = $callbackCleanupFailure; forced_termination_used = $forcedTerminationUsed; owned_tree_empty = $ownedTreeEmpty; root_process_absent = $rootAbsent; named_job_absent = $true; job_holder_absent = $true }
+            evidence = [ordered]@{ authority_verified = $authorityVerified; graceful_action_invocations = $gracefulActionInvocations; graceful_action_outcome = $gracefulActionOutcome; callback_cleanup_failure = $callbackCleanupFailure; termination_attempted = $terminationAttempted; forced_termination_used = $forcedTerminationUsed; owned_tree_empty = $ownedTreeEmpty; root_process_absent = $rootAbsent; named_job_absent = $namedJobAbsent; job_holder_absent = $holderAbsent; record_present = $recordPresent; record_cleanup_attempted = $recordCleanupAttempted; record_cleanup_completed = $recordCleanupCompleted }
         }
     }
     catch {
@@ -2146,9 +2241,10 @@ function Invoke-Finalize {
             $artifactCleanupException = $artifactCleanupException.InnerException
         }
         if ($artifactCleanupException) {
-            return New-FinalizeStopArtifactCleanupFailureResult -Record $record -RecordPath $recordPathForFinalize -ArtifactPaths @(Get-FinalizeArtifactPathsFromException -Exception $artifactCleanupException) -ErrorMessage $_.Exception.Message -ForcedTerminationUsed $forcedTerminationUsed -GracefulActionInvocations $gracefulActionInvocations -GracefulActionOutcome $gracefulActionOutcome -OwnedTreeEmpty $ownedTreeEmpty -RootAbsent $rootAbsent
+            return New-FinalizeStopArtifactCleanupFailureResult -Record $record -RecordPath $recordPathForFinalize -ArtifactPaths @(Get-FinalizeArtifactPathsFromException -Exception $artifactCleanupException) -ErrorMessage $_.Exception.Message -TerminationAttempted $terminationAttempted -ForcedTerminationUsed $forcedTerminationUsed -GracefulActionInvocations $gracefulActionInvocations -GracefulActionOutcome $gracefulActionOutcome -OwnedTreeEmpty $ownedTreeEmpty -RootAbsent $rootAbsent
         }
-        throw
+        $recordPresent = [IO.File]::Exists($recordPathForFinalize)
+        return New-FinalizePostAuthorityFailureResult -Record $record -RecordPath $recordPathForFinalize -ReasonCode $postAuthorityReasonCode -MissingEvidence $postAuthorityMissingEvidence -ErrorMessage $_.Exception.Message -GracefulActionInvocations $gracefulActionInvocations -GracefulActionOutcome $gracefulActionOutcome -TerminationAttempted $terminationAttempted -ForcedTerminationUsed $forcedTerminationUsed -OwnedTreeEmpty $ownedTreeEmpty -RootAbsent $rootAbsent -HolderAbsent $holderAbsent -NamedJobAbsent $namedJobAbsent -RecordPresent $recordPresent -RecordCleanupAttempted $recordCleanupAttempted -RecordCleanupCompleted $recordCleanupCompleted
     }
     finally {
         if ($finalizeEvent) { $finalizeEvent.Dispose() }

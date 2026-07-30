@@ -77,17 +77,17 @@ async function signalNamedEvent(eventName) {
   await execFile("pwsh", ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script], { windowsHide: true });
 }
 
-async function createInstrumentedHelper(directory, marker) {
+async function createInstrumentedHelper(directory, marker, injectedFailure) {
   const needle = `# TEST-INJECTION: ${marker}`;
   let helper = await readFile(helperPath, "utf8");
   assert.ok(helper.includes(needle), `missing test injection marker: ${marker}`);
-  const injection = marker === "callback-cleanup-invariant"
+  const injection = injectedFailure ?? (marker === "callback-cleanup-invariant"
     ? `if ($Purpose -eq 'graceful') {
 $failure = [InvalidOperationException]::new('Ticket 13 injected callback cleanup failure.')
 $failure.Data['AgentProcessLifecycle.CallbackCleanupFailure'] = $true
 throw $failure
 }`
-    : "throw 'Ticket 13 injected Finalize failure before Stop.'";
+    : "throw 'Ticket 13 injected Finalize failure before Stop.'");
   helper = helper.replace(needle, injection);
   const instrumentedHelperPath = join(directory, "Invoke-AgentProcessLifecycle.instrumented.ps1");
   await writeFile(instrumentedHelperPath, helper, "utf8");
@@ -151,7 +151,13 @@ async function attempt(teardownErrors, operation) {
   }
 }
 
-async function runStopScenario(kind, { activeHelperPath = helperPath, cleanupHelperPath = helperPath, expectUnresolved = false, skipHelperCleanup = false } = {}) {
+async function runStopScenario(kind, {
+  activeHelperPath = helperPath,
+  cleanupHelperPath = helperPath,
+  expectUnresolved = false,
+  expectedPostAuthorityFailure = null,
+  skipHelperCleanup = false,
+} = {}) {
   const directory = await mkdtemp("agent-process-lifecycle-ticket-13-");
   const runId = randomUUID();
   const paths = {
@@ -229,30 +235,60 @@ $result | ConvertTo-Json -Depth 12 -Compress
 `, "utf8");
     const finalized = await runPowerShell(paths.finalize);
 
-    assert.equal(finalized.lifecycle_result.status, expectUnresolved ? "unresolved" : "success");
-    assert.equal(finalized.downstream_result.status, "failed", "lifecycle Stop does not overwrite downstream state");
-    assert.equal(finalized.final_disposition.status, expectUnresolved ? "unresolved" : "completed");
-    assert.equal(finalized.evidence.owned_tree_empty, true);
-    assert.equal(finalized.evidence.root_process_absent, true);
-    assert.equal(finalized.evidence.job_holder_absent, true);
-    assert.equal(finalized.evidence.named_job_absent, true);
-    assert.equal(isAlive(launch.binding.root_process_id), false, "Stop removes the owned root");
-    assert.equal(isAlive(childProcessId), false, "Stop removes the owned child");
-    assert.equal(await namedJobExists(launch.binding.job_name), false, "Stop removes the named ownership object");
-    assert.equal(await pathExists(paths.record), false, "Stop removes the run record");
-    assert.equal(isAlive(sentinel.process_id), true, "Stop preserves the same-command unrelated sentinel");
-    const residualCallbackArtifacts = (await readdir(directory, { recursive: true })).filter((entry) => entry.startsWith("graceful-"));
-    assert.deepEqual(residualCallbackArtifacts, [], "Finalize removes its callback artifacts");
-
-    if (expectUnresolved) {
-      assert.equal(finalized.lifecycle_result.failure_kind, "graceful-callback-cleanup");
-      assert.match(finalized.lifecycle_result.unresolved_reason, /callback cleanup failure/u);
-    } else if (kind === "graceful") {
-      assert.equal(finalized.evidence.graceful_action_invocations, 1);
-      assert.equal(finalized.evidence.forced_termination_used, false);
+    if (expectedPostAuthorityFailure) {
+      assert.equal(finalized.action, "Finalize");
+      assert.equal(finalized.tier, "windows-self-managed");
+      assert.equal(finalized.lifecycle_result.status, "unresolved");
+      assert.equal(finalized.lifecycle_result.operation, "finalize-post-authority-failure");
+      assert.equal(finalized.lifecycle_result.failure_kind, "post-authority-finalization");
+      assert.equal(finalized.lifecycle_result.status === "success", false, "failure result does not claim lifecycle success");
+      assert.equal(finalized.lifecycle_result.unresolved_reason, expectedPostAuthorityFailure.error);
+      assert.deepEqual(finalized.downstream_result, { status: "failed", source: "ticket-13-downstream" }, "lifecycle failure does not overwrite downstream state");
+      assert.equal(finalized.final_disposition.requested, "Stop");
+      assert.equal(finalized.final_disposition.status, "unresolved");
+      assert.notEqual(finalized.final_disposition.status, "completed", "failure result does not claim completed Stop");
+      assert.equal(finalized.later_owner, "lifecycle-reconciliation-owner");
+      assert.equal(finalized.evidence.authority_verified, true);
+      assert.equal(finalized.evidence.reason_code, expectedPostAuthorityFailure.reasonCode);
+      assert.deepEqual(finalized.evidence.missing_evidence, expectedPostAuthorityFailure.missingEvidence);
+      assert.equal(finalized.evidence.termination_attempted, expectedPostAuthorityFailure.terminationAttempted);
+      assert.equal(finalized.evidence.forced_termination_used, expectedPostAuthorityFailure.forcedTerminationUsed);
+      assert.equal(finalized.evidence.owned_tree_empty, expectedPostAuthorityFailure.ownedTreeEmpty);
+      assert.equal(finalized.evidence.root_process_absent, expectedPostAuthorityFailure.rootAbsent);
+      assert.equal(finalized.evidence.job_holder_absent, expectedPostAuthorityFailure.holderAbsent);
+      assert.equal(finalized.evidence.named_job_absent, expectedPostAuthorityFailure.namedJobAbsent);
+      assert.equal(finalized.evidence.record_present, true);
+      assert.equal(finalized.evidence.record_cleanup_attempted, false);
+      assert.equal(finalized.evidence.record_cleanup_completed, false);
+      assert.equal(finalized.evidence.responsibility_status, "transfer-required-not-completed");
+      assert.equal(await pathExists(paths.record), true, "post-authority failure preserves the exact record for reconciliation");
+      assert.equal(isAlive(sentinel.process_id), true, "post-authority failure preserves the same-command unrelated sentinel");
     } else {
-      assert.equal(finalized.evidence.graceful_action_invocations, kind === "missing" ? 0 : 1);
-      assert.equal(finalized.evidence.forced_termination_used, true);
+      assert.equal(finalized.lifecycle_result.status, expectUnresolved ? "unresolved" : "success");
+      assert.equal(finalized.downstream_result.status, "failed", "lifecycle Stop does not overwrite downstream state");
+      assert.equal(finalized.final_disposition.status, expectUnresolved ? "unresolved" : "completed");
+      assert.equal(finalized.evidence.owned_tree_empty, true);
+      assert.equal(finalized.evidence.root_process_absent, true);
+      assert.equal(finalized.evidence.job_holder_absent, true);
+      assert.equal(finalized.evidence.named_job_absent, true);
+      assert.equal(isAlive(launch.binding.root_process_id), false, "Stop removes the owned root");
+      assert.equal(isAlive(childProcessId), false, "Stop removes the owned child");
+      assert.equal(await namedJobExists(launch.binding.job_name), false, "Stop removes the named ownership object");
+      assert.equal(await pathExists(paths.record), false, "Stop removes the run record");
+      assert.equal(isAlive(sentinel.process_id), true, "Stop preserves the same-command unrelated sentinel");
+      const residualCallbackArtifacts = (await readdir(directory, { recursive: true })).filter((entry) => entry.startsWith("graceful-"));
+      assert.deepEqual(residualCallbackArtifacts, [], "Finalize removes its callback artifacts");
+
+      if (expectUnresolved) {
+        assert.equal(finalized.lifecycle_result.failure_kind, "graceful-callback-cleanup");
+        assert.match(finalized.lifecycle_result.unresolved_reason, /callback cleanup failure/u);
+      } else if (kind === "graceful") {
+        assert.equal(finalized.evidence.graceful_action_invocations, 1);
+        assert.equal(finalized.evidence.forced_termination_used, false);
+      } else {
+        assert.equal(finalized.evidence.graceful_action_invocations, kind === "missing" ? 0 : 1);
+        assert.equal(finalized.evidence.forced_termination_used, true);
+      }
     }
   } finally {
     const teardownErrors = [];
@@ -281,12 +317,12 @@ $result | ConvertTo-Json -Depth 12 -Compress
     });
     await attempt(teardownErrors, async () => {
       if (!skipHelperCleanup) return;
-      assert.equal(isAlive(launch?.binding?.root_process_id), false, "fallback removed owned root");
-      assert.equal(isAlive(childProcessId), false, "fallback removed owned child");
-      assert.equal(isAlive(launch?.binding?.holder_identity?.process_id), false, "fallback removed holder");
-      assert.equal(await namedJobExists(launch?.binding?.job_name), false, "fallback removed named Job");
-      assert.equal(await pathExists(paths.record), false, "fallback removed record");
-      assert.deepEqual((await readdir(directory, { recursive: true })).filter((entry) => /(?:graceful|readiness)-.*\.(?:context|result|stdout|stderr|ps1)$/u.test(entry)), [], "fallback removed callback artifacts");
+      assert.equal(isAlive(launch?.binding?.root_process_id), false, "identity-bound teardown removed owned root");
+      assert.equal(isAlive(childProcessId), false, "identity-bound teardown removed owned child");
+      assert.equal(isAlive(launch?.binding?.holder_identity?.process_id), false, "identity-bound teardown removed holder");
+      assert.equal(await namedJobExists(launch?.binding?.job_name), false, "identity-bound teardown removed named Job");
+      assert.equal(await pathExists(paths.record), false, "exact fixture teardown removed record");
+      assert.deepEqual((await readdir(directory, { recursive: true })).filter((entry) => /(?:graceful|readiness)-.*\.(?:context|result|stdout|stderr|ps1)$/u.test(entry)), [], "exact fixture teardown removed callback artifacts");
     });
     await attempt(teardownErrors, async () => {
       await rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
@@ -324,14 +360,96 @@ test("callback cleanup invariant failure is unresolved rather than a successful 
   }
 });
 
-test("fixture teardown independently reclaims a run after Finalize fails before Stop", async () => {
+const postAuthorityFailureScenarios = [
+  {
+    marker: "finalize-forced-termination",
+    error: "Ticket 13 injected forced Job termination failure.",
+    reasonCode: "termination-failed",
+    missingEvidence: ["successful-owned-job-termination"],
+    terminationAttempted: true,
+    forcedTerminationUsed: false,
+    ownedTreeEmpty: false,
+    rootAbsent: false,
+    holderAbsent: false,
+    namedJobAbsent: false,
+  },
+  {
+    marker: "finalize-empty-job-confirmation",
+    error: "Ticket 13 injected empty Job confirmation failure.",
+    reasonCode: "empty-job-unconfirmed",
+    missingEvidence: ["empty-owned-job"],
+    terminationAttempted: true,
+    forcedTerminationUsed: true,
+    ownedTreeEmpty: false,
+    rootAbsent: false,
+    holderAbsent: false,
+    namedJobAbsent: false,
+  },
+  {
+    marker: "finalize-holder-release",
+    error: "Ticket 13 injected holder release failure.",
+    reasonCode: "holder-release-failed",
+    missingEvidence: ["absent-job-holder"],
+    terminationAttempted: true,
+    forcedTerminationUsed: true,
+    ownedTreeEmpty: true,
+    rootAbsent: true,
+    holderAbsent: false,
+    namedJobAbsent: false,
+  },
+  {
+    marker: "finalize-job-release-confirmation",
+    error: "Ticket 13 injected named Job release confirmation failure.",
+    reasonCode: "job-release-unconfirmed",
+    missingEvidence: ["absent-named-job"],
+    terminationAttempted: true,
+    forcedTerminationUsed: true,
+    ownedTreeEmpty: true,
+    rootAbsent: true,
+    holderAbsent: true,
+    namedJobAbsent: false,
+  },
+];
+
+for (const scenario of postAuthorityFailureScenarios) {
+  test(`post-authority ${scenario.reasonCode} returns structured unresolved evidence`, async () => {
+    const directory = await mkdtemp(`agent-process-lifecycle-ticket-13-${scenario.reasonCode}-`);
+    try {
+      const instrumentedHelperPath = await createInstrumentedHelper(
+        directory,
+        scenario.marker,
+        `throw '${scenario.error}'`,
+      );
+      await runStopScenario("missing", {
+        activeHelperPath: instrumentedHelperPath,
+        expectedPostAuthorityFailure: scenario,
+        skipHelperCleanup: true,
+      });
+    } finally {
+      await rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+    }
+  });
+}
+
+test("fixture teardown independently reclaims a structured failure before Stop", async () => {
   const directory = await mkdtemp("agent-process-lifecycle-ticket-13-teardown-");
   try {
     const instrumentedHelperPath = await createInstrumentedHelper(directory, "finalize-before-stop");
-    await assert.rejects(
-      runStopScenario("missing", { activeHelperPath: instrumentedHelperPath, cleanupHelperPath: helperPath, skipHelperCleanup: true }),
-      (error) => error.constructor.name !== "AggregateError" && error.message.includes("Ticket 13 injected Finalize failure before Stop."),
-    );
+    await runStopScenario("missing", {
+      activeHelperPath: instrumentedHelperPath,
+      expectedPostAuthorityFailure: {
+        error: "Ticket 13 injected Finalize failure before Stop.",
+        reasonCode: "finalization-failed",
+        missingEvidence: ["completed-final-disposition"],
+        terminationAttempted: false,
+        forcedTerminationUsed: false,
+        ownedTreeEmpty: false,
+        rootAbsent: false,
+        holderAbsent: false,
+        namedJobAbsent: false,
+      },
+      skipHelperCleanup: true,
+    });
   } finally {
     await rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
   }
