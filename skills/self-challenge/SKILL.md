@@ -47,6 +47,16 @@ Use the same challenger handle for two sequential prompts:
 
 Apply evidence-first precedence before selecting a verdict. Insufficient decision-relevant evidence or unresolved source precedence requires `MORE_EVIDENCE` and blocks the direction-changing action. With sufficient evidence, use `REPLAN_REQUIRED` when confirmed intent needs revision, `ADAPT_WITHIN_INTENT` when commitments stay stable, or `KEEP_COURSE` when the deviation lacks support. A verdict does not edit or revise the plan, authorize scope, or create a new approval gate.
 
+## Bounded Evidence And Safe Reentry
+
+`MORE_EVIDENCE` is bounded, not an invitation to continue investigating. It must name exactly one `decision_relevant_question`, one `minimal_read_only_investigation`, one `completion_signal`, and one `non_expansion_scope`. Do not make a direction-changing edit while that gap remains. After the stated read-only investigation completes, apply all four verdicts again; if materially changed evidence still returns `MORE_EVIDENCE`, emit a `USER_OWNED` handoff and stop rather than widening the investigation.
+
+Keep confirmed-intent baseline material separate from decision-relevant evidence material. The baseline consists only of confirmed-intent sources, constraints, and non-goals; do not derive it from a mixed bag of sources. For a session, the same normalized baseline, candidate, and evidence tuple gets one stage-two attempt only. Normalization may use NFC, line-ending normalization, trimming, and repeated-whitespace collapse only. Do not case-fold, remove punctuation, reorder material, hash fuzzily, or infer semantic equivalence.
+
+Before any prompt, emit, or awaited operation, synchronously validate the tuple and consume it. A timeout, source failure, malformed output, missing verdict, missing read-only proof, observed write, recursion, or exception does not change the tuple and never permits a retry. A changed candidate or changed evidence can start one later attempt; a candidate-only change does not satisfy an earlier evidence gap. A changed baseline preserves the old baseline and requires a user-owned handoff and a newly confirmed session.
+
+Open at most one challenger per attempt. Every attempt ends in either one verdict or one typed safe failure, never both. A safe failure preserves the baseline and can only lead to `PRESERVE_BASELINE` or a separately validated bounded `MORE_EVIDENCE`; it never authorizes a deviation or treats a tool failure as evidence against confirmed intent.
+
 ## Continue Or Disclose
 
 When the candidate remains traceable to confirmed intent and no commitment changes, continue without announcing the check. Clear within-intent adaptation is also quiet.
