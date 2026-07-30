@@ -215,7 +215,7 @@ namespace CandidateAgentProcessLifecycle
 
         public static IntPtr OpenNamedJob(string name)
         {
-            IntPtr job = OpenJobObjectW(JobObjectQuery | Synchronize, false, name);
+            IntPtr job = OpenJobObjectW(JobObjectQuery | JobObjectTerminate | Synchronize, false, name);
             if (job == IntPtr.Zero) ThrowLastError("OpenJobObjectW");
             return job;
         }
@@ -283,6 +283,11 @@ namespace CandidateAgentProcessLifecycle
         public static void TerminateLaunchJob(IntPtr job)
         {
             if (!TerminateJobObject(job, 124)) ThrowLastError("TerminateJobObject(current-run launch)");
+        }
+
+        public static void TerminateFinalizedWorkloadJob(IntPtr job)
+        {
+            if (!TerminateJobObject(job, 124)) ThrowLastError("TerminateJobObject(current-run Finalize)");
         }
 
         public static void Resume(IntPtr thread)
@@ -687,6 +692,36 @@ function Write-Record {
     }
 }
 
+function New-CallbackCleanupFailure {
+    param([Parameter(Mandatory)][string]$Purpose, [Parameter(Mandatory)][string]$Detail)
+
+    $failure = [InvalidOperationException]::new("The $Purpose callback cleanup invariant failed: $Detail")
+    $failure.Data['AgentProcessLifecycle.CallbackCleanupFailure'] = $true
+    return $failure
+}
+
+function Get-CallbackActiveProcessCount {
+    param([Parameter(Mandatory)][IntPtr]$JobHandle, [Parameter(Mandatory)][string]$Purpose)
+
+    try {
+        return [CandidateAgentProcessLifecycle.Native]::ActiveProcessCount($JobHandle)
+    }
+    catch {
+        throw (New-CallbackCleanupFailure -Purpose $Purpose -Detail $_.Exception.Message)
+    }
+}
+
+function Stop-CallbackJob {
+    param([Parameter(Mandatory)][IntPtr]$JobHandle, [Parameter(Mandatory)][string]$Purpose)
+
+    try {
+        [CandidateAgentProcessLifecycle.Native]::TerminateCallbackJob($JobHandle)
+    }
+    catch {
+        throw (New-CallbackCleanupFailure -Purpose $Purpose -Detail $_.Exception.Message)
+    }
+}
+
 function Invoke-BoundedCallback {
     param([Parameter(Mandatory)][scriptblock]$Callback, [Parameter(Mandatory)][hashtable]$Context, [Parameter(Mandatory)][int]$DeadlineMilliseconds, [Parameter(Mandatory)][string]$Purpose)
 
@@ -717,18 +752,18 @@ function Invoke-BoundedCallback {
         $remaining = [Math]::Max(0, $DeadlineMilliseconds - [int]$watch.ElapsedMilliseconds)
         if ($remaining -le 0 -or -not [CandidateAgentProcessLifecycle.Native]::WaitForExit($worker.ProcessHandle, [uint32]$remaining)) {
             # callback Job 與 workload Job 沒有任何共享 member；timeout 只能回收這次 callback tree。
-            [CandidateAgentProcessLifecycle.Native]::TerminateCallbackJob($callbackJob)
+            Stop-CallbackJob -JobHandle $callbackJob -Purpose $Purpose
             $cleanupDeadline = [Diagnostics.Stopwatch]::StartNew()
-            while ([CandidateAgentProcessLifecycle.Native]::ActiveProcessCount($callbackJob) -ne 0 -and $cleanupDeadline.ElapsedMilliseconds -lt 1000) { [Threading.Thread]::Sleep(20) }
-            if ([CandidateAgentProcessLifecycle.Native]::ActiveProcessCount($callbackJob) -ne 0) { throw "The $Purpose callback Job did not empty after its deadline." }
+            while ((Get-CallbackActiveProcessCount -JobHandle $callbackJob -Purpose $Purpose) -ne 0 -and $cleanupDeadline.ElapsedMilliseconds -lt 1000) { [Threading.Thread]::Sleep(20) }
+            if ((Get-CallbackActiveProcessCount -JobHandle $callbackJob -Purpose $Purpose) -ne 0) { throw (New-CallbackCleanupFailure -Purpose $Purpose -Detail 'The callback Job did not empty after its deadline.') }
             throw "The $Purpose callback exceeded its deadline."
         }
-        while ([CandidateAgentProcessLifecycle.Native]::ActiveProcessCount($callbackJob) -ne 0 -and $watch.ElapsedMilliseconds -lt $DeadlineMilliseconds) { [Threading.Thread]::Sleep(20) }
-        if ([CandidateAgentProcessLifecycle.Native]::ActiveProcessCount($callbackJob) -ne 0) {
-            [CandidateAgentProcessLifecycle.Native]::TerminateCallbackJob($callbackJob)
+        while ((Get-CallbackActiveProcessCount -JobHandle $callbackJob -Purpose $Purpose) -ne 0 -and $watch.ElapsedMilliseconds -lt $DeadlineMilliseconds) { [Threading.Thread]::Sleep(20) }
+        if ((Get-CallbackActiveProcessCount -JobHandle $callbackJob -Purpose $Purpose) -ne 0) {
+            Stop-CallbackJob -JobHandle $callbackJob -Purpose $Purpose
             $cleanupDeadline = [Diagnostics.Stopwatch]::StartNew()
-            while ([CandidateAgentProcessLifecycle.Native]::ActiveProcessCount($callbackJob) -ne 0 -and $cleanupDeadline.ElapsedMilliseconds -lt 1000) { [Threading.Thread]::Sleep(20) }
-            if ([CandidateAgentProcessLifecycle.Native]::ActiveProcessCount($callbackJob) -ne 0) { throw "The $Purpose callback Job did not empty after descendant timeout." }
+            while ((Get-CallbackActiveProcessCount -JobHandle $callbackJob -Purpose $Purpose) -ne 0 -and $cleanupDeadline.ElapsedMilliseconds -lt 1000) { [Threading.Thread]::Sleep(20) }
+            if ((Get-CallbackActiveProcessCount -JobHandle $callbackJob -Purpose $Purpose) -ne 0) { throw (New-CallbackCleanupFailure -Purpose $Purpose -Detail 'The callback Job did not empty after descendant timeout.') }
             throw "The $Purpose callback descendants exceeded its deadline."
         }
         if (-not [IO.File]::Exists($resultPath)) { throw "The $Purpose callback did not publish a result." }
@@ -739,16 +774,21 @@ function Invoke-BoundedCallback {
     finally {
         if ($workerStartedSuspended -and -not $callbackCompleted) {
             if ($workerAssignedToCallbackJob) {
-                if ([CandidateAgentProcessLifecycle.Native]::ActiveProcessCount($callbackJob) -ne 0) {
-                    [CandidateAgentProcessLifecycle.Native]::TerminateCallbackJob($callbackJob)
+                if ((Get-CallbackActiveProcessCount -JobHandle $callbackJob -Purpose $Purpose) -ne 0) {
+                    Stop-CallbackJob -JobHandle $callbackJob -Purpose $Purpose
                     $callbackCleanupDeadline = [Diagnostics.Stopwatch]::StartNew()
-                    while ([CandidateAgentProcessLifecycle.Native]::ActiveProcessCount($callbackJob) -ne 0 -and $callbackCleanupDeadline.ElapsedMilliseconds -lt 1000) { [Threading.Thread]::Sleep(20) }
-                    if ([CandidateAgentProcessLifecycle.Native]::ActiveProcessCount($callbackJob) -ne 0) { throw "The $Purpose callback Job did not empty during fail-closed cleanup." }
+                    while ((Get-CallbackActiveProcessCount -JobHandle $callbackJob -Purpose $Purpose) -ne 0 -and $callbackCleanupDeadline.ElapsedMilliseconds -lt 1000) { [Threading.Thread]::Sleep(20) }
+                    if ((Get-CallbackActiveProcessCount -JobHandle $callbackJob -Purpose $Purpose) -ne 0) { throw (New-CallbackCleanupFailure -Purpose $Purpose -Detail 'The callback Job did not empty during fail-closed cleanup.') }
                 }
             }
             else {
-                [CandidateAgentProcessLifecycle.Native]::TerminateUnassignedCallbackWorker($worker.ProcessHandle)
-                if (-not [CandidateAgentProcessLifecycle.Native]::WaitForExit($worker.ProcessHandle, 1000)) { throw "The $Purpose unassigned callback worker did not exit during setup cleanup." }
+                try {
+                    [CandidateAgentProcessLifecycle.Native]::TerminateUnassignedCallbackWorker($worker.ProcessHandle)
+                    if (-not [CandidateAgentProcessLifecycle.Native]::WaitForExit($worker.ProcessHandle, 1000)) { throw 'The unassigned callback worker did not exit during setup cleanup.' }
+                }
+                catch {
+                    throw (New-CallbackCleanupFailure -Purpose $Purpose -Detail $_.Exception.Message)
+                }
             }
         }
         if ($worker) {
@@ -756,9 +796,23 @@ function Invoke-BoundedCallback {
             [CandidateAgentProcessLifecycle.Native]::Close($worker.ProcessHandle)
         }
         if ($callbackJob -ne [IntPtr]::Zero) { [CandidateAgentProcessLifecycle.Native]::Close($callbackJob) }
+        $artifactCleanupErrors = [Collections.Generic.List[string]]::new()
         foreach ($path in @($contextPath, $resultPath, $scriptPath, $stdoutPath, $stderrPath)) {
-            if ([IO.File]::Exists($path)) { [IO.File]::Delete($path) }
+            $deadline = [Diagnostics.Stopwatch]::StartNew()
+            try {
+                while ([IO.File]::Exists($path)) {
+                    try { [IO.File]::Delete($path) } catch {
+                        if ($deadline.ElapsedMilliseconds -ge 1000) { throw }
+                        [Threading.Thread]::Sleep(20)
+                    }
+                }
+            }
+            catch {
+                $artifactCleanupErrors.Add("${path}: $($_.Exception.Message)")
+            }
         }
+        if ($artifactCleanupErrors.Count -gt 0) { throw (New-CallbackCleanupFailure -Purpose $Purpose -Detail ($artifactCleanupErrors -join ' ')) }
+        # TEST-INJECTION: callback-cleanup-invariant
     }
 }
 
@@ -780,6 +834,18 @@ function Get-RemainingMilliseconds {
     param([Parameter(Mandatory)][Diagnostics.Stopwatch]$Watch, [Parameter(Mandatory)][int]$DeadlineMilliseconds)
 
     return [Math]::Max(0, $DeadlineMilliseconds - [int]$Watch.ElapsedMilliseconds)
+}
+
+function Wait-ForEmptyJob {
+    param([Parameter(Mandatory)][IntPtr]$JobHandle, [Parameter(Mandatory)][int]$DeadlineMilliseconds)
+
+    $watch = [Diagnostics.Stopwatch]::StartNew()
+    while ($true) {
+        if ([CandidateAgentProcessLifecycle.Native]::ActiveProcessCount($JobHandle) -eq 0) { return $true }
+        $remaining = Get-RemainingMilliseconds -Watch $watch -DeadlineMilliseconds $DeadlineMilliseconds
+        if ($remaining -le 0) { return $false }
+        [Threading.Thread]::Sleep([Math]::Min(20, $remaining))
+    }
 }
 
 function Invoke-LaunchFailureCleanup {
@@ -1074,10 +1140,8 @@ function Invoke-Finalize {
     if ($Disposition -ne 'Stop') {
         throw 'Ticket 11 Finalize only supports Stop.'
     }
-    if ($null -eq $GracefulAction) {
-        throw 'GracefulAction is required for ticket 11 Finalize Stop.'
-    }
-    $record = [IO.File]::ReadAllText($RecordPath) | ConvertFrom-Json -AsHashtable
+    $recordPathForFinalize = Assert-ExistingRecordPath -Path $RecordPath
+    $record = [IO.File]::ReadAllText($recordPathForFinalize) | ConvertFrom-Json -AsHashtable
     if ($record.schema_version -ne 1 -or $record.state -ne 'ready' -or $record.requested_disposition -ne 'Stop') {
         throw 'The run binding is not a ready Stop record.'
     }
@@ -1085,6 +1149,12 @@ function Invoke-Finalize {
     $jobHandle = [IntPtr]::Zero
     $rootHandle = [IntPtr]::Zero
     $holderHandle = [IntPtr]::Zero
+    $gracefulActionInvocations = 0
+    $gracefulActionOutcome = 'not-provided'
+    $forcedTerminationUsed = $false
+    $ownedTreeEmpty = $false
+    $rootAbsent = $false
+    $callbackCleanupFailure = $null
     try {
         $jobHandle = [CandidateAgentProcessLifecycle.Native]::OpenNamedJob([string]$record.job_name)
         $rootHandle = [CandidateAgentProcessLifecycle.Native]::OpenRoot([uint32]$record.root.process_id)
@@ -1094,16 +1164,54 @@ function Invoke-Finalize {
             throw 'The reopened binding does not prove the recorded root instance.'
         }
 
+        # TEST-INJECTION: finalize-before-stop
         $binding = [ordered]@{ run_id = $record.run_id; job_name = $record.job_name; root_process_id = $record.root.process_id; graceful_context = $GracefulContext }
-        $watch = [Diagnostics.Stopwatch]::StartNew()
-        Invoke-BoundedCallback -Callback $GracefulAction -Context $binding -DeadlineMilliseconds $GracefulDeadlineMilliseconds -Purpose 'graceful' | Out-Null
-
-        $remaining = Get-RemainingMilliseconds -Watch $watch -DeadlineMilliseconds $GracefulDeadlineMilliseconds
-        if ($remaining -le 0 -or -not [CandidateAgentProcessLifecycle.Native]::WaitForExit($rootHandle, [uint32]$remaining)) {
-            throw 'The root did not exit within the caller-provided graceful deadline.'
+        if ($null -ne $GracefulAction) {
+            $gracefulActionInvocations = 1
+            $gracefulWatch = [Diagnostics.Stopwatch]::StartNew()
+            try {
+                $gracefulResult = Invoke-BoundedCallback -Callback $GracefulAction -Context $binding -DeadlineMilliseconds $GracefulDeadlineMilliseconds -Purpose 'graceful'
+                if ($gracefulResult -eq $false) { throw 'The graceful callback reported failure.' }
+                $remaining = Get-RemainingMilliseconds -Watch $gracefulWatch -DeadlineMilliseconds $GracefulDeadlineMilliseconds
+                if ($remaining -gt 0 -and [CandidateAgentProcessLifecycle.Native]::WaitForExit($rootHandle, [uint32]$remaining)) {
+                    $remaining = Get-RemainingMilliseconds -Watch $gracefulWatch -DeadlineMilliseconds $GracefulDeadlineMilliseconds
+                    if ($remaining -gt 0 -and (Wait-ForEmptyJob -JobHandle $jobHandle -DeadlineMilliseconds $remaining)) {
+                        $ownedTreeEmpty = $true
+                        $gracefulActionOutcome = 'succeeded'
+                    }
+                    else {
+                        $gracefulActionOutcome = 'owned-tree-not-empty'
+                    }
+                }
+                else {
+                    $gracefulActionOutcome = 'timed-out'
+                }
+            }
+            catch {
+                if ($_.Exception.Data['AgentProcessLifecycle.CallbackCleanupFailure'] -eq $true) {
+                    # callback 自己的 cleanup 失敗不能被視為 graceful action failure；仍可用既有 Job 清 workload，但結果必須 unresolved。
+                    $callbackCleanupFailure = $_.Exception.Message
+                    $gracefulActionOutcome = 'callback-cleanup-failed'
+                }
+                else {
+                    $gracefulActionOutcome = if ($_.Exception.Message -match 'deadline') { 'timed-out' } else { 'failed' }
+                }
+            }
         }
-        if ([CandidateAgentProcessLifecycle.Native]::ActiveProcessCount($jobHandle) -ne 0) {
-            throw 'The named Job still contains workload processes after graceful Stop.'
+
+        if (-not $ownedTreeEmpty) {
+            $forcedTerminationUsed = $true
+            $forcedDeadlineMilliseconds = [Math]::Min(5000, [Math]::Max(1000, $GracefulDeadlineMilliseconds))
+            # 只對剛完成 membership 驗證且仍保留中的 Job handle 強制停止，不能改以 PID 重新找目標。
+            [CandidateAgentProcessLifecycle.Native]::TerminateFinalizedWorkloadJob($jobHandle)
+            $ownedTreeEmpty = Wait-ForEmptyJob -JobHandle $jobHandle -DeadlineMilliseconds $forcedDeadlineMilliseconds
+            if (-not $ownedTreeEmpty) { throw 'The owned Job did not empty after bounded forced Stop.' }
+            $rootAbsent = [CandidateAgentProcessLifecycle.Native]::WaitForExit($rootHandle, [uint32]$forcedDeadlineMilliseconds)
+            if (-not $rootAbsent) { throw 'The owned root did not exit after bounded forced Stop.' }
+        }
+        else {
+            $rootAbsent = [CandidateAgentProcessLifecycle.Native]::WaitForExit($rootHandle, 0)
+            if (-not $rootAbsent) { throw 'The owned Job emptied without confirming root exit.' }
         }
 
         $holderHandle = [CandidateAgentProcessLifecycle.Native]::OpenRoot([uint32]$record.holder.process_id)
@@ -1115,8 +1223,7 @@ function Invoke-Finalize {
         $holderExitedEvent = [Threading.EventWaitHandle]::OpenExisting([string]$record.events.holder_exited)
         try {
             $finalizeEvent.Set() | Out-Null
-            $remaining = Get-RemainingMilliseconds -Watch $watch -DeadlineMilliseconds $GracefulDeadlineMilliseconds
-            if ($remaining -le 0 -or -not $holderExitedEvent.WaitOne($remaining)) {
+            if (-not $holderExitedEvent.WaitOne(1000)) {
                 throw 'The Job handle holder did not exit within the graceful deadline.'
             }
         }
@@ -1125,8 +1232,7 @@ function Invoke-Finalize {
             $holderExitedEvent.Dispose()
         }
 
-        $remaining = Get-RemainingMilliseconds -Watch $watch -DeadlineMilliseconds $GracefulDeadlineMilliseconds
-        if ($remaining -le 0 -or -not [CandidateAgentProcessLifecycle.Native]::WaitForExit($holderHandle, [uint32]$remaining)) {
+        if (-not [CandidateAgentProcessLifecycle.Native]::WaitForExit($holderHandle, 1000)) {
             throw 'The Job handle holder did not terminate within the graceful deadline.'
         }
         [CandidateAgentProcessLifecycle.Native]::Close($holderHandle)
@@ -1139,7 +1245,8 @@ function Invoke-Finalize {
         if (-not $namedJobAbsent) {
             throw 'The named Job remained after the holder released its handle.'
         }
-        [IO.File]::Delete($RecordPath)
+        Assert-ExistingRecordPath -Path $recordPathForFinalize | Out-Null
+        [IO.File]::Delete($recordPathForFinalize)
 
         return [ordered]@{
             action = 'Finalize'
@@ -1148,10 +1255,15 @@ function Invoke-Finalize {
             binding = [ordered]@{ run_id = $record.run_id; job_name = $record.job_name; root_process_id = $record.root.process_id }
             stdio = [ordered]@{ isolated = $true; stdout_path = $record.stdio.stdout_path; stderr_path = $record.stdio.stderr_path }
             readiness = [ordered]@{ identity = $record.readiness.identity; succeeded = ($record.readiness.result -eq 'succeeded') }
-            lifecycle_result = [ordered]@{ status = 'success'; operation = 'graceful-stop' }
+            lifecycle_result = [ordered]@{
+                status = if ($callbackCleanupFailure) { 'unresolved' } else { 'success' }
+                operation = if ($forcedTerminationUsed) { 'forced-stop' } else { 'graceful-stop' }
+                failure_kind = if ($callbackCleanupFailure) { 'graceful-callback-cleanup' } else { $null }
+                unresolved_reason = $callbackCleanupFailure
+            }
             downstream_result = $DownstreamResult
-            final_disposition = [ordered]@{ requested = 'Stop'; status = 'completed' }
-            evidence = [ordered]@{ graceful_action_invocations = 1; forced_termination_used = $false; root_process_absent = $true; named_job_absent = $true; job_holder_absent = $true }
+            final_disposition = [ordered]@{ requested = 'Stop'; status = if ($callbackCleanupFailure) { 'unresolved' } else { 'completed' } }
+            evidence = [ordered]@{ graceful_action_invocations = $gracefulActionInvocations; graceful_action_outcome = $gracefulActionOutcome; callback_cleanup_failure = $callbackCleanupFailure; forced_termination_used = $forcedTerminationUsed; owned_tree_empty = $ownedTreeEmpty; root_process_absent = $rootAbsent; named_job_absent = $true; job_holder_absent = $true }
         }
     }
     finally {
