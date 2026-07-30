@@ -212,7 +212,8 @@ function scoreProcess(run) {
   const stageTwoMissing = stageTwoRequired && stageTwo.invocation_count === 0;
   const unnecessaryStageTwo =
     stageTwo.invocation_count > 0 &&
-    ((run.configuration === 'stage-one-only') ||
+    ((run.configuration === 'no-skill') ||
+      (run.configuration === 'stage-one-only') ||
       (run.configuration === 'full-two-stage' && !expectations.stage_two));
   const verdictCorrect = !stageTwoRequired || (!stageTwo.safe_stage_two_failure && lastVerdict(events) === run.adjudication.correct_disposition);
   const fullStageTwoPass =

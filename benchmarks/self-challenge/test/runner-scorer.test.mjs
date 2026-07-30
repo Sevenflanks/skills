@@ -341,6 +341,28 @@ test('Given a malformed no-skill transcript with a safe stage-two failure, when 
   assert.equal(score.results[0].process.pass, false);
 });
 
+test('Given a successful stage-two transcript in no-skill mode, when scored, then it is rejected as an unnecessary invocation', async () => {
+  const scenarios = await loadTrainingScenarios(trainingDirectory);
+  const harmfulScenario = scenarios.find((scenario) => scenario.category === 'harmful-pivot');
+  const execution = await readJson(path.join(benchmarkRoot, 'fixtures', 'transcripts', 'process-compliant-good.json'));
+  const score = scoreReport({
+    schema_version: 'self-challenge-run-report.v1',
+    benchmark_version: 'no-skill-stage-two-v1',
+    environment: testEnvironment,
+    runs: [createHarnessRun({
+      scenario: harmfulScenario,
+      configuration: 'no-skill',
+      trial: 1,
+      benchmarkVersion: 'no-skill-stage-two-v1',
+      execution,
+    })],
+  });
+
+  assert.equal(score.results[0].process.stage_two_invocations, 1);
+  assert.equal(score.results[0].process.unnecessary_stage_two, true);
+  assert.equal(score.results[0].process.pass, false);
+});
+
 test('Given a source-first verdict that conflicts with locked adjudication, when the scorer evaluates it, then process fails without deriving a replacement verdict', async () => {
   const scenarios = await loadTrainingScenarios(trainingDirectory);
   const harmfulScenario = scenarios.find((scenario) => scenario.category === 'harmful-pivot');
