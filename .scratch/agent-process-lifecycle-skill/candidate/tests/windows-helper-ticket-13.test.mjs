@@ -12,6 +12,10 @@ after(cleanupFixtureRoot);
 const execFile = promisify(execFileCallback);
 const helperPath = resolve(import.meta.dirname, "../windows-helper/Invoke-AgentProcessLifecycle.ps1");
 const holderPath = resolve(import.meta.dirname, "../windows-helper/JobHandleHolder.ps1");
+const expectedNonGuarantees = [
+  "abrupt-host-crash-before-recoverable-record-publication",
+  "same-user-malicious-record-or-named-object-tamper",
+];
 
 function powerShellLiteral(value) {
   return `'${value.replaceAll("'", "''")}'`;
@@ -236,6 +240,7 @@ $result | ConvertTo-Json -Depth 12 -Compress
     const finalized = await runPowerShell(paths.finalize);
 
     if (expectedPostAuthorityFailure) {
+      assert.deepEqual(finalized.non_guarantees, expectedNonGuarantees, "post-authority unresolved result discloses only the accepted limitations");
       assert.equal(finalized.action, "Finalize");
       assert.equal(finalized.tier, "windows-self-managed");
       assert.equal(finalized.lifecycle_result.status, "unresolved");

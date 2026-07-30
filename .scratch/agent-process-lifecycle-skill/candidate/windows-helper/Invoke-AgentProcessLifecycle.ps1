@@ -468,6 +468,13 @@ function New-RunId {
     return [Convert]::ToHexString($bytes).ToLowerInvariant()
 }
 
+function Get-LifecycleNonGuarantees {
+    return @(
+        'abrupt-host-crash-before-recoverable-record-publication',
+        'same-user-malicious-record-or-named-object-tamper'
+    )
+}
+
 function Get-CurrentUserSid {
     return [Security.Principal.WindowsIdentity]::GetCurrent().User
 }
@@ -2256,8 +2263,15 @@ function Invoke-Finalize {
 }
 
 if ($Action -eq 'Launch') {
-    Invoke-Launch
+    $publicResult = Invoke-Launch
 }
 else {
-    Invoke-Finalize
+    $publicResult = Invoke-Finalize
 }
+
+if ($publicResult -isnot [Collections.IDictionary]) {
+    throw 'The lifecycle helper public result must be a Collections.IDictionary.'
+}
+# 所有 callback shape 都經過同一出口，避免新 failure builder 漏掉已接受的 Decision 17 限制揭露。
+$publicResult['non_guarantees'] = @(Get-LifecycleNonGuarantees)
+$publicResult

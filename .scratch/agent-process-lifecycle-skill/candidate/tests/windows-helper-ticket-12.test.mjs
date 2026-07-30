@@ -15,6 +15,14 @@ const helperPath = resolve(
   "../windows-helper/Invoke-AgentProcessLifecycle.ps1",
 );
 const holderPath = resolve(import.meta.dirname, "../windows-helper/JobHandleHolder.ps1");
+const expectedNonGuarantees = [
+  "abrupt-host-crash-before-recoverable-record-publication",
+  "same-user-malicious-record-or-named-object-tamper",
+];
+
+function assertLifecycleNonGuarantees(result, context) {
+  assert.deepEqual(result.non_guarantees, expectedNonGuarantees, context);
+}
 
 function powerShellLiteral(value) {
   return `'${value.replaceAll("'", "''")}'`;
@@ -215,6 +223,7 @@ test("Launch rejects an existing record without overwriting it and returns a mac
     await writeFile(recordPath, originalRecord, "utf8");
     const result = await runPowerShell(await writeLaunchScript(directory, recordPath));
 
+    assertLifecycleNonGuarantees(result, "Launch failure discloses only the accepted limitations");
     assert.equal(result.action, "Launch");
     assert.equal(result.lifecycle_result.status, "failed");
     assert.equal(result.lifecycle_result.failure_kind, "record-preparation");
@@ -472,6 +481,7 @@ test("publication artifact that survives Write-Record and outer cleanup is unres
   try {
     const instrumentedHelper = await createInstrumentedHelper(directory, ["write-record-before-replace", "write-record-temp-delete", "launch-cleanup-artifact-delete"]);
     result = await runPowerShell(await writeLaunchScript(directory, recordPath, instrumentedHelper, "$true"));
+    assertLifecycleNonGuarantees(result, "Launch unresolved result discloses only the accepted limitations");
     assert.equal(result.lifecycle_result.status, "unresolved");
     assert.equal(result.lifecycle_result.cleanup.status, "unresolved");
     const artifact = result.lifecycle_result.cleanup.publication_artifacts.find((item) => item.existed_before_cleanup === true);

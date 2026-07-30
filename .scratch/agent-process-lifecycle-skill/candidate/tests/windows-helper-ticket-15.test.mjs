@@ -12,6 +12,14 @@ after(cleanupFixtureRoot);
 const execFile = promisify(execFileCallback);
 const helperPath = resolve(import.meta.dirname, "../windows-helper/Invoke-AgentProcessLifecycle.ps1");
 const holderPath = resolve(import.meta.dirname, "../windows-helper/JobHandleHolder.ps1");
+const expectedNonGuarantees = [
+  "abrupt-host-crash-before-recoverable-record-publication",
+  "same-user-malicious-record-or-named-object-tamper",
+];
+
+function assertLifecycleNonGuarantees(result, context) {
+  assert.deepEqual(result.non_guarantees, expectedNonGuarantees, context);
+}
 
 function powerShellLiteral(value) {
   return `'${value.replaceAll("'", "''")}'`;
@@ -319,6 +327,9 @@ $result | ConvertTo-Json -Depth 12 -Compress
     assert.equal(stopped.final_disposition.status, "completed");
     assert.equal(stopped.evidence.forced_termination_used, true);
     assert.equal(await pathExists(paths.record), false, "later Stop removes the handoff record");
+    assertLifecycleNonGuarantees(launch, "Launch success discloses only the accepted limitations");
+    assertLifecycleNonGuarantees(preserved, "Preserve discloses only the accepted limitations");
+    assertLifecycleNonGuarantees(stopped, "later Stop discloses only the accepted limitations");
   } finally {
     await cleanupFixture(fixture);
   }
@@ -380,6 +391,7 @@ $result | ConvertTo-Json -Depth 12 -Compress
 
     const rejected = await runPowerShell(finalize);
 
+    assertLifecycleNonGuarantees(rejected, "Finalize rejection discloses only the accepted limitations");
     assert.equal(rejected.lifecycle_result.status, "unresolved");
     assert.equal(rejected.lifecycle_result.operation, "finalize-rejected");
     assert.equal(rejected.lifecycle_result.failure_kind, "record-state");
@@ -917,6 +929,7 @@ $result | ConvertTo-Json -Depth 12 -Compress
 
       const failed = await runPowerShell(finalize);
 
+      assertLifecycleNonGuarantees(failed, `${scenario.name} mixed Preserve result discloses only the accepted limitations`);
       assert.equal(failed.lifecycle_result.status, scenario.expectedStatus, scenario.name);
       assert.equal(failed.lifecycle_result.failure_kind, "record-publication", scenario.name);
       assert.equal(failed.evidence.publication_outcome, scenario.name, scenario.name);
@@ -1010,6 +1023,7 @@ $result | ConvertTo-Json -Depth 12 -Compress
 
       const unresolved = await runPowerShell(laterStop);
 
+      assertLifecycleNonGuarantees(unresolved, "artifact-cleanup unresolved result discloses only the accepted limitations");
       assert.equal(unresolved.lifecycle_result.status, "unresolved");
       assert.equal(unresolved.lifecycle_result.failure_kind, "publication-artifact-cleanup");
       assert.equal(unresolved.lifecycle_result.cleanup.attempted, true);
