@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { validateExecution } from '../lib/contracts.mjs';
 import { loadTrainingScenarios, runBenchmark } from '../lib/runner.mjs';
 import { scoreReport } from '../lib/scorer.mjs';
+import { boundedMoreEvidence, stageTwoFailure } from '../fixtures/stage-two-failure-fixtures.mjs';
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
 const trainingDirectory = path.join(directory, '..', 'scenarios', 'training');
@@ -165,8 +166,47 @@ test('Given MORE_EVIDENCE followed by an explicit direction-changing action, whe
   verdictEvent.source_precedence = 'unresolved';
   verdictEvent.evidence_sufficient = false;
   verdictEvent.value = 'MORE_EVIDENCE';
+  verdictEvent.more_evidence = boundedMoreEvidence();
   withDirectionChange.at(-1).direction_changing = true;
-  assert.throws(() => validateExecution(execution(withDirectionChange)), /MORE_EVIDENCE blocks direction-changing agent_action/);
+  assert.throws(() => validateExecution(execution(withDirectionChange)), /latest stage-two terminal/);
+});
+
+test('Given a guarded stage-two failure, when execution validates, then it accepts the safe terminal but blocks a later direction change', () => {
+  const safeFailure = execution([
+    { type: 'stage_one_started' },
+    { type: 'stage_one_completed' },
+    { type: 'stage_two_started', attempt_id: 'stage-two-1' },
+    stageTwoFailure('stage-two-1'),
+  ]);
+  assert.doesNotThrow(() => validateExecution(safeFailure));
+  const malformedFallback = structuredClone(safeFailure);
+  malformedFallback.events[3].safe_fallback = { kind: 'MORE_EVIDENCE', ...boundedMoreEvidence(), extra: 'not allowed' };
+  assert.throws(() => validateExecution(malformedFallback), /safe_fallback/);
+
+  safeFailure.events.push({
+    id: 'event-5', sequence: 5, type: 'agent_action',
+    action_id: 'move-fixture-to-public', direction_changing: true,
+  });
+  assert.throws(() => validateExecution(safeFailure), /latest stage-two terminal/);
+});
+
+test('Given a safe failure followed by a later successful changed-evidence attempt, when a direction changes after its verdict, then only the latest terminal controls the structural barrier', () => {
+  const attempt = 'stage-two-2';
+  const followUp = execution([
+    { type: 'stage_one_started' },
+    { type: 'stage_one_completed' },
+    { type: 'stage_two_started', attempt_id: 'stage-two-1' },
+    stageTwoFailure('stage-two-1'),
+    { type: 'stage_two_started', attempt_id: attempt },
+    { type: 'subagent_spawned', attempt_id: attempt, agent_id: 'reader-2', candidate_former_agent_id: 'main-agent', read_only_assurance: 'observed-no-write', fresh: true },
+    { type: 'subagent_prompt', attempt_id: attempt, phase: 'reconstruct', candidate_disclosed: false, agent_id: 'reader-2' },
+    { type: 'source_retrieved', attempt_id: attempt, source_id: 'ownership-contract', actor: 'subagent', agent_id: 'reader-2' },
+    { ...reconstruction('reader-2'), attempt_id: attempt },
+    { type: 'subagent_prompt', attempt_id: attempt, phase: 'candidate', candidate_disclosed: true, agent_id: 'reader-2' },
+    { ...verdict('reader-2'), attempt_id: attempt },
+    { type: 'agent_action', action_id: 'move-fixture-to-public', direction_changing: true },
+  ]);
+  assert.doesNotThrow(() => validateExecution(followUp));
 });
 
 test('Given malformed full stage-two output, when the runner and scorer execute, then it cannot process-pass', async () => {
