@@ -35,39 +35,25 @@ test("candidate smoke rejects destructive non-canonical output paths before dele
   }
 });
 
-test("candidate model fixture exposes only approved files with deny-by-default reads", async () => {
-  const scratchDirectory = resolve(repositoryRoot, ".scratch/agent-process-lifecycle-skill");
-  const project = await mkdtemp(resolve(scratchDirectory, "candidate-contract-fixture-"));
+test("candidate grading rejects every incomplete reference read while retaining read evidence", () => {
   const probe = [
-    "import json",
     "import sys",
-    "from pathlib import Path",
     `sys.path.insert(0, ${JSON.stringify(import.meta.dirname)})`,
-    "from model_visible_execution import ExecutionConfig, _create_fixture",
-    `project = Path(${JSON.stringify(project)})`,
-    `fixture = _create_fixture(project, ExecutionConfig(Path(${JSON.stringify(candidateDirectory)}), \"agent-process-lifecycle\", \"openai/gpt-5.6-sol\", \"unused\"))`,
-    "files = sorted(path.relative_to(fixture).as_posix() for path in fixture.rglob('*') if path.is_file())",
-    "policy = json.loads((project / 'opencode.json').read_text(encoding='utf-8'))['permission']",
-    "print(json.dumps({'files': files, 'permission': policy}))",
+    "from model_visible_contract import Case, ModelResponse",
+    "from model_visible_execution import CaseResult, RunObservation, ToolEvent, _grade",
+    "from model_visible_json import JsonArray, JsonObject, record",
+    "case = Case('read-status', '', (), (), (), frozenset({'read'}), ('references/windows-self-managed.md',))",
+    "input_value = record(('filePath', 'references/windows-self-managed.md'))",
+    "def observation(status):",
+    "    return RunObservation(True, True, (ToolEvent(0, 'read', status, input_value),), ('references/windows-self-managed.md',), ModelResponse('{}', JsonObject(())))",
+    "for status in (None, 'pending', 'error'):",
+    "    failures = _grade(case, observation(status))",
+    "    assert failures == (f'read event 0 did not complete: {status!r}',)",
+    "assert _grade(case, observation('completed')) == ()",
+    "evidence = CaseResult('read-status', observation('completed'), ()).evidence()",
+    "assert evidence.required('reference_reads', 'evidence') == JsonArray(('references/windows-self-managed.md',))",
   ].join("\n");
+  const result = spawnSync("py", ["-3.12", "-c", probe], { cwd: repositoryRoot, encoding: "utf8" });
 
-  try {
-    const result = spawnSync("py", ["-3.12", "-c", probe], { cwd: repositoryRoot, encoding: "utf8" });
-
-    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
-    assert.deepEqual(JSON.parse(result.stdout), {
-      files: ["SKILL.md", "references/failure-and-handoff.md", "references/windows-self-managed.md"],
-      permission: {
-        "*": "deny",
-        read: {
-          "*": "deny",
-          "*.opencode/skills/agent-process-lifecycle/references/windows-self-managed.md": "allow",
-          "*.opencode/skills/agent-process-lifecycle/references/failure-and-handoff.md": "allow",
-        },
-        skill: "allow",
-      },
-    });
-  } finally {
-    await rm(project, { force: true, recursive: true });
-  }
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
 });

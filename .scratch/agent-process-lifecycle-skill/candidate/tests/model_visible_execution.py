@@ -12,18 +12,37 @@ from model_visible_contract import AnyEquals, BoundaryError, Case, InvalidModelR
 from model_visible_json import JsonArray, JsonObject, JsonValue, expect_object, expect_string, json_text, lookup, portable, record, reference_paths, values_equal
 
 
-FIXTURE_PERMISSION_POLICY: Final = record(
+MANIFEST_PERMISSION_POLICY: Final = record(
     ("*", "deny"),
     (
         "read",
         record(
             ("*", "deny"),
-            ("*.opencode/skills/agent-process-lifecycle/references/windows-self-managed.md", "allow"),
-            ("*.opencode/skills/agent-process-lifecycle/references/failure-and-handoff.md", "allow"),
+            ("<fixture>/.opencode/skills/agent-process-lifecycle/references/windows-self-managed.md", "allow"),
+            ("<fixture>/.opencode/skills/agent-process-lifecycle/references/failure-and-handoff.md", "allow"),
         ),
     ),
     ("skill", "allow"),
 )
+
+
+def fixture_permission_policy(project: Path, skill_name: str) -> JsonObject:
+    project_name = project.name
+    if not project_name or any(character in project_name for character in "*?[]"):
+        raise BoundaryError("fixture project", "name must not contain permission wildcard characters")
+    reference_root = f"*{project_name}/.opencode/skills/{skill_name}/references/"
+    return record(
+        ("*", "deny"),
+        (
+            "read",
+            record(
+                ("*", "deny"),
+                (f"{reference_root}windows-self-managed.md", "allow"),
+                (f"{reference_root}failure-and-handoff.md", "allow"),
+            ),
+        ),
+        ("skill", "allow"),
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,7 +141,7 @@ def _create_fixture(project: Path, config: ExecutionConfig) -> Path:
         destination = skill_path / relative_path
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(config.skill_directory / relative_path, destination)
-    (project / "opencode.json").write_text(f"{json_text(record(('permission', FIXTURE_PERMISSION_POLICY)))}\n", encoding="utf-8")
+    (project / "opencode.json").write_text(f"{json_text(record(('permission', fixture_permission_policy(project, config.skill_name))))}\n", encoding="utf-8")
     return skill_path
 
 
@@ -170,6 +189,11 @@ def _grade(case: Case, observation: RunObservation) -> tuple[str, ...]:
         failures.append(f"forbidden tools: {', '.join(unexpected_tools)}")
     if observation.reference_reads != case.reference_reads:
         failures.append(f"reference reads {observation.reference_reads!r} did not equal {case.reference_reads!r}")
+    failures.extend(
+        f"read event {event.index} did not complete: {event.status!r}"
+        for event in observation.tool_events
+        if event.name == "read" and event.status != "completed"
+    )
     match observation.response:
         case ModelResponse(payload=payload):
             failures.extend(_response_failures(case, payload))
