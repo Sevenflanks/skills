@@ -173,3 +173,16 @@ Production matrix 的 `PASS` 只表示 current run 的 test evidence 已觀察�
 
 * Standards review：PASS，session `ses_04e46a539ffemsWhvoHi7xbC30`。Nonblocking observations 是 rejection result 的 parameter data clump，以及 Launch／Finalize record-scoped artifact enumeration 的重複形狀；未因這些 judgement calls 擴張本 ticket 的 refactor scope。
 * Spec review：PASS，session `ses_04e46a22affeB35iTh8iK2mJGR`。確認 Preserve mixed outcome、later Stop exact artifact cleanup、post-Stop cleanup failure 的 machine-readable unresolved result、reference parity、prototype identifiers 與 acceptance scope 均符合 Ticket 15／Issue 08 契約。
+
+## Final review addendum（2026-07-31）
+
+本節補充 `9ccca8c` final review 後的 blocker 修正證據，不改寫上方以 `ba1d626` 為基準的歷史驗收紀錄。修正 commits 為 `3f1ce25`（publication artifact cleanup）與 `b64c293`（Finalize record schema）。
+
+* PowerShell parser：PASS；`Invoke-AgentProcessLifecycle.ps1` 與 `JobHandleHolder.ps1` 均無 parser errors。
+* 受影響 serialized suites：PASS，Ticket 12／14／15 共 44/44、fail 0、`294957.2059ms`。
+* publication artifact discovery 僅接受 exact record leaf、32 位 lowercase hex token 與 `.tmp`／`.tmp.backup` direct child；`.notes.tmpkeep` decoy 保持不變。
+* artifact deletion 前會驗證 same parent、strict name、current-user owner、protected ACL 與 non-reparse；未受保護的 exact-name artifact 不會被刪除，結果為 structured unresolved。
+* Finalize 在進入 Job／root authority 操作前，會驗證 Launch record 的完整欄位、型別、state-dependent readiness、round-trip timestamp、disposition、owner 與 event shape；缺漏或型別錯誤回傳 `record-invalid`。
+* Pre-evidence 完整 serialized suite：81/82、fail 1、`417239.4109ms`；唯一 failure 是 model manifest 尚未重建造成的 `run_candidate_smoke.py` input hash mismatch，其餘 candidate、fixture 與 Windows runtime tests 均通過。model evidence 會在本 addendum 固定後另行重建。
+
+以上只補強既有 Windows production surface 的 cleanup provenance 與 schema rejection，不增加跨平台、abrupt host crash 或 same-user malicious tamper 保證。
