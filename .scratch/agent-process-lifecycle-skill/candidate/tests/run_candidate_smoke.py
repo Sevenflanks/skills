@@ -9,11 +9,13 @@ from __future__ import annotations
 import hashlib
 import shutil
 import sys
+import tempfile
 from pathlib import Path
 from typing import Final
+from uuid import uuid4
 
 from model_visible_contract import Case, load_cases
-from model_visible_execution import FIXTURE_PERMISSION_POLICY, CaseResult, ExecutionConfig, run_case
+from model_visible_execution import MANIFEST_PERMISSION_POLICY, CaseResult, ExecutionConfig, run_case
 from model_visible_json import JsonArray, JsonObject, JsonValue, json_text, record
 
 ROOT: Final = Path(__file__).resolve().parents[4]
@@ -39,11 +41,22 @@ def main() -> None:
     cases = load_cases(EVALS_PATH.read_text(encoding="utf-8"), NAME)
     config = ExecutionConfig(SKILL_DIRECTORY, NAME, MODEL, shutil.which("opencode.cmd") or "opencode")
     results = tuple(run_case(case, config) for case in cases)
-    _write_json(output / "manifest.json", _manifest(cases))
-    (output / "results.ndjson").write_text("".join(f"{json_text(result.evidence())}\n" for result in results), encoding="utf-8")
-    _write_json(output / "summary.json", _summary(results))
-    if not all(not result.assertions for result in results):
-        raise HarnessError("model-visible lifecycle assertions failed")
+    failed_results = tuple(
+        record(("identifier", result.identifier), ("assertions", JsonArray(result.assertions)))
+        for result in results
+        if result.assertions
+    )
+    if failed_results:
+        raise HarnessError(f"model-visible lifecycle assertions failed: {json_text(JsonArray(failed_results))}")
+    staging = Path(tempfile.mkdtemp(prefix=f"{output.name}.staging-", dir=output.parent))
+    try:
+        _write_json(staging / "manifest.json", _manifest(cases))
+        (staging / "results.ndjson").write_text("".join(f"{json_text(result.evidence())}\n" for result in results), encoding="utf-8")
+        _write_json(staging / "summary.json", _summary(results))
+        _publish(staging, output)
+    finally:
+        if staging.exists():
+            shutil.rmtree(staging)
 
 
 def _output_path() -> Path:
@@ -52,10 +65,28 @@ def _output_path() -> Path:
     output = (ROOT / sys.argv[1]).resolve()
     if output != CANONICAL_EVIDENCE_DIRECTORY:
         raise HarnessError("output must be candidate/evidence/model-visible-ticket-16")
-    if output.exists():
-        shutil.rmtree(output)
-    output.mkdir(parents=True)
     return output
+
+
+def _publish(staging: Path, output: Path) -> None:
+    rollback = output.with_name(f"{output.name}.rollback-{uuid4().hex}")
+    canonical_was_moved = False
+    try:
+        if output.exists():
+            _replace(output, rollback)
+            canonical_was_moved = True
+        _replace(staging, output)
+    except OSError:
+        if canonical_was_moved:
+            _replace(rollback, output)
+        raise
+    finally:
+        if rollback.exists() and output.exists():
+            shutil.rmtree(rollback)
+
+
+def _replace(source: Path, destination: Path) -> None:
+    source.replace(destination)
 
 
 def _manifest(cases: tuple[Case, ...]) -> JsonObject:
@@ -65,7 +96,7 @@ def _manifest(cases: tuple[Case, ...]) -> JsonObject:
         ("evidence_type", "ticket-16-model-visible"),
         ("model", MODEL),
         ("case_ids", JsonArray(tuple(case.identifier for case in cases))),
-        ("permission_policy", FIXTURE_PERMISSION_POLICY),
+        ("permission_policy", MANIFEST_PERMISSION_POLICY),
         ("input_hash_mode", "sha256-lf-normalized-text"),
         ("inputs", inputs),
         ("archived_evidence_policy", "Archived routing and Windows runtime evidence were hashed only; neither was rerun or recalculated."),
