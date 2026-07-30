@@ -1,12 +1,11 @@
 import assert from "node:assert/strict";
 import { access, readFile, readdir, rm, symlink, unlink, writeFile } from "node:fs/promises";
-import { randomUUID } from "node:crypto";
-import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, parse, resolve } from "node:path";
 import { promisify } from "node:util";
 import { execFile as execFileCallback, spawn } from "node:child_process";
 import { once } from "node:events";
 import test from "node:test";
+import { mkdtemp } from "./protected-test-fixture.mjs";
 
 const execFile = promisify(execFileCallback);
 const helperPath = resolve(
@@ -19,12 +18,17 @@ function powerShellLiteral(value) {
   return `'${value.replaceAll("'", "''")}'`;
 }
 
-async function mkdtemp(prefix) {
-  const baseName = prefix.split(/[\\/]/u).at(-1).replace(/[^a-z0-9-]/giu, "");
-  const directory = join("C:\\", `${baseName}${randomUUID()}`);
-  const script = `$directory = ${powerShellLiteral(directory)}; $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User; $security = [Security.AccessControl.DirectorySecurity]::new(); $security.SetOwner($sid); $security.SetAccessRuleProtection($true, $false); $security.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($sid, [Security.AccessControl.FileSystemRights]::FullControl, [Security.AccessControl.AccessControlType]::Allow)); [IO.FileSystemAclExtensions]::CreateDirectory($security, $directory) | Out-Null`;
-  await execFile("pwsh", ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script], { windowsHide: true });
-  return directory;
+function assertProtectedFixtureRecordPath(recordPath) {
+  const fixtureRoot = join(process.env.USERPROFILE, ".agent-process-lifecycle", "Tests");
+  assert.ok(
+    recordPath.startsWith(`${fixtureRoot}\\`),
+    "Launch exposes its record beneath the protected user-local fixture root",
+  );
+  assert.notEqual(
+    dirname(dirname(recordPath)),
+    parse(recordPath).root,
+    "Launch fixture directory is not directly beneath a volume root",
+  );
 }
 
 async function runPowerShell(scriptPath) {
@@ -165,7 +169,7 @@ async function runFaultedLaunch(directory, markers) {
 test("Launch rejects an existing record without overwriting it and returns a machine-readable failure", async () => {
   assert.equal(process.platform, "win32", "ticket 12 is Windows-only");
 
-  const directory = await mkdtemp(join(tmpdir(), "agent-process-lifecycle-ticket-12-existing-"));
+  const directory = await mkdtemp("agent-process-lifecycle-ticket-12-existing-");
   const recordPath = join(directory, "existing-record.json");
   const originalRecord = '{"owner":"unrelated"}';
 
@@ -184,7 +188,7 @@ test("Launch rejects an existing record without overwriting it and returns a mac
 });
 
 test("Launch creates a missing safe record parent before establishing ownership", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "agent-process-lifecycle-ticket-12-new-parent-"));
+  const directory = await mkdtemp("agent-process-lifecycle-ticket-12-new-parent-");
   const recordPath = join(directory, "new", "nested", "run-record.json");
   let result;
 
@@ -202,7 +206,7 @@ test("Launch creates a missing safe record parent before establishing ownership"
 });
 
 test("Launch rejects an existing directory and concurrent attempts at the same record path", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "agent-process-lifecycle-ticket-12-exclusive-"));
+  const directory = await mkdtemp("agent-process-lifecycle-ticket-12-exclusive-");
   const directoryTarget = join(directory, "record-directory");
   const concurrentRecord = join(directory, "concurrent-record.json");
   let results = [];
@@ -237,7 +241,7 @@ test("Launch failure injection cleans retained current-run authority for stdio, 
     [["bound-record-publication"], "record-publication"],
     [["ready-record-publication"], "record-publication"],
   ]) {
-    const directory = await mkdtemp(join(tmpdir(), `agent-process-lifecycle-ticket-12-${faultPoint}-`));
+    const directory = await mkdtemp(`agent-process-lifecycle-ticket-12-${faultPoint}-`);
     let result;
     let recordPath;
     try {
@@ -272,7 +276,7 @@ test("Write-Record artifact failure markers publish exact cleanup evidence and l
     [["write-record-before-replace", "write-record-temp-delete"], "write-record-temp-delete", true],
     [["write-record-backup-delete"], "write-record-backup-delete", true],
   ]) {
-    const directory = await mkdtemp(join(tmpdir(), `agent-process-lifecycle-ticket-12-${label}-`));
+    const directory = await mkdtemp(`agent-process-lifecycle-ticket-12-${label}-`);
     const recordPath = join(directory, "run-record.json");
     let result;
     try {
@@ -299,7 +303,7 @@ test("Write-Record artifact failure markers publish exact cleanup evidence and l
 });
 
 test("publication artifact that survives Write-Record and outer cleanup is unresolved with exact evidence", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "agent-process-lifecycle-ticket-12-artifact-unresolved-"));
+  const directory = await mkdtemp("agent-process-lifecycle-ticket-12-artifact-unresolved-");
   const recordPath = join(directory, "run-record.json");
   let result;
   try {
@@ -323,7 +327,7 @@ test("publication artifact that survives Write-Record and outer cleanup is unres
 });
 
 test("Launch rejects a reparse parent before creating ownership state", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "agent-process-lifecycle-ticket-12-reparse-"));
+  const directory = await mkdtemp("agent-process-lifecycle-ticket-12-reparse-");
   const target = join(directory, "target");
   const redirect = join(directory, "redirect");
   const recordPath = join(redirect, "run-record.json");
@@ -344,7 +348,7 @@ test("Launch rejects a reparse parent before creating ownership state", async ()
 });
 
 test("Launch rejects a target-path junction without altering its sentinel or creating ownership", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "agent-process-lifecycle-ticket-12-target-reparse-"));
+  const directory = await mkdtemp("agent-process-lifecycle-ticket-12-target-reparse-");
   const target = join(directory, "unrelated-target");
   const recordPath = join(directory, "run-record.json");
   const original = '{"owner":"unrelated"}';
@@ -369,7 +373,7 @@ test("Launch rejects a target-path junction without altering its sentinel or cre
 });
 
 test("Launch rejects a parent that grants an untrusted principal record-entry mutation rights", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "agent-process-lifecycle-ticket-12-unsafe-parent-"));
+  const directory = await mkdtemp("agent-process-lifecycle-ticket-12-unsafe-parent-");
   const unsafeParent = join(directory, "unsafe");
   const recordPath = join(unsafeParent, "run-record.json");
 
@@ -388,7 +392,7 @@ test("Launch rejects a parent that grants an untrusted principal record-entry mu
 });
 
 test("preparing-record validation failure removes the exact newly created record", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "agent-process-lifecycle-ticket-12-preparing-"));
+  const directory = await mkdtemp("agent-process-lifecycle-ticket-12-preparing-");
   const recordPath = join(directory, "run-record.json");
 
   try {
@@ -404,7 +408,7 @@ test("preparing-record validation failure removes the exact newly created record
 });
 
 test("preparing-record-after-create failure removes only the current invocation record", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "agent-process-lifecycle-ticket-12-preparing-after-create-"));
+  const directory = await mkdtemp("agent-process-lifecycle-ticket-12-preparing-after-create-");
   const recordPath = join(directory, "run-record.json");
   let result;
   try {
@@ -420,7 +424,7 @@ test("preparing-record-after-create failure removes only the current invocation 
 });
 
 test("a concurrent CreateNew winner remains untouched when this Launch loses the creation race", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "agent-process-lifecycle-ticket-12-create-race-"));
+  const directory = await mkdtemp("agent-process-lifecycle-ticket-12-create-race-");
   const recordPath = join(directory, "run-record.json");
 
   try {
@@ -436,7 +440,7 @@ test("a concurrent CreateNew winner remains untouched when this Launch loses the
 });
 
 test("outer Launch reports unresolved when the exact preparing record remains through retry cleanup", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "agent-process-lifecycle-ticket-12-preparing-unresolved-"));
+  const directory = await mkdtemp("agent-process-lifecycle-ticket-12-preparing-unresolved-");
   const recordPath = join(directory, "run-record.json");
   let result;
   try {
@@ -451,7 +455,7 @@ test("outer Launch reports unresolved when the exact preparing record remains th
 });
 
 test("instrumented owner-check boundary proves an untrusted parent owner is rejected", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "agent-process-lifecycle-ticket-12-owner-"));
+  const directory = await mkdtemp("agent-process-lifecycle-ticket-12-owner-");
   const recordPath = join(directory, "run-record.json");
   let result;
   try {
@@ -465,7 +469,7 @@ test("instrumented owner-check boundary proves an untrusted parent owner is reje
 });
 
 test("Launch reports unresolved when its test-only cleanup verification seam cannot confirm completion", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "agent-process-lifecycle-ticket-12-unresolved-"));
+  const directory = await mkdtemp("agent-process-lifecycle-ticket-12-unresolved-");
   const recordPath = join(directory, "run-record.json");
   let result;
   try {
@@ -485,7 +489,7 @@ test("Launch reports unresolved when its test-only cleanup verification seam can
 });
 
 test("Launch publishes a protected bound record before resuming a stdio-isolated workload", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "agent-process-lifecycle-ticket-12-ordering-"));
+  const directory = await mkdtemp("agent-process-lifecycle-ticket-12-ordering-");
   const recordPath = join(directory, "run-record.json");
   const readyPath = join(directory, "ready.json");
   const stopEventName = `Local\\AgentProcessLifecycle.Ticket12.Stop.${Date.now()}`;
@@ -518,6 +522,7 @@ finally { $stopEvent.Dispose() }
     launch = await runPowerShell(launchPath);
     const observedRecord = JSON.parse(await readFile(readyPath, "utf8"));
     assert.equal(launch.lifecycle_result.status, "success");
+    assertProtectedFixtureRecordPath(launch.binding.record_path);
     assert.equal(observedRecord.record.state, "bound", "the workload sees the bound record at its first instruction");
     assert.equal(observedRecord.record.root.process_id, launch.binding.root_process_id);
     assert.equal(observedRecord.job_query_succeeded, false, "workload cannot query the parent Job from its numeric handle value");
@@ -553,7 +558,7 @@ finally { $stopEvent.Dispose() }
 });
 
 test("Ticket 12 emergency cleanup refuses a mismatched PID identity without terminating an unrelated process", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "agent-process-lifecycle-ticket-12-pid-mismatch-"));
+  const directory = await mkdtemp("agent-process-lifecycle-ticket-12-pid-mismatch-");
   const fixture = spawn(process.env.SystemRoot ? join(process.env.SystemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe") : "pwsh", ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", "Start-Sleep -Seconds 20"], { windowsHide: true });
   try {
     assert.ok(fixture.pid);
