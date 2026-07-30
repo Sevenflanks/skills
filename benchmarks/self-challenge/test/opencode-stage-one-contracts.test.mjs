@@ -40,6 +40,14 @@ test('Given the unpublished candidate, when its content is injected into a stage
   assert.equal(rootReadme.includes('skills/self-challenge'), false);
 });
 
+test('Given failing evidence that would replace an implementation mechanism or semantic boundary, when the candidate distinguishes it from ordinary debugging, then it requires stage one before quiet continuation', async () => {
+  const candidateContent = await readFile(candidatePath, 'utf8');
+
+  assert.match(candidateContent, /ordinary within-intent debugging.*Continue these cases quietly\./s);
+  assert.match(candidateContent, /routine typo correction.*Continue these cases quietly\./s);
+  assert.match(candidateContent, /failing evidence.*replacing an implementation mechanism or semantic boundary.*stage one before continuing quietly within intent/i);
+});
+
 test('Given normalized stage-one evidence, when it becomes an execution, then completed reflection precedes interruption and action while a skipped routine stays quiet', () => {
   const usage = { elapsed_ms: null, input_tokens: 1, output_tokens: 1, runtime_reported_cost: null, tool_calls: 0, tool_names: [], turns: 1 };
   const completed = executionFromStageOneEvidence(

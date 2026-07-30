@@ -15,6 +15,8 @@ Use this candidate to question an imminent direction transition before acting on
 
 Run stage one when an observable pivot cue appears: a blocker, failing evidence, review finding, user correction, tempting workaround, unplanned work, semantic-boundary change, or repeated change of candidate action. Complete it before the first direction-changing edit.
 
+Failing evidence that motivates replacing an implementation mechanism or semantic boundary is a stage-one cue; run stage one before continuing quietly within intent.
+
 Do not escalate routine typo correction, ordinary within-intent debugging, a fallback already authorized by confirmed intent, initial exploration without a confirmed baseline, directly verifiable review feedback, or final artifact review. Continue these cases quietly.
 
 This candidate covers stage one only. Do not create a sub-agent, implement a stage-two policy, add retry or reentry behavior, or introduce a new user approval gate.
