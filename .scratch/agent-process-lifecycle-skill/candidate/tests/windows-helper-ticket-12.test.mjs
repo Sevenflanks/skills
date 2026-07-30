@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { access, readFile, readdir, rm, symlink, unlink, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, readdir, rm, symlink, unlink, writeFile } from "node:fs/promises";
 import { dirname, join, parse, resolve } from "node:path";
 import { promisify } from "node:util";
 import { execFile as execFileCallback, spawn } from "node:child_process";
@@ -55,6 +55,8 @@ async function createInstrumentedHelper(directory, markers) {
       ? "$errors.Add('Ticket 12 injected incomplete cleanup verification.')"
       : marker === "preparing-before-create"
         ? "[IO.File]::WriteAllText($Path, '{\"winner\":\"concurrent-launch\"}')"
+        : marker === "stderr-before-create"
+          ? "[IO.File]::WriteAllBytes($stderrPathForRun, [byte[]](0x73, 0x74, 0x64, 0x65, 0x72, 0x72))"
         : marker === "parent-owner-check"
           ? "$trustedSids = @('S-1-5-18')"
           : marker === "workload-job-handle-probe"
@@ -68,11 +70,13 @@ async function createInstrumentedHelper(directory, markers) {
   return instrumentedPath;
 }
 
-async function writeLaunchScript(directory, recordPath, launchHelperPath = helperPath, readinessCheck = "$false") {
-  const scriptPath = join(directory, "launch.ps1");
+async function writeLaunchScript(directory, recordPath, launchHelperPath = helperPath, readinessCheck = "$false", stdioPaths = {}) {
+  const scriptPath = join(directory, stdioPaths.scriptName ?? "launch.ps1");
+  const stdoutPath = stdioPaths.stdoutPath ?? join(directory, "stdout.log");
+  const stderrPath = stdioPaths.stderrPath ?? join(directory, "stderr.log");
   await writeFile(
     scriptPath,
-    `$result = & ${powerShellLiteral(launchHelperPath)} -Action Launch -RecordPath ${powerShellLiteral(recordPath)} -Executable $PSHOME\\pwsh.exe -ArgumentList @('-NoLogo', '-NoProfile', '-NonInteractive', '-Command', 'Start-Sleep -Seconds 20') -WorkingDirectory ${powerShellLiteral(directory)} -StdoutPath ${powerShellLiteral(join(directory, "stdout.log"))} -StderrPath ${powerShellLiteral(join(directory, "stderr.log"))} -ReadinessIdentity 'ticket-12-never-ready' -ReadinessCheck { param($context) ${readinessCheck} } -ReadinessDeadlineMilliseconds 1000 -RequestedDisposition Stop
+    `$result = & ${powerShellLiteral(launchHelperPath)} -Action Launch -RecordPath ${powerShellLiteral(recordPath)} -Executable $PSHOME\\pwsh.exe -ArgumentList @('-NoLogo', '-NoProfile', '-NonInteractive', '-Command', 'Start-Sleep -Seconds 20') -WorkingDirectory ${powerShellLiteral(directory)} -StdoutPath ${powerShellLiteral(stdoutPath)} -StderrPath ${powerShellLiteral(stderrPath)} -ReadinessIdentity 'ticket-12-never-ready' -ReadinessCheck { param($context) ${readinessCheck} } -ReadinessDeadlineMilliseconds 1000 -RequestedDisposition Stop
 $result | ConvertTo-Json -Depth 12 -Compress
 `,
     "utf8",
@@ -111,6 +115,39 @@ async function assertFailedRunAbsent(result, recordPath) {
   assert.equal(isAlive(result.evidence.job_holder_process_id), false, "exact current-run holder is absent");
   assert.equal(await namedJobExists(result.binding.job_name), false, "exact current-run Job is absent");
   assert.equal(await pathExists(recordPath), false, "exact current-run record is absent");
+}
+
+async function assertStdioPreflightRejected(result, recordPath) {
+  assert.equal(result.lifecycle_result.status, "failed");
+  assert.equal(result.lifecycle_result.failure_kind, "stdio-isolation");
+  assert.equal(result.lifecycle_result.cleanup.attempted, false);
+  assert.equal(result.binding.root_process_id, null);
+  assert.equal(result.evidence.job_holder_process_id, null);
+  assert.equal(result.binding.job_name, null);
+  assert.equal(await pathExists(recordPath), false, "stdio preflight creates no record authority");
+}
+
+async function addObjectInheritWriteAce(directory) {
+  const script = `$directory = [IO.DirectoryInfo]::new(${powerShellLiteral(directory)}); $security = [IO.FileSystemAclExtensions]::GetAccessControl($directory); $currentSid = [Security.Principal.WindowsIdentity]::GetCurrent().User; $security.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($currentSid, [Security.AccessControl.FileSystemRights]::FullControl, [Security.AccessControl.InheritanceFlags]::ObjectInherit, [Security.AccessControl.PropagationFlags]::InheritOnly, [Security.AccessControl.AccessControlType]::Allow)); $security.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new([Security.Principal.SecurityIdentifier]::new('S-1-1-0'), [Security.AccessControl.FileSystemRights]::Write, [Security.AccessControl.InheritanceFlags]::ObjectInherit, [Security.AccessControl.PropagationFlags]::InheritOnly, [Security.AccessControl.AccessControlType]::Allow)); [IO.FileSystemAclExtensions]::SetAccessControl($directory, $security)`;
+  await execFile("pwsh", ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script], { windowsHide: true });
+}
+
+async function inspectStdioSecurity(paths) {
+  const literals = paths.map(powerShellLiteral).join(", ");
+  const script = `$currentSid = [Security.Principal.WindowsIdentity]::GetCurrent().User; $writeRights = [Security.AccessControl.FileSystemRights]::Write -bor [Security.AccessControl.FileSystemRights]::AppendData -bor [Security.AccessControl.FileSystemRights]::Modify -bor [Security.AccessControl.FileSystemRights]::Delete -bor [Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles -bor [Security.AccessControl.FileSystemRights]::ChangePermissions -bor [Security.AccessControl.FileSystemRights]::TakeOwnership; @(${literals}) | ForEach-Object { $item = Get-Item -LiteralPath $_ -Force; $security = [IO.FileSystemAclExtensions]::GetAccessControl($item); $rules = @($security.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])); [pscustomobject]@{ path = $item.FullName; is_file = $item -is [IO.FileInfo]; reparse = (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0); protected = $security.AreAccessRulesProtected; owner = $security.GetOwner([Security.Principal.SecurityIdentifier]).Value; current_user = $currentSid.Value; current_user_full_control = @($rules | Where-Object { $_.AccessControlType -eq [Security.AccessControl.AccessControlType]::Allow -and $_.IdentityReference.Value -eq $currentSid.Value -and ($_.FileSystemRights -band [Security.AccessControl.FileSystemRights]::FullControl) -eq [Security.AccessControl.FileSystemRights]::FullControl }).Count -gt 0; other_write_sids = @($rules | Where-Object { $_.AccessControlType -eq [Security.AccessControl.AccessControlType]::Allow -and $_.IdentityReference.Value -ne $currentSid.Value -and ($_.FileSystemRights -band $writeRights) -ne 0 } | ForEach-Object { $_.IdentityReference.Value }) } } | ConvertTo-Json -Depth 6 -Compress`;
+  const { stdout, stderr } = await execFile("pwsh", ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script], { windowsHide: true });
+  assert.equal(stderr, "", `PowerShell stderr: ${stderr}`);
+  const result = JSON.parse(stdout);
+  return Array.isArray(result) ? result : [result];
+}
+
+function assertProtectedStdioFile(item) {
+  assert.equal(item.is_file, true, `${item.path} is a file`);
+  assert.equal(item.reparse, false, `${item.path} is not a reparse point`);
+  assert.equal(item.protected, true, `${item.path} has protected ACL inheritance`);
+  assert.equal(item.owner, item.current_user, `${item.path} is owned by the current SID`);
+  assert.equal(item.current_user_full_control, true, `${item.path} grants the current SID FullControl`);
+  assert.deepEqual(item.other_write_sids, [], `${item.path} grants no other SID mutation rights`);
 }
 
 async function cleanupCurrentRun({ directory, recordPath, result }) {
@@ -188,6 +225,124 @@ test("Launch rejects an existing record without overwriting it and returns a mac
   }
 });
 
+test("Launch rejects existing stdout and stderr targets without changing their bytes or creating authority", async () => {
+  const directory = await mkdtemp("agent-process-lifecycle-ticket-12-existing-stdio-");
+  const recordPath = join(directory, "run-record.json");
+  const stdoutPath = join(directory, "existing.stdout.log");
+  const stderrPath = join(directory, "existing.stderr.log");
+  const stdoutBytes = Buffer.from([0x73, 0x74, 0x64, 0x6f, 0x75, 0x74, 0x00, 0xff]);
+  const stderrBytes = Buffer.from([0x73, 0x74, 0x64, 0x65, 0x72, 0x72, 0x00, 0xfe]);
+
+  try {
+    await writeFile(stdoutPath, stdoutBytes);
+    await writeFile(stderrPath, stderrBytes);
+    const result = await runPowerShell(await writeLaunchScript(directory, recordPath, helperPath, "$false", { stdoutPath, stderrPath }));
+
+    await assertStdioPreflightRejected(result, recordPath);
+    assert.deepEqual(await readFile(stdoutPath), stdoutBytes, "existing stdout remains byte-identical");
+    assert.deepEqual(await readFile(stderrPath), stderrBytes, "existing stderr remains byte-identical");
+  } finally {
+    await cleanupFixtureWithoutOwnedRun({ directory, recordPath });
+  }
+});
+
+test("stderr creation race preserves the winner and removes only this invocation stdout leaf", async () => {
+  const directory = await mkdtemp("agent-process-lifecycle-ticket-12-stderr-race-");
+  const recordPath = join(directory, "run-record.json");
+  const stdoutPath = join(directory, "race.stdout.log");
+  const stderrPath = join(directory, "race.stderr.log");
+  const winnerBytes = Buffer.from("stderr", "utf8");
+  let result;
+
+  try {
+    const instrumentedHelper = await createInstrumentedHelper(directory, ["stderr-before-create"]);
+    result = await runPowerShell(await writeLaunchScript(directory, recordPath, instrumentedHelper, "$false", { stdoutPath, stderrPath }));
+
+    assert.equal(result.lifecycle_result.status, "failed");
+    assert.equal(result.lifecycle_result.failure_kind, "stdio-isolation");
+    assert.equal(result.lifecycle_result.cleanup.status, "completed");
+    assert.equal(await pathExists(stdoutPath), false, "only the stdout leaf created by this invocation is removed");
+    assert.deepEqual(await readFile(stderrPath), winnerBytes, "the concurrent stderr winner remains byte-identical");
+    await assertFailedRunAbsent(result, recordPath);
+  } finally {
+    await cleanupCurrentRun({ directory, recordPath, result });
+  }
+});
+
+test("Launch rejects a reparse stdio parent before creating authority or redirected output", async () => {
+  const directory = await mkdtemp("agent-process-lifecycle-ticket-12-stdio-reparse-");
+  const target = join(directory, "redirect-target");
+  const redirect = join(directory, "stdio-redirect");
+  const recordPath = join(directory, "run-record.json");
+  const sentinelPath = join(target, "sentinel.bin");
+  const sentinelBytes = Buffer.from([0x72, 0x65, 0x64, 0x69, 0x72, 0x65, 0x63, 0x74]);
+
+  try {
+    await mkdir(target);
+    await writeFile(sentinelPath, sentinelBytes);
+    await symlink(target, redirect, "junction");
+    const result = await runPowerShell(await writeLaunchScript(directory, recordPath, helperPath, "$false", {
+      stdoutPath: join(redirect, "stdout.log"),
+      stderrPath: join(directory, "stderr.log"),
+    }));
+
+    await assertStdioPreflightRejected(result, recordPath);
+    assert.match(result.lifecycle_result.error, /reparse point/u);
+    assert.equal(await pathExists(join(target, "stdout.log")), false, "redirect target receives no stdout leaf");
+    assert.deepEqual(await readFile(sentinelPath), sentinelBytes, "redirect target sentinel remains byte-identical");
+  } finally {
+    await cleanupFixtureWithoutOwnedRun({ directory, recordPath });
+  }
+});
+
+test("Launch rejects normalized stdout and stderr path equality before creating authority", async () => {
+  const directory = await mkdtemp("agent-process-lifecycle-ticket-12-same-stdio-");
+  const recordPath = join(directory, "run-record.json");
+  const detour = join(directory, "detour");
+  const stdoutPath = join(detour, "..", "same.log");
+  const stderrPath = join(directory, "same.log");
+
+  try {
+    await mkdir(detour);
+    const result = await runPowerShell(await writeLaunchScript(directory, recordPath, helperPath, "$false", { stdoutPath, stderrPath }));
+
+    await assertStdioPreflightRejected(result, recordPath);
+    assert.match(result.lifecycle_result.error, /stdout.*stderr.*different|distinct stdio paths/iu);
+    assert.equal(await pathExists(stderrPath), false, "equal normalized target is never created");
+  } finally {
+    await cleanupFixtureWithoutOwnedRun({ directory, recordPath });
+  }
+});
+
+test("Launch creates protected fresh stdio leaves beneath an object-inherit write ACE parent", async () => {
+  const directory = await mkdtemp("agent-process-lifecycle-ticket-12-stdio-acl-");
+  const stdioParent = join(directory, "stdio");
+  const recordPath = join(directory, "run-record.json");
+  const stdoutPath = join(stdioParent, "stdout.log");
+  const stderrPath = join(stdioParent, "stderr.log");
+  const sentinelPath = join(stdioParent, "sentinel.bin");
+  const sentinelBytes = Buffer.from([0x73, 0x65, 0x6e, 0x74, 0x69, 0x6e, 0x65, 0x6c]);
+  let result;
+
+  try {
+    await mkdir(stdioParent);
+    await writeFile(sentinelPath, sentinelBytes);
+    await addObjectInheritWriteAce(stdioParent);
+    result = await runPowerShell(await writeLaunchScript(directory, recordPath, helperPath, "$false", { stdoutPath, stderrPath }));
+
+    assert.equal(result.lifecycle_result.status, "failed");
+    assert.equal(result.lifecycle_result.failure_kind, "readiness");
+    assert.equal(result.lifecycle_result.cleanup.status, "completed");
+    await assertFailedRunAbsent(result, recordPath);
+    const security = await inspectStdioSecurity([stdoutPath, stderrPath]);
+    assert.equal(security.length, 2);
+    for (const item of security) assertProtectedStdioFile(item);
+    assert.deepEqual(await readFile(sentinelPath), sentinelBytes, "stdio sibling sentinel remains byte-identical");
+  } finally {
+    await cleanupCurrentRun({ directory, recordPath, result });
+  }
+});
+
 test("Launch creates a missing safe record parent before establishing ownership", async () => {
   const directory = await mkdtemp("agent-process-lifecycle-ticket-12-new-parent-");
   const recordPath = join(directory, "new", "nested", "run-record.json");
@@ -219,9 +374,16 @@ test("Launch rejects an existing directory and concurrent attempts at the same r
     assert.equal(directoryResult.lifecycle_result.failure_kind, "record-preparation");
     assert.equal(directoryResult.lifecycle_result.cleanup.attempted, false);
 
-    const firstScript = await writeLaunchScript(directory, concurrentRecord);
-    const secondScript = join(directory, "concurrent-launch.ps1");
-    await writeFile(secondScript, await readFile(firstScript, "utf8"), "utf8");
+    const firstScript = await writeLaunchScript(directory, concurrentRecord, helperPath, "$false", {
+      scriptName: "first-concurrent-launch.ps1",
+      stdoutPath: join(directory, "first-concurrent.stdout.log"),
+      stderrPath: join(directory, "first-concurrent.stderr.log"),
+    });
+    const secondScript = await writeLaunchScript(directory, concurrentRecord, helperPath, "$false", {
+      scriptName: "second-concurrent-launch.ps1",
+      stdoutPath: join(directory, "second-concurrent.stdout.log"),
+      stderrPath: join(directory, "second-concurrent.stderr.log"),
+    });
     const [first, second] = await Promise.all([
       runPowerShell(firstScript),
       runPowerShell(secondScript),
@@ -462,7 +624,7 @@ test("instrumented owner-check boundary proves an untrusted parent owner is reje
   try {
     const instrumentedHelper = await createInstrumentedHelper(directory, ["parent-owner-check"]);
     result = await runPowerShell(await writeLaunchScript(directory, recordPath, instrumentedHelper));
-    assert.equal(result.lifecycle_result.failure_kind, "record-preparation");
+    assert.equal(result.lifecycle_result.failure_kind, "stdio-isolation");
     assert.match(result.lifecycle_result.error, /untrusted owner/u);
   } finally {
     await cleanupFixtureWithoutOwnedRun({ directory, recordPath });
@@ -587,7 +749,10 @@ test("Ticket 12 emergency cleanup refuses a mismatched PID identity without term
 test("Launch keeps the Job handle outside the workload inheritance allowlist", async () => {
   const helper = await readFile(helperPath, "utf8");
 
+  assert.match(helper, /StartSuspended\(string executable, string\[\] arguments, string workingDirectory, IntPtr output, IntPtr error\)/u);
   assert.match(helper, /StartSuspended[\s\S]*?new IntPtr\[\] \{ input, output, error \}/u);
+  assert.doesNotMatch(helper, /CreateFileW\((?:stdoutPath|stderrPath)/u);
+  assert.match(helper, /function New-ProtectedStdioStream[\s\S]*?FileMode\]::CreateNew[\s\S]*?FileShare\]::None/u);
   assert.match(helper, /StartHolder[\s\S]*?new IntPtr\[\] \{ jobHandle \}/u);
   assert.doesNotMatch(helper, /StartSuspended[\s\S]*?new IntPtr\[\] \{[^}]*jobHandle/u);
 });

@@ -280,25 +280,27 @@ namespace CandidateAgentProcessLifecycle
             }
         }
 
-        public static NativeProcess StartSuspended(string executable, string[] arguments, string workingDirectory, string stdoutPath, string stderrPath)
+        public static NativeProcess StartSuspended(string executable, string[] arguments, string workingDirectory, IntPtr output, IntPtr error)
         {
             IntPtr input = IntPtr.Zero;
-            IntPtr output = IntPtr.Zero;
-            IntPtr error = IntPtr.Zero;
+            bool outputInheritable = false;
+            bool errorInheritable = false;
             try
             {
                 SecurityAttributes inheritable = new SecurityAttributes { Length = Marshal.SizeOf<SecurityAttributes>(), InheritHandle = true };
                 input = CreateFileW("NUL", 0x80000000, 3, ref inheritable, 3, 0, IntPtr.Zero);
-                output = CreateFileW(stdoutPath, 0x40000000, 3, ref inheritable, 2, 0, IntPtr.Zero);
-                error = CreateFileW(stderrPath, 0x40000000, 3, ref inheritable, 2, 0, IntPtr.Zero);
-                if (input == new IntPtr(-1) || output == new IntPtr(-1) || error == new IntPtr(-1)) ThrowLastError("CreateFileW(stdio)");
+                if (input == new IntPtr(-1)) ThrowLastError("CreateFileW(NUL)");
+                SetInheritable(output, true);
+                outputInheritable = true;
+                SetInheritable(error, true);
+                errorInheritable = true;
                 return Start(executable, arguments, workingDirectory, input, output, error, new IntPtr[] { input, output, error }, CreateSuspended | CreateNoWindow);
             }
             finally
             {
+                if (errorInheritable) SetInheritable(error, false);
+                if (outputInheritable) SetInheritable(output, false);
                 CloseIfValid(input);
-                CloseIfValid(output);
-                CloseIfValid(error);
             }
         }
 
@@ -620,6 +622,89 @@ function New-CurrentUserDirectorySecurity {
     return $security
 }
 
+function Assert-FreshStdioPath {
+    param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][string]$Name)
+
+    $fullPath = Assert-SafeRecordParent -Path $Path
+    $item = Get-Item -LiteralPath $fullPath -Force -ErrorAction SilentlyContinue
+    if ($null -ne $item) {
+        if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw "$Name target is a reparse point." }
+        throw "$Name must be a fresh absent file."
+    }
+    return $fullPath
+}
+
+function Assert-CurrentUserProtectedStdioStream {
+    param([Parameter(Mandatory)][IO.FileStream]$Stream, [Parameter(Mandatory)][string]$Path)
+
+    $item = [IO.FileInfo]::new($Path)
+    if (-not $item.Exists) { throw "The protected stdio file is absent: $Path" }
+    if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw "The protected stdio file is a reparse point: $Path" }
+
+    $security = [IO.FileSystemAclExtensions]::GetAccessControl($Stream)
+    $currentSid = Get-CurrentUserSid
+    if (-not $security.AreAccessRulesProtected -or $security.GetOwner([Security.Principal.SecurityIdentifier]).Value -ne $currentSid.Value) {
+        throw "The stdio ACL is not protected for the current user: $Path"
+    }
+
+    $allowsCurrentUser = $false
+    foreach ($rule in $security.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
+        if ($rule.AccessControlType -ne [Security.AccessControl.AccessControlType]::Allow) { continue }
+        if ($rule.IdentityReference.Value -ne $currentSid.Value) { throw "The stdio ACL allows an unapproved principal: $Path" }
+        if (($rule.FileSystemRights -band [Security.AccessControl.FileSystemRights]::FullControl) -eq [Security.AccessControl.FileSystemRights]::FullControl) {
+            $allowsCurrentUser = $true
+        }
+    }
+    if (-not $allowsCurrentUser) { throw "The current user does not have full control of stdio: $Path" }
+}
+
+function New-ProtectedStdioStream {
+    param([Parameter(Mandatory)][string]$Path)
+
+    $stream = $null
+    $created = $false
+    try {
+        $stream = [IO.FileSystemAclExtensions]::Create(
+            [IO.FileInfo]::new($Path),
+            [IO.FileMode]::CreateNew,
+            [Security.AccessControl.FileSystemRights]::FullControl,
+            [IO.FileShare]::None,
+            4096,
+            [IO.FileOptions]::WriteThrough,
+            (New-CurrentUserFileSecurity)
+        )
+        $created = $true
+        Assert-CurrentUserProtectedStdioStream -Stream $stream -Path $Path
+        return $stream
+    }
+    catch {
+        if ($stream) { $stream.Dispose() }
+        if ($created) { Remove-ProtectedStdioFile -Path $Path }
+        throw
+    }
+}
+
+function Remove-ProtectedStdioFile {
+    param([Parameter(Mandatory)][string]$Path)
+
+    if (-not [IO.File]::Exists($Path)) { return }
+    $item = [IO.FileInfo]::new($Path)
+    $security = [IO.FileSystemAclExtensions]::GetAccessControl($item)
+    $currentSid = Get-CurrentUserSid
+    if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
+        -not $security.AreAccessRulesProtected -or
+        $security.GetOwner([Security.Principal.SecurityIdentifier]).Value -ne $currentSid.Value) {
+        throw "Refused to remove a stdio leaf that is no longer the protected current-user file: $Path"
+    }
+    foreach ($rule in $security.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
+        if ($rule.AccessControlType -eq [Security.AccessControl.AccessControlType]::Allow -and $rule.IdentityReference.Value -ne $currentSid.Value) {
+            throw "Refused to remove a stdio leaf that allows an unapproved principal: $Path"
+        }
+    }
+    [IO.File]::Delete($Path)
+    if ([IO.File]::Exists($Path)) { throw "The exact protected stdio leaf remained after cleanup: $Path" }
+}
+
 function Write-ProtectedJsonFile {
     param([Parameter(Mandatory)][object]$Record, [Parameter(Mandatory)][string]$Path, [ref]$CreatedByCurrentInvocation)
 
@@ -856,6 +941,8 @@ function Invoke-BoundedCallback {
     $workerAssignedToCallbackJob = $false
     $callbackCompleted = $false
     $watch = $null
+    $callbackStdoutStream = $null
+    $callbackStderrStream = $null
     try {
         $directory = New-ProtectedCallbackDirectory -ParentPath $recordParent -Purpose $Purpose -Token $token
         $contextPath = Join-Path $directory 'context.xml'
@@ -872,7 +959,23 @@ function Invoke-BoundedCallback {
         New-ProtectedCallbackFile -Path $stdoutPath
         New-ProtectedCallbackFile -Path $stderrPath
         $callbackJob = [CandidateAgentProcessLifecycle.Native]::CreateNamedJob("Local\AgentProcessLifecycle.Callback.$token.Job")
-        $worker = [CandidateAgentProcessLifecycle.Native]::StartSuspended("$PSHOME\pwsh.exe", [string[]]@('-NoLogo', '-NoProfile', '-NonInteractive', '-File', $scriptPath, '-ContextPath', $contextPath, '-ResultPath', $resultPath), $directory, $stdoutPath, $stderrPath)
+        $callbackStdoutStream = [IO.File]::Open($stdoutPath, [IO.FileMode]::Open, [IO.FileAccess]::Write, [IO.FileShare]::None)
+        $callbackStderrStream = [IO.File]::Open($stderrPath, [IO.FileMode]::Open, [IO.FileAccess]::Write, [IO.FileShare]::None)
+        try {
+            $worker = [CandidateAgentProcessLifecycle.Native]::StartSuspended(
+                "$PSHOME\pwsh.exe",
+                [string[]]@('-NoLogo', '-NoProfile', '-NonInteractive', '-File', $scriptPath, '-ContextPath', $contextPath, '-ResultPath', $resultPath),
+                $directory,
+                $callbackStdoutStream.SafeFileHandle.DangerousGetHandle(),
+                $callbackStderrStream.SafeFileHandle.DangerousGetHandle()
+            )
+        }
+        finally {
+            $callbackStderrStream.Dispose()
+            $callbackStderrStream = $null
+            $callbackStdoutStream.Dispose()
+            $callbackStdoutStream = $null
+        }
         $workerStartedSuspended = $true
         [CandidateAgentProcessLifecycle.Native]::Assign($callbackJob, $worker.ProcessHandle)
         $workerAssignedToCallbackJob = $true
@@ -901,6 +1004,8 @@ function Invoke-BoundedCallback {
         return $result
     }
     finally {
+        if ($callbackStderrStream) { $callbackStderrStream.Dispose() }
+        if ($callbackStdoutStream) { $callbackStdoutStream.Dispose() }
         if ($workerStartedSuspended -and -not $callbackCompleted) {
             if ($workerAssignedToCallbackJob) {
                 if ((Get-CallbackActiveProcessCount -JobHandle $callbackJob -Purpose $Purpose) -ne 0) {
@@ -1147,10 +1252,35 @@ function Invoke-Launch {
     $publicationArtifacts = @()
     $rootIdentity = $null
     $holderIdentity = $null
+    $stdoutPathForRun = $null
+    $stderrPathForRun = $null
+    $stdoutStream = $null
+    $stderrStream = $null
 
     try {
+        $failureKind = 'stdio-isolation'
+        $stdoutPathForRun = Assert-FreshStdioPath -Path $StdoutPath -Name 'StdoutPath'
+        $stderrPathForRun = Assert-FreshStdioPath -Path $StderrPath -Name 'StderrPath'
+        if ([string]::Equals($stdoutPathForRun, $stderrPathForRun, [StringComparison]::OrdinalIgnoreCase)) {
+            throw 'StdoutPath and StderrPath must resolve to different paths.'
+        }
+
+        $failureKind = 'record-preparation'
         $recordPathForRun = New-PreparingRecord -Path $RecordPath
         $recordCreated = $true
+        $failureKind = 'stdio-isolation'
+        $stdoutStream = New-ProtectedStdioStream -Path $stdoutPathForRun
+        try {
+            # TEST-INJECTION: stderr-before-create
+            $stderrStream = New-ProtectedStdioStream -Path $stderrPathForRun
+        }
+        catch {
+            $stdoutStream.Dispose()
+            $stdoutStream = $null
+            # stderr 建立失敗時只能回收本次已證明的 stdout leaf，不可碰 caller 既有或同名競爭者。
+            Remove-ProtectedStdioFile -Path $stdoutPathForRun
+            throw
+        }
         $runId = New-RunId
         $namePrefix = "Local\AgentProcessLifecycle.$runId"
         $jobName = "$namePrefix.Job"
@@ -1190,7 +1320,22 @@ function Invoke-Launch {
 
         $failureKind = 'stdio-isolation'
         # TEST-INJECTION: workload-job-handle-probe
-        $root = [CandidateAgentProcessLifecycle.Native]::StartSuspended($Executable, $ArgumentList, $WorkingDirectory, $StdoutPath, $StderrPath)
+        try {
+            # CreateProcessW 只取得這兩個 pinned handles；native 返回後立刻撤銷 inheritance，parent 隨即關閉 streams。
+            $root = [CandidateAgentProcessLifecycle.Native]::StartSuspended(
+                $Executable,
+                $ArgumentList,
+                $WorkingDirectory,
+                $stdoutStream.SafeFileHandle.DangerousGetHandle(),
+                $stderrStream.SafeFileHandle.DangerousGetHandle()
+            )
+        }
+        finally {
+            $stderrStream.Dispose()
+            $stderrStream = $null
+            $stdoutStream.Dispose()
+            $stdoutStream = $null
+        }
         $rootIdentity = [ordered]@{
             process_id = $root.ProcessId
             creation_time_filetime = [CandidateAgentProcessLifecycle.Native]::CreationTimeFileTime($root.ProcessHandle)
@@ -1212,7 +1357,7 @@ function Invoke-Launch {
             working_directory = [IO.Path]::GetFullPath($WorkingDirectory)
             root = $rootIdentity
             holder = $holderIdentity
-            stdio = [ordered]@{ stdout_path = [IO.Path]::GetFullPath($StdoutPath); stderr_path = [IO.Path]::GetFullPath($StderrPath) }
+            stdio = [ordered]@{ stdout_path = $stdoutPathForRun; stderr_path = $stderrPathForRun }
             readiness = [ordered]@{ identity = $ReadinessIdentity; deadline_milliseconds = $ReadinessDeadlineMilliseconds; result = $null; completed_at_utc = $null }
             requested_disposition = $RequestedDisposition
             requested_later_owner = if ($RequestedDisposition -eq 'Preserve') { $RequestedLaterOwner } else { $null }
@@ -1265,7 +1410,7 @@ function Invoke-Launch {
             tier = 'windows-self-managed'
             requested_disposition = $RequestedDisposition
             binding = [ordered]@{ run_id = $runId; job_name = $jobName; record_path = $recordPathForRun; root_process_id = if ($root) { $root.ProcessId } else { $null }; root_identity = $rootIdentity; holder_identity = $holderIdentity }
-            stdio = [ordered]@{ isolated = $stdioIsolated; stdout_path = $StdoutPath; stderr_path = $StderrPath }
+            stdio = [ordered]@{ isolated = $stdioIsolated; stdout_path = if ($stdoutPathForRun) { $stdoutPathForRun } else { $StdoutPath }; stderr_path = if ($stderrPathForRun) { $stderrPathForRun } else { $StderrPath } }
             readiness = [ordered]@{ identity = $ReadinessIdentity; succeeded = $readinessSucceeded; deadline_milliseconds = $ReadinessDeadlineMilliseconds }
             lifecycle_result = [ordered]@{ status = $status; operation = 'launch'; failure_kind = $failureKind; cleanup = $cleanup; unresolved_reason = if ($status -eq 'unresolved') { ($cleanup.errors -join ' ') } else { $null }; error = $_.Exception.Message }
             downstream_result = $DownstreamResult
@@ -1275,6 +1420,8 @@ function Invoke-Launch {
         }
     }
     finally {
+        if ($stderrStream) { $stderrStream.Dispose() }
+        if ($stdoutStream) { $stdoutStream.Dispose() }
         if ($root) {
             [CandidateAgentProcessLifecycle.Native]::Close($root.ThreadHandle)
             [CandidateAgentProcessLifecycle.Native]::Close($root.ProcessHandle)
