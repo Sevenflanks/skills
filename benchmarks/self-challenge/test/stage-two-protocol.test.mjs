@@ -212,6 +212,20 @@ function validVerdict() {
   };
 }
 
+function validMoreEvidenceVerdict() {
+  return {
+    ...validVerdict(),
+    evidence_sufficient: false,
+    value: 'MORE_EVIDENCE',
+    more_evidence: {
+      decision_relevant_question: 'Does the source explicitly permit the candidate direction?',
+      minimal_read_only_investigation: 'Read the current ownership decision only.',
+      completion_signal: 'The ownership decision states whether the direction is permitted.',
+      non_expansion_scope: 'Do not edit files, revise plans, or inspect unrelated sources.',
+    },
+  };
+}
+
 function runProtocolWith({
   reconstruction = validReconstruction(),
   verdict = validVerdict(),
@@ -224,6 +238,9 @@ function runProtocolWith({
   non_goals = [],
   agent_id = 'fresh-reader-1',
   onOpen,
+  openChallenger,
+  emit = () => {},
+  ...protocolOptions
 } = {}) {
   let promptCount = 0;
   return runStageTwoProtocol({
@@ -234,17 +251,475 @@ function runProtocolWith({
     non_goals,
     evidence_reveal_order,
     candidate_former_agent_id,
-    emit: () => {},
-    openChallenger: async () => {
+    emit,
+    openChallenger: openChallenger ?? (async () => {
       onOpen?.();
       return {
         agent_id,
         read_only_assurance: 'observed-no-write',
         ask: async () => (promptCount++ === 0 ? reconstruction : verdict),
       };
-    },
+    }),
+    ...protocolOptions,
   });
 }
+
+function guardedExecution(events) {
+  const completeEvents = [
+    { type: 'stage_one_started' },
+    { type: 'stage_one_completed' },
+    ...events,
+  ];
+  return {
+    schema_version: 'self-challenge-adapter-execution.v1',
+    events: completeEvents.map((event, index) => ({ id: `event-${index + 1}`, sequence: index + 1, ...event })),
+    usage: { input_tokens: 0, output_tokens: 0, turns: 0, tool_calls: 0, elapsed_ms: 0 },
+  };
+}
+
+test('Given an evidence gap, when a MORE_EVIDENCE verdict omits its bounded investigation payload, then the protocol rejects it', async () => {
+  await assert.rejects(
+    () => runProtocolWith({
+      verdict: {
+        ...validMoreEvidenceVerdict(),
+        more_evidence: undefined,
+      },
+    }),
+    /more_evidence/,
+  );
+});
+
+test('Given a session guard, when an unchanged tuple re-enters, then it is blocked while changed material receives a later attempt', async () => {
+  const { createStageTwoSessionGuard } = await import('../adapters/stage-two-protocol.mjs');
+  const guard = createStageTwoSessionGuard({
+    baseline_material: {
+      confirmed_sources: ['Keep fixture outputs isolated.'],
+      constraints: ['Preserve fixture ownership.'],
+      non_goals: ['Do not relocate fixtures.'],
+    },
+  });
+  const events = [];
+  let openCalls = 0;
+  const run = (overrides = {}) => runProtocolWith({
+    candidate: 'Repair the isolated lookup.',
+    problem_evidence: 'The lookup fails after a path update.',
+    emit: (type, fields = {}) => events.push({ type, ...fields }),
+    onOpen: () => { openCalls += 1; },
+    session_guard: guard,
+    baseline_material: {
+      confirmed_sources: ['Keep fixture outputs isolated.'],
+      constraints: ['Preserve fixture ownership.'],
+      non_goals: ['Do not relocate fixtures.'],
+    },
+    candidate_material: 'Repair\r\n  the isolated   lookup.',
+    evidence_material: 'The lookup\r\n fails after a   path update.',
+    ...overrides,
+  });
+
+  const first = await run();
+  const duplicate = await run({
+    candidate_material: 'Repair\n the isolated lookup.',
+    evidence_material: 'The lookup fails after a path update.',
+  });
+  const changedEvidence = await run({ evidence_material: 'A fresh read proves the isolated path is missing.' });
+  const changedCandidate = await run({
+    candidate: 'Repair the isolated lookup without moving fixtures.',
+    candidate_material: 'Repair the isolated lookup without moving fixtures.',
+    evidence_material: 'A fresh read proves the isolated path is missing again.',
+  });
+  const changedBaseline = await run({
+    baseline_material: {
+      confirmed_sources: ['Move fixture outputs into the shared directory.'],
+      constraints: ['Preserve fixture ownership.'],
+      non_goals: ['Do not relocate fixtures.'],
+    },
+    evidence_material: 'A fresh read proves the isolated path is missing once more.',
+  });
+
+  assert.equal(first.attempt_id, 'stage-two-1');
+  assert.equal(duplicate.failure.code, 'DUPLICATE_TUPLE');
+  assert.equal(duplicate.failure.baseline_preserved, true);
+  assert.equal(changedEvidence.attempt_id, 'stage-two-3');
+  assert.equal(changedCandidate.attempt_id, 'stage-two-4');
+  assert.equal(changedBaseline.failure.code, 'BASELINE_CHANGED');
+  assert.equal(changedBaseline.failure.handoff, 'USER_OWNED');
+  assert.equal(openCalls, 3);
+  assert.equal(events.filter((event) => event.type === 'subagent_spawned').length, 3);
+  assert.equal(events.filter((event) => event.type === 'failure').length, 2);
+});
+
+test('Given guarded challenger failures, when the same tuple retries, then each typed failure preserves the baseline and consumes that tuple', async () => {
+  const { createStageTwoSessionGuard, StageTwoProtocolError } = await import('../adapters/stage-two-protocol.mjs');
+  const cases = [
+    ['CHALLENGER_TIMEOUT', async () => { throw new StageTwoProtocolError('CHALLENGER_TIMEOUT'); }],
+    ['SOURCE_RETRIEVAL_FAILURE', async () => ({ agent_id: 'reader', read_only_assurance: 'observed-no-write', ask: async () => { throw new Error('network'); } })],
+    ['MALFORMED_RECONSTRUCTION', async () => ({ agent_id: 'reader', read_only_assurance: 'observed-no-write', ask: async () => ({}) })],
+    ['MALFORMED_VERDICT', async () => ({ agent_id: 'reader', read_only_assurance: 'observed-no-write', ask: async () => validReconstruction() })],
+    ['MISSING_VERDICT', async () => {
+      let calls = 0;
+      return { agent_id: 'reader', read_only_assurance: 'observed-no-write', ask: async () => (calls++ === 0 ? validReconstruction() : undefined) };
+    }],
+    ['READ_ONLY_ASSURANCE_FAILURE', async () => ({ agent_id: 'reader', ask: async () => validReconstruction() })],
+    ['OBSERVED_WRITE', async () => ({ agent_id: 'reader', observed_write: true, read_only_assurance: 'observed-no-write', ask: async () => validReconstruction() })],
+    ['RECURSIVE_INVOCATION', async () => ({ agent_id: 'reader', recursive_self_challenge: true, read_only_assurance: 'observed-no-write', ask: async () => validReconstruction() })],
+  ];
+
+  for (const [expectedCode, openChallenger] of cases) {
+    const guard = createStageTwoSessionGuard({ baseline_material: 'Keep fixture outputs isolated.' });
+    const options = {
+      session_guard: guard,
+      baseline_material: 'Keep fixture outputs isolated.',
+      candidate_material: 'Repair the isolated lookup.',
+      evidence_material: 'The isolated lookup failed.',
+      openChallenger,
+    };
+    const first = await runProtocolWith(options);
+    const retry = await runProtocolWith(options);
+    assert.equal(first.failure.code, expectedCode);
+    assert.equal(first.failure.baseline_preserved, true);
+    assert.deepEqual(first.failure.safe_fallback, { kind: 'PRESERVE_BASELINE' });
+    assert.equal(retry.failure.code, 'DUPLICATE_TUPLE');
+  }
+});
+
+test('Given an active guarded challenger, when it recursively invokes stage two, then only the parent emits one recursive terminal', async () => {
+  const { createStageTwoSessionGuard } = await import('../adapters/stage-two-protocol.mjs');
+  const guard = createStageTwoSessionGuard({ baseline_material: 'Keep fixture outputs isolated.' });
+  const events = [];
+  let nestedResult;
+  const common = {
+    session_guard: guard,
+    baseline_material: 'Keep fixture outputs isolated.',
+    candidate: 'Repair the isolated lookup.',
+    candidate_material: 'Repair the isolated lookup.',
+    evidence_material: 'The isolated lookup failed.',
+    problem_evidence: 'The isolated lookup failed.',
+  };
+  const result = await runProtocolWith({
+    ...common,
+    emit: (type, fields = {}) => events.push({ type, ...fields }),
+    openChallenger: async () => ({
+      agent_id: 'reader',
+      read_only_assurance: 'observed-no-write',
+      ask: async () => {
+        nestedResult = await runProtocolWith({ ...common, emit: () => {} });
+        return validReconstruction();
+      },
+    }),
+  });
+  const execution = {
+    schema_version: 'self-challenge-adapter-execution.v1',
+    events: [
+      { id: 'event-1', sequence: 1, type: 'stage_one_started' },
+      { id: 'event-2', sequence: 2, type: 'stage_one_completed' },
+      ...events.map((event, index) => ({ id: `event-${index + 3}`, sequence: index + 3, ...event })),
+    ],
+    usage: { input_tokens: 0, output_tokens: 0, turns: 0, tool_calls: 0, elapsed_ms: 0 },
+  };
+
+  assert.equal(nestedResult.recursive, true);
+  assert.equal(result.failure.code, 'RECURSIVE_INVOCATION');
+  assert.deepEqual(events.map((event) => event.type), [
+    'stage_two_started', 'subagent_spawned', 'subagent_prompt',
+    'recursive_self_challenge_invoked', 'failure',
+  ]);
+  assert.doesNotThrow(() => validateExecution(execution));
+});
+
+test('Given an active guarded challenger, when nested stage two changes the baseline, then recursion still terminates only the parent attempt', async () => {
+  const { createStageTwoSessionGuard } = await import('../adapters/stage-two-protocol.mjs');
+  const guard = createStageTwoSessionGuard({ baseline_material: 'Keep fixture outputs isolated.' });
+  const events = [];
+  let nestedResult;
+  const common = {
+    session_guard: guard,
+    candidate: 'Repair the isolated lookup.',
+    candidate_material: 'Repair the isolated lookup.',
+    evidence_material: 'The isolated lookup failed.',
+    problem_evidence: 'The isolated lookup failed.',
+  };
+  const result = await runProtocolWith({
+    ...common,
+    baseline_material: 'Keep fixture outputs isolated.',
+    emit: (type, fields = {}) => events.push({ type, ...fields }),
+    openChallenger: async () => ({
+      agent_id: 'reader',
+      read_only_assurance: 'observed-no-write',
+      ask: async () => {
+        nestedResult = await runProtocolWith({
+          ...common,
+          baseline_material: 'Move fixture outputs into the shared directory.',
+          emit: () => {},
+        });
+        return validReconstruction();
+      },
+    }),
+  });
+
+  assert.deepEqual(nestedResult, { recursive: true });
+  assert.equal(result.failure.code, 'RECURSIVE_INVOCATION');
+  assert.equal(new Set(events.map((event) => event.attempt_id)).size, 1);
+  assert.doesNotThrow(() => validateExecution(guardedExecution(events)));
+});
+
+test('Given MORE_EVIDENCE, when only the candidate changes, then it cannot reclassify until evidence materially changes', async () => {
+  const { createStageTwoSessionGuard } = await import('../adapters/stage-two-protocol.mjs');
+  const guard = createStageTwoSessionGuard({ baseline_material: 'Keep fixture outputs isolated.' });
+  const events = [];
+  let openCalls = 0;
+  const common = {
+    session_guard: guard,
+    baseline_material: 'Keep fixture outputs isolated.',
+    problem_evidence: 'The isolated lookup failed.',
+    evidence_material: 'The isolated lookup failed.',
+    onOpen: () => { openCalls += 1; },
+    emit: (type, fields = {}) => events.push({ type, ...fields }),
+  };
+  const first = await runProtocolWith({
+    ...common,
+    candidate: 'Repair the isolated lookup.',
+    candidate_material: 'Repair the isolated lookup.',
+    verdict: validMoreEvidenceVerdict(),
+  });
+  const candidateOnly = await runProtocolWith({
+    ...common,
+    candidate: 'Repair the isolated lookup without moving fixtures.',
+    candidate_material: 'Repair the isolated lookup without moving fixtures.',
+  });
+  const candidateOnlyRetry = await runProtocolWith({
+    ...common,
+    candidate: 'Repair the isolated lookup without moving fixtures.',
+    candidate_material: 'Repair the isolated lookup without moving fixtures.',
+  });
+  const secondCandidateOnly = await runProtocolWith({
+    ...common,
+    candidate: 'Repair the isolated lookup with a local cache.',
+    candidate_material: 'Repair the isolated lookup with a local cache.',
+  });
+  const changedEvidence = await runProtocolWith({
+    ...common,
+    candidate: 'Repair the isolated lookup without moving fixtures.',
+    candidate_material: 'Repair the isolated lookup without moving fixtures.',
+    evidence_material: 'A new source proves the isolated lookup remains required.',
+  });
+
+  assert.equal(first.verdict.value, 'MORE_EVIDENCE');
+  assert.equal(candidateOnly.failure.code, 'EVIDENCE_NOT_MATERIALLY_CHANGED');
+  assert.equal(candidateOnlyRetry.failure.code, 'DUPLICATE_TUPLE');
+  assert.equal(secondCandidateOnly.failure.code, 'EVIDENCE_NOT_MATERIALLY_CHANGED');
+  assert.equal(openCalls, 2);
+  assert.equal(changedEvidence.verdict.value, 'KEEP_COURSE');
+  assert.doesNotThrow(() => validateExecution(guardedExecution(events)));
+});
+
+test('Given a preflight failure whose original terminal emit fails once, when the fallback terminal emits, then the guarded transcript has exactly one terminal', async () => {
+  const { createStageTwoSessionGuard } = await import('../adapters/stage-two-protocol.mjs');
+  const guard = createStageTwoSessionGuard({ baseline_material: 'Keep fixture outputs isolated.' });
+  const events = [];
+  let failOnce = true;
+  const result = await runProtocolWith({
+    session_guard: guard,
+    baseline_material: 'Changed baseline.',
+    candidate_material: 'Repair the isolated lookup.',
+    evidence_material: 'The isolated lookup failed.',
+    emit: (type, fields = {}) => {
+      if (type === 'failure' && failOnce) { failOnce = false; throw new Error('once'); }
+      events.push({ type, ...fields });
+    },
+  });
+  assert.equal(result.failure.code, 'EMIT_FAILURE');
+  assert.equal(events.filter((event) => event.type === 'failure').length, 1);
+  assert.equal(events.at(-1).code, 'EMIT_FAILURE');
+  assert.doesNotThrow(() => validateExecution(guardedExecution(events)));
+});
+
+test('Given a USER_OWNED handoff emitter failure, when the guarded attempt terminates, then only EMIT_FAILURE is observable', async () => {
+  const { createStageTwoSessionGuard } = await import('../adapters/stage-two-protocol.mjs');
+  const guard = createStageTwoSessionGuard({ baseline_material: 'Keep fixture outputs isolated.' });
+  const events = [];
+  let failInterruption = true;
+  const options = {
+    session_guard: guard,
+    baseline_material: 'Keep fixture outputs isolated.',
+    candidate_material: 'Repair the isolated lookup.',
+    problem_evidence: 'The isolated lookup failed.',
+    verdict: validMoreEvidenceVerdict(),
+    emit: (type, fields = {}) => {
+      if (type === 'user_interruption' && failInterruption) {
+        failInterruption = false;
+        throw new Error('handoff emitter unavailable');
+      }
+      events.push({ type, ...fields });
+    },
+  };
+
+  await runProtocolWith({ ...options, evidence_material: 'The isolated lookup failed.' });
+  const result = await runProtocolWith({ ...options, evidence_material: 'A new source remains unresolved.' });
+
+  assert.equal(result.failure.code, 'EMIT_FAILURE');
+  assert.equal(events.filter((event) => event.attempt_id === 'stage-two-2' && (event.type === 'verdict' || event.type === 'failure')).length, 1);
+  assert.equal(events.at(-1).type, 'failure');
+  assert.doesNotThrow(() => validateExecution(guardedExecution(events)));
+});
+
+test('Given a recursive marker emitter failure, when actual guarded recursion is detected, then EMIT_FAILURE remains the sole terminal', async () => {
+  const { createStageTwoSessionGuard } = await import('../adapters/stage-two-protocol.mjs');
+  const guard = createStageTwoSessionGuard({ baseline_material: 'Keep fixture outputs isolated.' });
+  const events = [];
+  let failMarker = true;
+  let nestedResult;
+  const common = {
+    session_guard: guard,
+    baseline_material: 'Keep fixture outputs isolated.',
+    candidate: 'Repair the isolated lookup.',
+    candidate_material: 'Repair the isolated lookup.',
+    evidence_material: 'The isolated lookup failed.',
+    problem_evidence: 'The isolated lookup failed.',
+  };
+  const result = await runProtocolWith({
+    ...common,
+    emit: (type, fields = {}) => {
+      if (type === 'recursive_self_challenge_invoked' && failMarker) {
+        failMarker = false;
+        throw new Error('marker emitter unavailable');
+      }
+      events.push({ type, ...fields });
+    },
+    openChallenger: async () => ({
+      agent_id: 'reader',
+      read_only_assurance: 'observed-no-write',
+      ask: async () => {
+        nestedResult = await runProtocolWith({ ...common, emit: () => {} });
+        return validReconstruction();
+      },
+    }),
+  });
+
+  assert.equal(nestedResult.recursive, true);
+  assert.equal(result.failure.code, 'EMIT_FAILURE');
+  assert.equal(events.filter((event) => event.type === 'verdict' || event.type === 'failure').length, 1);
+  assert.equal(events.at(-1).type, 'failure');
+  assert.doesNotThrow(() => validateExecution(guardedExecution(events)));
+});
+
+test('Given a write marker emitter failure, when an observed write is reported, then EMIT_FAILURE remains the sole terminal', async () => {
+  const { createStageTwoSessionGuard } = await import('../adapters/stage-two-protocol.mjs');
+  const guard = createStageTwoSessionGuard({ baseline_material: 'Keep fixture outputs isolated.' });
+  const events = [];
+  let failMarker = true;
+  const result = await runProtocolWith({
+    session_guard: guard,
+    baseline_material: 'Keep fixture outputs isolated.',
+    candidate_material: 'Repair the isolated lookup.',
+    evidence_material: 'The isolated lookup failed.',
+    emit: (type, fields = {}) => {
+      if (type === 'subagent_write_observed' && failMarker) {
+        failMarker = false;
+        throw new Error('marker emitter unavailable');
+      }
+      events.push({ type, ...fields });
+    },
+    openChallenger: async () => ({
+      agent_id: 'reader',
+      observed_write: true,
+      read_only_assurance: 'observed-no-write',
+      ask: async () => validReconstruction(),
+    }),
+  });
+
+  assert.equal(result.failure.code, 'EMIT_FAILURE');
+  assert.equal(events.filter((event) => event.type === 'verdict' || event.type === 'failure').length, 1);
+  assert.equal(events.at(-1).type, 'failure');
+  assert.doesNotThrow(() => validateExecution(guardedExecution(events)));
+});
+
+test('Given a second materially changed evidence gap, when it remains MORE_EVIDENCE, then the guard emits USER_OWNED handoff and blocks a third challenger', async () => {
+  const { createStageTwoSessionGuard } = await import('../adapters/stage-two-protocol.mjs');
+  const guard = createStageTwoSessionGuard({ baseline_material: 'Keep fixture outputs isolated.' });
+  const events = [];
+  let openCalls = 0;
+  const run = (evidence_material) => runProtocolWith({
+    session_guard: guard,
+    baseline_material: 'Keep fixture outputs isolated.',
+    candidate_material: 'Repair the isolated lookup.',
+    evidence_material,
+    problem_evidence: 'The isolated lookup failed.',
+    verdict: validMoreEvidenceVerdict(),
+    onOpen: () => { openCalls += 1; },
+    emit: (type, fields = {}) => events.push({ type, ...fields }),
+  });
+  await run('The isolated lookup failed.');
+  await run('A new source still leaves the ownership decision unresolved.');
+  const third = await run('A third source remains unresolved.');
+
+  assert.equal(openCalls, 2);
+  assert.deepEqual(third, { handoff: 'USER_OWNED' });
+  assert.deepEqual(events.filter((event) => event.type === 'user_interruption'), [{ type: 'user_interruption', handoff: 'USER_OWNED', attempt_id: 'stage-two-2' }]);
+});
+
+test('Given a synchronous emitter failure at a stage-two phase, when the guarded protocol stops, then it returns EMIT_FAILURE and consumes the tuple', async () => {
+  for (const failingType of ['stage_two_started', 'subagent_spawned', 'subagent_prompt', 'source_retrieved', 'verdict']) {
+    const { createStageTwoSessionGuard } = await import('../adapters/stage-two-protocol.mjs');
+    const guard = createStageTwoSessionGuard({ baseline_material: 'Keep fixture outputs isolated.' });
+    const events = [];
+    let failed = false;
+    const options = {
+      session_guard: guard,
+      baseline_material: 'Keep fixture outputs isolated.',
+      candidate_material: 'Repair the isolated lookup.',
+      evidence_material: 'The isolated lookup failed.',
+      emit: (type, fields = {}) => {
+        if (!failed && type === failingType) {
+          failed = true;
+          throw new Error('emitter unavailable');
+        }
+        events.push({ type, ...fields });
+      },
+    };
+    const first = await runProtocolWith(options);
+    const retry = await runProtocolWith(options);
+    assert.equal(first.failure.code, 'EMIT_FAILURE');
+    assert.equal(retry.failure.code, 'DUPLICATE_TUPLE');
+    assert.doesNotThrow(() => validateExecution(guardedExecution(events)));
+  }
+});
+
+test('Given an open-challenger failure whose terminal emit fails once, when fallback emission succeeds, then the transcript remains complete', async () => {
+  const { createStageTwoSessionGuard } = await import('../adapters/stage-two-protocol.mjs');
+  const guard = createStageTwoSessionGuard({ baseline_material: 'Keep fixture outputs isolated.' });
+  const events = [];
+  let failTerminal = true;
+  const result = await runProtocolWith({
+    session_guard: guard,
+    baseline_material: 'Keep fixture outputs isolated.',
+    candidate_material: 'Repair the isolated lookup.',
+    evidence_material: 'The isolated lookup failed.',
+    emit: (type, fields = {}) => {
+      if (type === 'failure' && failTerminal) {
+        failTerminal = false;
+        throw new Error('terminal emitter unavailable');
+      }
+      events.push({ type, ...fields });
+    },
+    openChallenger: async () => {
+      throw new Error('challenger unavailable');
+    },
+  });
+
+  assert.equal(result.failure.code, 'EMIT_FAILURE');
+  assert.equal(events.filter((event) => event.type === 'failure').length, 1);
+  assert.doesNotThrow(() => validateExecution(guardedExecution(events)));
+});
+
+test('Given bounded MORE_EVIDENCE payload violations, when the protocol normalizes a verdict, then it rejects empty or extra fields and payloads on other verdicts', async () => {
+  for (const verdict of [
+    { ...validMoreEvidenceVerdict(), more_evidence: { ...validMoreEvidenceVerdict().more_evidence, completion_signal: ' ' } },
+    { ...validMoreEvidenceVerdict(), more_evidence: { ...validMoreEvidenceVerdict().more_evidence, extra: 'expands scope' } },
+    { ...validVerdict(), more_evidence: validMoreEvidenceVerdict().more_evidence },
+  ]) {
+    await assert.rejects(() => runProtocolWith({ verdict }), /more_evidence/);
+  }
+});
 
 test('Given empty or duplicate successful-path evidence, when the protocol normalizes it, then it rejects the transcript', async () => {
   for (const field of ['source_ids', 'invariants', 'alternative_hypotheses', 'falsification_conditions']) {
@@ -277,7 +752,7 @@ test('Given a completed reconstruction, when round two changes its precedence or
   );
   await assert.rejects(
     () => runProtocolWith({
-      verdict: { ...validVerdict(), evidence_sufficient: false, source_precedence: 'unresolved', value: 'MORE_EVIDENCE' },
+      verdict: { ...validMoreEvidenceVerdict(), source_precedence: 'unresolved' },
     }),
     /must match reconstruction source precedence/,
   );
