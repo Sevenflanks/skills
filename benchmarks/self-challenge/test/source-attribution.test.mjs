@@ -26,17 +26,50 @@ function execution(events) {
   };
 }
 
+function reconstruction(agentId, sourceIds) {
+  return {
+    type: 'subagent_reconstruction',
+    agent_id: agentId,
+    source_ids: sourceIds,
+    baseline: 'Keep the baseline.',
+    invariants: ['The contract remains stable.'],
+    source_conflicts: [],
+    source_precedence: 'resolved',
+    alternative_hypotheses: ['Repair the implementation.'],
+    falsification_conditions: ['A later decision changes the contract.'],
+  };
+}
+
+function verdict(agentId, sourceIds) {
+  return {
+    type: 'verdict',
+    agent_id: agentId,
+    evidence_source_ids: sourceIds,
+    evidence_sufficient: true,
+    source_precedence: 'resolved',
+    value: 'KEEP_COURSE',
+    baseline_steelman: 'The source is explicit.',
+    candidate_steelman: 'The change could simplify implementation.',
+    main_agent_error_risk: 'A local defect could be mistaken for a direction change.',
+    protected_or_invalidated_invariant: 'The contract remains stable.',
+    change_condition: 'A later explicit decision changes the contract.',
+    reason: 'The source supports the baseline.',
+    allowed_next_action: 'keep-private-fixture-location',
+  };
+}
+
 function fullStageTwo({ challengerAgent = 'reader-1', sourceEvents }) {
   return execution([
     { type: 'source_retrieved', source_id: 'main-context', actor: 'main-agent' },
     { type: 'stage_one_started' },
     { type: 'stage_one_completed' },
     { type: 'stage_two_started' },
-    { type: 'subagent_spawned', agent_id: challengerAgent, read_only: true },
+    { type: 'subagent_spawned', agent_id: challengerAgent, candidate_former_agent_id: 'main-agent', read_only_assurance: 'observed-no-write', fresh: true },
     { type: 'subagent_prompt', phase: 'reconstruct', candidate_disclosed: false, agent_id: challengerAgent },
     ...sourceEvents,
+    reconstruction(challengerAgent, sourceEvents.map((source) => source.source_id)),
     { type: 'subagent_prompt', phase: 'candidate', candidate_disclosed: true, agent_id: challengerAgent },
-    { type: 'verdict', value: 'KEEP_COURSE' },
+    verdict(challengerAgent, sourceEvents.map((source) => source.source_id)),
     { type: 'agent_action', action_id: 'keep-private-fixture-location', direction_changing: false },
   ]);
 }

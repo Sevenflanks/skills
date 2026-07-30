@@ -40,15 +40,71 @@ function validateEvent(event, index) {
   }
   if (event.type === 'subagent_spawned') {
     assertString(event.agent_id, `${path}.agent_id`);
-    assertBoolean(event.read_only, `${path}.read_only`);
+    if (event.fresh !== undefined) {
+      assertBoolean(event.fresh, `${path}.fresh`);
+      if (event.fresh) {
+        assertString(event.candidate_former_agent_id, `${path}.candidate_former_agent_id`);
+        if (event.candidate_former_agent_id === event.agent_id) {
+          fail(`${path}.candidate_former_agent_id`, 'must differ from the fresh challenger agent_id');
+        }
+      }
+    }
+    if (event.read_only_assurance !== undefined) {
+      assertEnum(event.read_only_assurance, ['runtime-enforced', 'observed-no-write'], `${path}.read_only_assurance`);
+      if (event.read_only !== undefined) {
+        fail(`${path}.read_only`, 'must be absent when read_only_assurance is present');
+      }
+      if (event.read_only_assurance === 'runtime-enforced') {
+        assertString(event.capability_evidence, `${path}.capability_evidence`);
+      }
+    } else {
+      assertBoolean(event.read_only, `${path}.read_only`);
+    }
   }
   if (event.type === 'subagent_prompt') {
     assertEnum(event.phase, ['reconstruct', 'candidate'], `${path}.phase`);
     assertBoolean(event.candidate_disclosed, `${path}.candidate_disclosed`);
     assertString(event.agent_id, `${path}.agent_id`);
   }
+  if (event.type === 'subagent_reconstruction') {
+    assertString(event.agent_id, `${path}.agent_id`);
+    for (const key of ['source_ids', 'invariants', 'source_conflicts', 'alternative_hypotheses', 'falsification_conditions']) {
+      assertArray(event[key], `${path}.${key}`);
+      for (const [entryIndex, entry] of event[key].entries()) {
+        assertString(entry, `${path}.${key}[${entryIndex}]`);
+      }
+    }
+    if (event.source_ids.length === 0 || event.invariants.length === 0 || event.alternative_hypotheses.length === 0 || event.falsification_conditions.length === 0) {
+      fail(path, 'must record source IDs, invariants, alternative hypotheses, and falsification conditions');
+    }
+    assertString(event.baseline, `${path}.baseline`);
+    assertEnum(event.source_precedence, ['resolved', 'unresolved'], `${path}.source_precedence`);
+  }
   if (event.type === 'verdict') {
+    assertString(event.agent_id, `${path}.agent_id`);
     assertEnum(event.value, DISPOSITIONS, `${path}.value`);
+    assertArray(event.evidence_source_ids, `${path}.evidence_source_ids`);
+    if (event.evidence_source_ids.length === 0) {
+      fail(`${path}.evidence_source_ids`, 'must not be empty');
+    }
+    for (const [entryIndex, sourceId] of event.evidence_source_ids.entries()) {
+      assertString(sourceId, `${path}.evidence_source_ids[${entryIndex}]`);
+    }
+    assertBoolean(event.evidence_sufficient, `${path}.evidence_sufficient`);
+    assertEnum(event.source_precedence, ['resolved', 'unresolved'], `${path}.source_precedence`);
+    for (const key of ['baseline_steelman', 'candidate_steelman', 'main_agent_error_risk', 'protected_or_invalidated_invariant', 'change_condition', 'reason', 'allowed_next_action']) {
+      assertString(event[key], `${path}.${key}`);
+    }
+    const evidenceGap = !event.evidence_sufficient || event.source_precedence === 'unresolved';
+    if (evidenceGap && event.value !== 'MORE_EVIDENCE') {
+      fail(`${path}.value`, 'must be MORE_EVIDENCE when evidence is insufficient or source precedence is unresolved');
+    }
+    if (!evidenceGap && event.value === 'MORE_EVIDENCE') {
+      fail(`${path}.value`, 'MORE_EVIDENCE requires insufficient evidence or unresolved source precedence');
+    }
+  }
+  if (event.type === 'subagent_write_observed' || event.type === 'recursive_self_challenge_invoked') {
+    assertString(event.agent_id, `${path}.agent_id`);
   }
 }
 
@@ -69,32 +125,49 @@ function validateStageOneOrder(events) {
 
 function validateStageTwoOrder(events) {
   const starts = indexes(events, 'stage_two_started');
+  const stageOneCompletions = indexes(events, 'stage_one_completed');
   const spawns = indexes(events, 'subagent_spawned');
   const prompts = indexes(events, 'subagent_prompt');
   const sources = indexes(events, 'source_retrieved');
+  const reconstructions = indexes(events, 'subagent_reconstruction');
   const verdicts = indexes(events, 'verdict');
-  const observableCount = starts.length + spawns.length + prompts.length + verdicts.length;
+  const observableCount = starts.length + spawns.length + prompts.length + reconstructions.length + verdicts.length;
   if (observableCount === 0) {
     return;
   }
-  if (starts.length !== 1 || spawns.length !== 1 || prompts.length !== 2 || verdicts.length !== 1) {
-    fail('execution.events', 'stage two must contain one start, one spawn, two prompts, source retrieval, and one verdict');
+  if (starts.length !== 1 || spawns.length !== 1 || prompts.length !== 2 || reconstructions.length !== 1 || verdicts.length !== 1) {
+    fail('execution.events', 'stage two must contain one start, one spawn, two prompts, source retrieval, one reconstruction, and one verdict');
+  }
+  if (stageOneCompletions.length !== 1 || stageOneCompletions[0].index >= starts[0].index) {
+    fail('execution.events', 'stage two requires exactly one stage_one_completed before stage_two_started');
   }
   const reconstruction = prompts.find((entry) => entry.event.phase === 'reconstruct' && entry.event.candidate_disclosed === false);
   const candidate = prompts.find((entry) => entry.event.phase === 'candidate' && entry.event.candidate_disclosed === true);
   if (!reconstruction || !candidate) {
     fail('execution.events', 'stage two must include reconstruction and candidate prompts with the required disclosure flags');
   }
-  const [start, spawn, verdict] = [starts[0], spawns[0], verdicts[0]];
+  const [start, spawn, reconstructionRecord, verdict] = [starts[0], spawns[0], reconstructions[0], verdicts[0]];
   const challengerSources = sources.filter((entry) => entry.event.actor === 'subagent' && entry.event.agent_id === spawn.event.agent_id);
-  if (!spawn.event.read_only || !(start.index < spawn.index && spawn.index < reconstruction.index)) {
-    fail('execution.events', 'stage two reconstruction prompt must follow one fresh read-only spawn');
+  const readOnlyAssurance = spawn.event.read_only_assurance ?? (spawn.event.read_only ? 'observed-no-write' : null);
+  if (readOnlyAssurance === null || !(start.index < spawn.index && spawn.index < reconstruction.index)) {
+    fail('execution.events', 'stage two reconstruction prompt must follow one fresh read-only-assured spawn');
   }
-  if (reconstruction.event.agent_id !== spawn.event.agent_id || candidate.event.agent_id !== spawn.event.agent_id || challengerSources.length === 0 || !challengerSources.every((entry) => reconstruction.index < entry.index && entry.index < candidate.index)) {
-    fail('execution.events', 'stage two prompts and source retrieval must use the spawned agent after reconstruction and before candidate disclosure');
+  if (reconstruction.event.agent_id !== spawn.event.agent_id || reconstructionRecord.event.agent_id !== spawn.event.agent_id || candidate.event.agent_id !== spawn.event.agent_id || verdict.event.agent_id !== spawn.event.agent_id || challengerSources.length === 0 || !challengerSources.every((entry) => reconstruction.index < entry.index && entry.index < reconstructionRecord.index) || !(reconstructionRecord.index < candidate.index && candidate.index < verdict.index)) {
+    fail('execution.events', 'stage two prompts, reconstruction, source retrieval, and verdict must use the spawned agent with candidate disclosure after reconstruction');
   }
-  if (candidate.index >= verdict.index) {
-    fail('execution.events', 'stage two verdict must follow the candidate prompt');
+  const retrievedSourceIds = new Set(challengerSources.map((entry) => entry.event.source_id));
+  if (reconstructionRecord.event.source_ids.some((sourceId) => !retrievedSourceIds.has(sourceId)) || verdict.event.evidence_source_ids.some((sourceId) => !retrievedSourceIds.has(sourceId))) {
+    fail('execution.events', 'stage two reconstruction and verdict evidence must reference challenger retrieval');
+  }
+  const reconstructionSourceIds = new Set(reconstructionRecord.event.source_ids);
+  if (verdict.event.source_precedence !== reconstructionRecord.event.source_precedence || verdict.event.evidence_source_ids.some((sourceId) => !reconstructionSourceIds.has(sourceId))) {
+    fail('execution.events', 'stage two verdict precedence and evidence must match the completed reconstruction');
+  }
+  if (events.some((event, index) => index < verdict.index && (event.type === 'agent_action' || event.type === 'user_interruption'))) {
+    fail('execution.events', 'stage two requires verdict before agent_action or user_interruption');
+  }
+  if (verdict.event.value === 'MORE_EVIDENCE' && events.some((event, index) => index > verdict.index && event.type === 'agent_action' && event.direction_changing === true)) {
+    fail('execution.events', 'MORE_EVIDENCE blocks direction-changing agent_action');
   }
 }
 
