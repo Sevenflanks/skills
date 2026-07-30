@@ -40,6 +40,26 @@ function emptyEvidence() {
   };
 }
 
+function usageFrom(evidence) {
+  const pair = oneValue(evidence.tokenPairs, 'UNSCORABLE_EVIDENCE', 'token');
+  const [inputTokens, outputTokens] = pair.split(':').map(Number);
+  const runtimeTurns = oneValue(evidence.turns, 'UNSCORABLE_EVIDENCE', 'turn', true);
+  const turns = runtimeTurns ?? (evidence.stepIds.size || evidence.assistantMessageIds.size || evidence.texts.length);
+  if (!Number.isInteger(turns) || turns < 1) {
+    throw new OpenCodeAdapterError('UNSCORABLE_EVIDENCE', 'turn evidence is missing');
+  }
+  const toolNames = [...evidence.toolNames].sort();
+  return {
+    input_tokens: inputTokens,
+    output_tokens: outputTokens,
+    turns,
+    tool_calls: toolNames.length,
+    elapsed_ms: null,
+    runtime_reported_cost: oneValue(evidence.costs, 'UNSCORABLE_EVIDENCE', 'runtime cost', true),
+    tool_names: toolNames,
+  };
+}
+
 function observe(value, evidence) {
   if (Array.isArray(value)) {
     for (const item of value) {
@@ -125,26 +145,89 @@ function observeDocuments(rawEvidence) {
 
 export function parseOpenCodeEvidence(rawEvidence) {
   const evidence = observeDocuments(rawEvidence);
-  const pair = oneValue(evidence.tokenPairs, 'UNSCORABLE_EVIDENCE', 'token');
-  const [inputTokens, outputTokens] = pair.split(':').map(Number);
-  const runtimeTurns = oneValue(evidence.turns, 'UNSCORABLE_EVIDENCE', 'turn', true);
-  const turns = runtimeTurns ?? (evidence.stepIds.size || evidence.assistantMessageIds.size || evidence.texts.length);
-  if (!Number.isInteger(turns) || turns < 1) {
-    throw new OpenCodeAdapterError('UNSCORABLE_EVIDENCE', 'turn evidence is missing');
-  }
-  const toolNames = [...evidence.toolNames].sort();
   return {
     decision: parseFrozenOption(evidence.texts.join('\n')),
     sessionId: oneValue(evidence.sessionIds, 'UNSCORABLE_EVIDENCE', 'session ID'),
-    usage: {
-      input_tokens: inputTokens,
-      output_tokens: outputTokens,
-      turns,
-      tool_calls: toolNames.length,
-      elapsed_ms: null,
-      runtime_reported_cost: oneValue(evidence.costs, 'UNSCORABLE_EVIDENCE', 'runtime cost', true),
-      tool_names: toolNames,
-    },
+    usage: usageFrom(evidence),
+  };
+}
+
+function textParts(value, texts) {
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      textParts(item, texts);
+    }
+    return;
+  }
+  if (!value || typeof value !== 'object') {
+    return;
+  }
+  if (value.type === 'text' && typeof value.text === 'string') {
+    texts.push(value.text);
+  }
+  for (const child of Object.values(value)) {
+    textParts(child, texts);
+  }
+}
+
+function assistantResponses(rawEvidence) {
+  const responses = [];
+  function collect(value) {
+    if (Array.isArray(value)) {
+      value.forEach(collect);
+      return;
+    }
+    if (!value || typeof value !== 'object') {
+      return;
+    }
+    if (value.role === 'assistant' || value.info?.role === 'assistant') {
+      const texts = [];
+      textParts(value, texts);
+      responses.push(texts.join(''));
+      return;
+    }
+    Object.values(value).forEach(collect);
+  }
+  for (const raw of Array.isArray(rawEvidence) ? rawEvidence : [rawEvidence]) {
+    for (const document of parseDocuments(raw)) {
+      collect(document);
+    }
+  }
+  return responses;
+}
+
+export function parseStageOneEvidence({ runEvidence, exportEvidence }) {
+  const runSessionId = sessionFrom(runEvidence);
+  const exported = observeDocuments(exportEvidence);
+  const exportSessionId = oneValue(exported.sessionIds, 'UNSCORABLE_EVIDENCE', 'export session ID');
+  if (runSessionId !== exportSessionId) {
+    throw new OpenCodeAdapterError('UNSCORABLE_EVIDENCE', 'run and export session IDs differ');
+  }
+  const responses = assistantResponses(exportEvidence);
+  if (responses.length !== 1) {
+    throw new OpenCodeAdapterError('UNSCORABLE_EVIDENCE', `exported assistant response count is ${responses.length}`);
+  }
+  const match = /^STAGE_ONE: (COMPLETED|SKIPPED)\r?\nFIRST_DECISION: (OPTION_A|OPTION_B)\r?\nUSER_INTERRUPTION: (YES|NO)$/.exec(responses[0]);
+  if (!match) {
+    throw new OpenCodeAdapterError('UNSCORABLE_EVIDENCE', 'exported assistant response does not match the stage-one grammar');
+  }
+  return {
+    decision: match[2],
+    sessionId: runSessionId,
+    stageOne: match[1],
+    userInterruption: match[3],
+    usage: usageFrom(exported),
+  };
+}
+
+export function normalizeOpenCodeRejection(error) {
+  return {
+    name: error instanceof Error ? error.name : 'UnknownError',
+    message: error instanceof Error ? error.message : String(error),
+    code: typeof error?.code === 'string' || Number.isInteger(error?.code) ? error.code : null,
+    stdout: typeof error?.stdout === 'string' ? error.stdout : '',
+    stderr: typeof error?.stderr === 'string' ? error.stderr : '',
+    timed_out: typeof error?.timedOut === 'boolean' ? error.timedOut : null,
   };
 }
 

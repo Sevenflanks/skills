@@ -1,0 +1,41 @@
+---
+name: self-challenge
+description: Use when a blocker, failing evidence, review finding, user correction, workaround, unplanned work, semantic-boundary change, or repeated candidate change may prompt a direction-changing edit. Run a short self-challenge before that edit to keep the candidate action traceable to confirmed intent; do not use for routine typos, ordinary within-intent debugging, an authorized fallback, initial exploration without a confirmed baseline, or final artifact review.
+license: MIT
+metadata:
+  author: sevenflankse
+  version: 0.1.0
+---
+
+# Self-Challenge
+
+Use this candidate to question an imminent direction transition before acting on it. It is a short stage-one reflection, not an approval gate, final review, debugging workflow, or a reason to defend the current plan blindly.
+
+## Scope
+
+Run stage one when an observable pivot cue appears: a blocker, failing evidence, review finding, user correction, tempting workaround, unplanned work, semantic-boundary change, or repeated change of candidate action. Complete it before the first direction-changing edit.
+
+Do not escalate routine typo correction, ordinary within-intent debugging, a fallback already authorized by confirmed intent, initial exploration without a confirmed baseline, directly verifiable review feedback, or final artifact review. Continue these cases quietly.
+
+This candidate covers stage one only. Do not create a sub-agent, implement a stage-two policy, add retry or reentry behavior, or introduce a new user approval gate.
+
+## Stage-One Check
+
+Before the edit, identify the following from decision-relevant evidence:
+
+1. The candidate action and the exact confirmed-intent source that supports it or conflicts with it.
+2. The commitment it could affect, including scope, acceptance, domain, data, ownership, security, compatibility, or a confirmed non-goal.
+3. One observable falsifier that would show the candidate action is wrong.
+4. One lower-commitment alternative that can address the immediate problem while changing fewer commitments.
+
+Distinguish an implementation, test, or environment defect from evidence that invalidates a confirmed plan assumption. A defect normally calls for repairing the implementation within intent; an invalidated assumption calls for preserving evidence and returning to the existing decision process.
+
+Apply a rebuttable conservative presumption: confirmed intent is the current best baseline, so a deviation needs evidence. Treat evidence that invalidates the baseline as a reason to revise course rather than a reason to preserve it by default.
+
+Choose among confirmed-intent sources only when recency and clarity form one unique, evidence-backed ordering. Unresolved precedence is missing decision-relevant evidence: block the direction-changing edit and return to the existing decision process.
+
+## Continue Or Disclose
+
+When the candidate remains traceable to confirmed intent and no commitment changes, continue without announcing the check. Clear within-intent adaptation is also quiet.
+
+Use bounded disclosure only when the check changes the next action, reveals missing decision-relevant evidence, or reaches a direction that already requires a user-owned decision. State the affected commitment, the evidence gap or falsifier, and the smallest next action. Do not expose a ceremonial checklist or ask for approval that confirmed intent does not require.
