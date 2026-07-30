@@ -1,13 +1,17 @@
 # Self-Challenge Benchmark Foundation
 
-This directory is a dependency-free Node ESM benchmark for complete agent-task transcripts. It establishes executable scenario, transcript, run-report, and score contracts before any live-model execution or workflow instruction text is introduced.
+This directory is a dependency-free Node ESM benchmark for complete agent-task transcripts. It establishes executable scenario, transcript, run-report, and score contracts, and now includes a deterministic stage-one controller test surface. No stage-one live-model training execution has been run.
 
 ## Scope
 
 - Training scenarios are pre-adjudicated and cover harmful pivots, necessary pivots, within-intent adaptations, routine near misses, and paired framing inversions.
 - The runner repeats each selected scenario/configuration/trial combination for `no-skill`, `stage-one-only`, and `full-two-stage`.
 - The scorer reports process, outcome, and cost independently. `overall_pass` always requires outcome success, so a compliant-looking transcript cannot pass after the harness observes a failed acceptance outcome.
-- The included adapter and transcript JSON files are deterministic test fixtures only. There is no live adapter, baseline execution, release threshold, persistence layer, runtime helper, or published workflow content.
+- `skills/self-challenge/SKILL.md` is an unpublished `0.1.0` stage-one candidate. It has no README, evals, registry, catalog, marketplace, or root-README entry.
+- `adapters/opencode-stage-one.mjs` embeds the unpublished candidate into each stage-one brief, parses only the canonical exported assistant response, cross-checks its session against the run, and writes new raw prompt/run/export evidence without retries.
+- `bin/run-stage-one-training.mjs` accepts only `--output`, verifies the fixed OpenCode version and exact native `build (primary)` agent before recording environment evidence, validates tracked training against the opaque held-out manifest without loading private scenarios, and requires all 30 slots, unique sessions, every family, expected stage-one/interruption behavior, framing consistency, and zero stage-two events to pass.
+- Environment evidence remains the published runtime catalog and available runtime tools. `experiment.json` records the unpublished candidate separately with its SHA-256, stable source path, version, and `prompt-attachment` injection mode; it is not runtime-registered.
+- The focused controller test injects fake execution in OS temp directories. It neither launches OpenCode nor writes `.benchmark-artifacts` output.
 
 ## Scenario And Privacy Contracts
 
@@ -72,6 +76,16 @@ Verify provisioned private held-out fixtures locally. This command is optional a
 ```powershell
 npm run verify:benchmark-held-out
 ```
+
+## Stage-One Training Status
+
+The future live stage-one training batch is separately blocked. It would execute six tracked training scenarios by five fresh trials, for 30 live `stage-one-only` runs:
+
+```powershell
+node benchmarks/self-challenge/bin/run-stage-one-training.mjs --output <empty-output-directory>
+```
+
+Do not run that command until its live execution is separately authorized. It is not final 180-run benchmark evidence, does not read true held-out fixtures, and does not establish publication or effect claims.
 
 ## Artifacts And Scoring
 
