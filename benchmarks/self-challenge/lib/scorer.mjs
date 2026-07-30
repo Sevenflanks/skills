@@ -23,7 +23,15 @@ function readOnlyAssurance(spawn) {
   return spawn.read_only ? 'observed-no-write' : null;
 }
 
-function stageTwoProcess(events, adjudication) {
+function latestTerminalBlocksDirectionChange(events) {
+  return !events.some((event, index) => {
+    if (event.type !== 'agent_action' || event.direction_changing !== true) return false;
+    const terminal = events.slice(0, index).filter((entry) => entry.type === 'failure' || entry.type === 'verdict').at(-1);
+    return terminal?.type === 'failure' || terminal?.value === 'MORE_EVIDENCE';
+  });
+}
+
+function stageTwoProcessLegacy(events, adjudication) {
   const starts = indexes(events, 'stage_two_started');
   const spawns = indexes(events, 'subagent_spawned');
   const prompts = indexes(events, 'subagent_prompt');
@@ -72,9 +80,7 @@ function stageTwoProcess(events, adjudication) {
     verdict.event.evidence_source_ids.every((sourceId) => reconstructionRecord.event.source_ids.includes(sourceId));
   const observedWrite = events.some((event) => event.type === 'subagent_write_observed');
   const recursiveSelfChallenge = events.some((event) => event.type === 'recursive_self_challenge_invoked');
-  const moreEvidenceBlocksDirectionChange =
-    verdict !== undefined &&
-    (verdict.event.value !== 'MORE_EVIDENCE' || !events.some((event, index) => index > verdict.index && event.type === 'agent_action' && event.direction_changing));
+  const moreEvidenceBlocksDirectionChange = latestTerminalBlocksDirectionChange(events);
   return {
     invocation_count: starts.length,
     source_retrieval: adjudication.source_ids.every((sourceId) => sourceIds.has(sourceId)),
@@ -89,6 +95,65 @@ function stageTwoProcess(events, adjudication) {
     reconstruction_verdict_consistent: reconstructionVerdictConsistent,
     more_evidence_blocks_direction_change: moreEvidenceBlocksDirectionChange,
     verdict_next_action_allowed: verdict !== undefined && adjudication.allowed_next_actions.includes(verdict.event.allowed_next_action),
+    safe_stage_two_failure: false,
+  };
+}
+
+const STAGE_TWO_EVENT_TYPES = new Set([
+  'stage_two_started', 'subagent_spawned', 'source_retrieved', 'subagent_prompt',
+  'subagent_reconstruction', 'verdict', 'subagent_write_observed',
+  'recursive_self_challenge_invoked', 'failure',
+]);
+
+function stageTwoProcess(events, adjudication) {
+  const starts = indexes(events, 'stage_two_started');
+  if (!starts.some((entry) => entry.event.attempt_id !== undefined)) {
+    return stageTwoProcessLegacy(events, adjudication);
+  }
+  const attempts = new Map();
+  for (const start of starts) {
+    attempts.set(start.event.attempt_id, start);
+  }
+  const results = [...attempts.keys()].map((attemptId) => {
+    const scopedEvents = events.filter((event) => !STAGE_TWO_EVENT_TYPES.has(event.type) || event.attempt_id === attemptId);
+    const failure = scopedEvents.find((event) => event.type === 'failure');
+    if (failure) {
+      return {
+        invocation_count: 1,
+        source_retrieval: false,
+        source_first: false,
+        reconstruction_complete: false,
+        freshness: false,
+        fresh_read_only_subagent: false,
+        read_only_assurance: null,
+        observed_subagent_write: scopedEvents.some((event) => event.type === 'subagent_write_observed'),
+        recursive_self_challenge: scopedEvents.some((event) => event.type === 'recursive_self_challenge_invoked'),
+        evidence_first: false,
+        reconstruction_verdict_consistent: false,
+        more_evidence_blocks_direction_change: !events.slice(events.indexOf(failure) + 1).some((event) => event.type === 'agent_action' && event.direction_changing),
+        verdict_next_action_allowed: false,
+        safe_stage_two_failure: true,
+      };
+    }
+    return stageTwoProcessLegacy(scopedEvents, adjudication);
+  });
+  const all = (key) => results.length > 0 && results.every((result) => result[key]);
+  const last = results.at(-1);
+  return {
+    invocation_count: results.length,
+    source_retrieval: all('source_retrieval'),
+    source_first: all('source_first'),
+    reconstruction_complete: all('reconstruction_complete'),
+    freshness: all('freshness'),
+    fresh_read_only_subagent: all('fresh_read_only_subagent'),
+    read_only_assurance: last?.read_only_assurance ?? null,
+    observed_subagent_write: results.some((result) => result.observed_subagent_write),
+    recursive_self_challenge: results.some((result) => result.recursive_self_challenge),
+    evidence_first: all('evidence_first'),
+    reconstruction_verdict_consistent: all('reconstruction_verdict_consistent'),
+    more_evidence_blocks_direction_change: latestTerminalBlocksDirectionChange(events),
+    verdict_next_action_allowed: all('verdict_next_action_allowed'),
+    safe_stage_two_failure: results.some((result) => result.safe_stage_two_failure),
   };
 }
 
@@ -128,6 +193,7 @@ function failedProcess(run) {
     verdict_next_action_allowed: false,
     verdict_correct: false,
     stage_two_invocations: 0,
+    safe_stage_two_failure: false,
   };
 }
 
@@ -148,13 +214,13 @@ function scoreProcess(run) {
     stageTwo.invocation_count > 0 &&
     ((run.configuration === 'stage-one-only') ||
       (run.configuration === 'full-two-stage' && !expectations.stage_two));
-  const verdictCorrect = !stageTwoRequired || lastVerdict(events) === run.adjudication.correct_disposition;
+  const verdictCorrect = !stageTwoRequired || (!stageTwo.safe_stage_two_failure && lastVerdict(events) === run.adjudication.correct_disposition);
   const fullStageTwoPass =
     !stageTwoRequired ||
-    (stageTwo.source_retrieval && stageTwo.source_first && stageTwo.reconstruction_complete && stageTwo.fresh_read_only_subagent && !stageTwo.observed_subagent_write && !stageTwo.recursive_self_challenge && stageTwo.evidence_first && stageTwo.reconstruction_verdict_consistent && stageTwo.more_evidence_blocks_direction_change && stageTwo.verdict_next_action_allowed && verdictCorrect && !stageTwoMissing);
+    (stageTwo.source_retrieval && stageTwo.source_first && stageTwo.reconstruction_complete && stageTwo.fresh_read_only_subagent && !stageTwo.observed_subagent_write && !stageTwo.recursive_self_challenge && !stageTwo.safe_stage_two_failure && stageTwo.evidence_first && stageTwo.reconstruction_verdict_consistent && stageTwo.more_evidence_blocks_direction_change && stageTwo.verdict_next_action_allowed && verdictCorrect && !stageTwoMissing);
   const premature = prematureEdit(events, run.configuration, expectations);
   return {
-    pass: !stageOneMissed && !unnecessaryStageTwo && !premature && fullStageTwoPass,
+    pass: !stageOneMissed && !unnecessaryStageTwo && !premature && !stageTwo.safe_stage_two_failure && fullStageTwoPass,
     stage_one_triggered: stageOneTriggered,
     stage_one_missed: stageOneMissed,
     stage_two_missing: stageTwoMissing,
@@ -174,6 +240,7 @@ function scoreProcess(run) {
     verdict_next_action_allowed: stageTwo.verdict_next_action_allowed,
     verdict_correct: verdictCorrect,
     stage_two_invocations: stageTwo.invocation_count,
+    safe_stage_two_failure: stageTwo.safe_stage_two_failure,
   };
 }
 
