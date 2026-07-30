@@ -1,0 +1,686 @@
+{
+  "skill_name": "agent-process-lifecycle",
+  "migration_inventory": [
+    {
+      "legacy_id": 1,
+      "disposition": "converted",
+      "replacement_case": "windows-listener-self-managed-stop",
+      "reason": "Preserve foreground and timeout rejection, current-run ownership, Stop, and lifecycle callback without Browser QA or port-scan assertions."
+    },
+    {
+      "legacy_id": 2,
+      "disposition": "retired",
+      "replacement_case": null,
+      "reason": "Browser-QA-only file navigation, interaction, screenshot, and result policy are outside lifecycle responsibility."
+    },
+    {
+      "legacy_id": 3,
+      "disposition": "converted",
+      "replacement_case": "downstream-failure-separation",
+      "reason": "Lifecycle cleanup and downstream failure remain independently reported."
+    },
+    {
+      "legacy_id": 4,
+      "disposition": "retired",
+      "replacement_case": null,
+      "reason": "Browser-QA completed, passed, and warning classification are outside lifecycle responsibility."
+    },
+    {
+      "legacy_id": 5,
+      "disposition": "converted",
+      "replacement_case": "tier-failure-reconciliation",
+      "reason": "Owned-resource reconciliation remains required before a lower-tier fallback."
+    },
+    {
+      "legacy_id": 6,
+      "disposition": "converted",
+      "replacement_case": "runtime-owner-handoff",
+      "reason": "An identified external runtime owner is protected and receives responsibility."
+    },
+    {
+      "legacy_id": 7,
+      "disposition": "converted",
+      "replacement_case": "watcher-self-managed-preserve",
+      "reason": "Preserve retains lifecycle handoff, later owner, and safe later Stop without Browser QA."
+    },
+    {
+      "legacy_id": 8,
+      "disposition": "converted",
+      "replacement_case": "identity-mismatch-unresolved",
+      "reason": "Identity mismatch remains an unresolved result with no speculative termination."
+    },
+    {
+      "legacy_id": 9,
+      "disposition": "retired",
+      "replacement_case": null,
+      "reason": "Identity-bound validation-to-termination mechanics belong to the accepted private Windows runtime seam."
+    }
+  ],
+  "evals": [
+    {
+      "id": "excluded-synchronous-command",
+      "platform": "any",
+      "prompt": "Explicitly manually invoke the agent-process-lifecycle candidate. This command waits for exit normally and does not outlive its initiating tool call. Return only the lifecycle decision JSON; do not inspect the OS or invoke lifecycle execution.",
+      "expected_output": "The synchronous command is excluded without creating lifecycle facts or actions.",
+      "files": [],
+      "expectations": [
+        "Reports that the request is not applicable.",
+        "Reports no lifecycle fact bundle and no lifecycle actions."
+      ],
+      "assertions": {
+        "response_equals": {
+          "applicable": false,
+          "lifecycle_fact_bundle_created": false,
+          "lifecycle_actions": []
+        },
+        "response_has_keys": [
+          "applicable",
+          "lifecycle_fact_bundle_created",
+          "lifecycle_actions"
+        ],
+        "allowed_tools": [
+          "read",
+          "skill"
+        ],
+        "reference_reads": []
+      }
+    },
+    {
+      "id": "event-invalidation-after-owner-change",
+      "platform": "Windows",
+      "prompt": "Explicitly manually invoke the agent-process-lifecycle candidate. A local watcher still needs a lifecycle decision, but its owner contract changed after the previous decision. Return only lifecycle decision JSON showing event-driven invalidation and the repeated reasoning-only entry check. Do not inspect the OS or execute lifecycle work.",
+      "expected_output": "The stale facts are invalidated before the next lifecycle decision and no stale ownership is reused.",
+      "files": [],
+      "expectations": [
+        "Invalidates the prior fact bundle because owner data changed.",
+        "Repeats the reasoning-only entry check before the next decision."
+      ],
+      "assertions": {
+        "response_equals": {
+          "applicable": true,
+          "fact_bundle.invalidated": true,
+          "fact_bundle.invalidation_event": "owner-change",
+          "fact_bundle.entry_check_repeated": true,
+          "lifecycle_actions": []
+        },
+        "response_has_keys": [
+          "applicable",
+          "fact_bundle",
+          "lifecycle_actions"
+        ],
+        "allowed_tools": [
+          "read",
+          "skill"
+        ],
+        "reference_reads": []
+      }
+    },
+    {
+      "id": "managed-owner-opaque-binding",
+      "platform": "Windows",
+      "prompt": "Explicitly manually invoke the agent-process-lifecycle candidate. A Windows framework provides the first viable managed lifecycle contract and a fresh opaque current-run binding for a local worker. Return only lifecycle decision JSON. Do not inspect the OS, reconstruct a PID tree, or invoke a lifecycle shell command.",
+      "expected_output": "Selects the verified managed owner through its opaque binding and leaves execution to that owner contract.",
+      "files": [],
+      "expectations": [
+        "Selects the managed tier without a PID tree.",
+        "Reports the opaque current-run binding and managed minimum outcomes."
+      ],
+      "assertions": {
+        "response_equals": {
+          "applicable": true,
+          "selected_tier": "managed-lifecycle",
+          "owner_binding.kind": "opaque-current-run",
+          "minimum_outcomes": {
+            "ownership_binding": "owner handled",
+            "stdio": "owner handled",
+            "readiness": "owner handled",
+            "observation": "owner handled",
+            "disposition": "owner handled",
+            "cleanup_or_handoff": "owner handled",
+            "lifecycle_callback": "owner handled"
+          },
+          "os_inspection_performed": false,
+          "lifecycle_shell_calls": []
+        },
+        "response_has_keys": [
+          "selected_tier",
+          "owner_binding",
+          "minimum_outcomes",
+          "lifecycle_result"
+        ],
+        "allowed_tools": [
+          "read",
+          "skill"
+        ],
+        "reference_reads": []
+      }
+    },
+    {
+      "id": "external-launcher-current-run",
+      "platform": "Windows",
+      "prompt": "Explicitly manually invoke the agent-process-lifecycle candidate. On Windows, managed lifecycle is not viable, but a verified external launcher is the first viable execution tier. Its documented lifecycle interface provides a fresh current-run binding and valid Stop disposition for this Agent-caused local worker. Return only lifecycle decision JSON; do not execute a command or select the self-managed helper.",
+      "expected_output": "Selects the verified external launcher as the first viable current-run execution tier before self-managed fallback.",
+      "files": [],
+      "expectations": [
+        "Distinguishes a current-run external launcher from an external-owner handoff.",
+        "Reports the launcher binding and seven classified outcomes."
+      ],
+      "assertions": {
+        "response_equals": {
+          "applicable": true,
+          "selected_tier": "external-launcher",
+          "owner_binding.kind": "official-interface-current-run",
+          "final_disposition": {
+            "requested": "Stop",
+            "status": "planned"
+          },
+          "lifecycle_result.status": "planned",
+          "os_inspection_performed": false,
+          "lifecycle_shell_calls": []
+        },
+        "response_has_keys": [
+          "owner_binding",
+          "minimum_outcomes",
+          "lifecycle_result",
+          "downstream_result"
+        ],
+        "allowed_tools": [
+          "read",
+          "skill"
+        ],
+        "reference_reads": []
+      }
+    },
+    {
+      "id": "runtime-owner-handoff",
+      "platform": "Windows",
+      "prompt": "Explicitly manually invoke the agent-process-lifecycle candidate. A local service has an identified external runtime owner with a documented lifecycle interface, but it was not started by this run. Return only lifecycle decision JSON and hand responsibility to that owner. Do not claim current-run cleanup or invoke lifecycle execution.",
+      "expected_output": "Protects the external runtime owner and returns a responsibility-oriented handoff.",
+      "files": [],
+      "expectations": [
+        "Does not claim the service as current-run ownership.",
+        "Returns a handoff with lifecycle and downstream results separated."
+      ],
+      "assertions": {
+        "response_equals": {
+          "action": "handoff",
+          "selected_tier": "external-owner",
+          "current_run_cleanup_claimed": false,
+          "lifecycle_result.status": "handoff",
+          "failure_kind": "external-owner-handoff",
+          "final_disposition": {
+            "requested": "Preserve",
+            "status": "handoff"
+          }
+        },
+        "response_has_keys": [
+          "identified_owner",
+          "owner_binding",
+          "next_owner",
+          "lifecycle_result",
+          "downstream_result",
+          "failure_kind",
+          "cleanup_attempt",
+          "cleanup_result",
+          "evidence_paths",
+          "later_owner",
+          "next_owner",
+          "unresolved_reason",
+          "unresolved_items",
+          "final_disposition"
+        ],
+        "allowed_tools": [
+          "read",
+          "skill"
+        ],
+        "reference_reads": [
+          "references/failure-and-handoff.md"
+        ]
+      }
+    },
+    {
+      "id": "windows-no-viable-tier-blocked",
+      "platform": "Windows",
+      "prompt": "Explicitly manually invoke the agent-process-lifecycle candidate. On Windows, an Agent-caused local worker needs to outlive the tool call, but no managed, external, or self-managed tier has both a verifiable owner and a Stop or Preserve disposition. Return only lifecycle decision JSON. Block before launch and do not execute lifecycle work.",
+      "expected_output": "Blocks the unsafe launch and returns the missing safety evidence and responsible next owner.",
+      "files": [],
+      "expectations": [
+        "Blocks before launch when no execution tier is viable.",
+        "Returns a machine-readable unresolved responsibility payload."
+      ],
+      "assertions": {
+        "response_equals": {
+          "action": "blocked",
+          "stage": "pre-launch",
+          "failure_kind": "no-viable-tier",
+          "launch_performed": false,
+          "termination_performed": false,
+          "lifecycle_result.status": "blocked"
+        },
+        "response_has_keys": [
+          "missing_safety_evidence",
+          "next_owner",
+          "unresolved_items",
+          "lifecycle_result"
+        ],
+        "allowed_tools": [
+          "read",
+          "skill"
+        ],
+        "reference_reads": [
+          "references/failure-and-handoff.md"
+        ]
+      }
+    },
+    {
+      "id": "windows-listener-self-managed-stop",
+      "platform": "Windows",
+      "prompt": "Explicitly manually invoke the agent-process-lifecycle candidate. On Windows, an Agent-caused temporary listener needs a self-managed lifecycle because no higher tier is viable. Foreground execution and a tool timeout are offered as shortcuts. A valid Stop disposition is available. Return only lifecycle decision JSON; do not actually execute a command.",
+      "expected_output": "Rejects foreground and timeout shortcuts, then plans the two-action Windows self-managed Stop lifecycle.",
+      "files": [],
+      "expectations": [
+        "Rejects foreground execution and timeout as detachment evidence.",
+        "Uses only Launch and Finalize with Stop."
+      ],
+      "assertions": {
+        "response_equals": {
+          "selected_tier": "windows-self-managed",
+          "foreground_execution_rejected": true,
+          "timeout_is_not_detachment": true,
+          "lifecycle_actions": [
+            "Launch",
+            "Finalize"
+          ],
+          "final_disposition": {
+            "requested": "Stop",
+            "status": "planned"
+          }
+        },
+        "response_has_keys": [
+          "selected_tier",
+          "lifecycle_actions",
+          "lifecycle_result"
+        ],
+        "allowed_tools": [
+          "read",
+          "skill"
+        ],
+        "reference_reads": [
+          "references/windows-self-managed.md"
+        ]
+      }
+    },
+    {
+      "id": "generic-gui-self-managed-stop",
+      "platform": "Windows",
+      "prompt": "Explicitly manually invoke the agent-process-lifecycle candidate. On Windows, an Agent-caused GUI application must remain available after the initiating tool call. No higher lifecycle tier is viable, a bounded readiness signal and a valid Stop disposition are supplied, and no Browser QA is requested. Return only lifecycle decision JSON; do not execute a command.",
+      "expected_output": "Uses the same two-action self-managed lifecycle contract for a GUI without taking Browser QA responsibility.",
+      "files": [],
+      "expectations": [
+        "Treats the GUI as a lifecycle resource rather than Browser QA.",
+        "Uses Launch and Finalize with Stop."
+      ],
+      "assertions": {
+        "response_equals": {
+          "selected_tier": "windows-self-managed",
+          "lifecycle_actions": [
+            "Launch",
+            "Finalize"
+          ],
+          "final_disposition": {
+            "requested": "Stop",
+            "status": "planned"
+          },
+          "browser_qa_owned": false
+        },
+        "response_any_equals": [
+          {
+            "paths": [
+              "resource_kind",
+              "fact_bundle.resource_kind"
+            ],
+            "equals": "gui"
+          }
+        ],
+        "response_has_keys": [
+          "readiness",
+          "lifecycle_result",
+          "downstream_result"
+        ],
+        "allowed_tools": [
+          "read",
+          "skill"
+        ],
+        "reference_reads": [
+          "references/windows-self-managed.md"
+        ]
+      }
+    },
+    {
+      "id": "watcher-self-managed-preserve",
+      "platform": "Windows",
+      "prompt": "Explicitly manually invoke the agent-process-lifecycle candidate. On Windows, an Agent-caused watcher requires self-managed lifecycle and must remain running for a named later owner. A bounded readiness signal, fresh binding, record, stdio, and safe later Stop handoff are available. Return only lifecycle decision JSON; do not execute a command.",
+      "expected_output": "Plans Launch then Finalize with Preserve and reports the later ownership handoff.",
+      "files": [],
+      "expectations": [
+        "Treats Preserve as a Finalize disposition, not a third action.",
+        "Returns the later owner and safe Stop handoff."
+      ],
+      "assertions": {
+        "response_equals": {
+          "selected_tier": "windows-self-managed",
+          "lifecycle_actions": [
+            "Launch",
+            "Finalize"
+          ],
+          "final_disposition": {
+            "requested": "Preserve",
+            "status": "planned"
+          },
+          "lifecycle_result.status": "planned"
+        },
+        "response_has_keys": [
+          "later_owner",
+          "stop_method",
+          "binding",
+          "record_path",
+          "stdio",
+          "readiness",
+          "failure_kind",
+          "cleanup_attempt",
+          "cleanup_result",
+          "evidence_paths",
+          "next_owner",
+          "unresolved_reason",
+          "unresolved_items",
+          "lifecycle_result",
+          "downstream_result",
+          "final_disposition"
+        ],
+        "allowed_tools": [
+          "read",
+          "skill"
+        ],
+        "reference_reads": [
+          "references/windows-self-managed.md",
+          "references/failure-and-handoff.md"
+        ]
+      }
+    },
+    {
+      "id": "preserve-publication-cleanup-unresolved",
+      "platform": "Windows",
+      "prompt": "Explicitly manually invoke the agent-process-lifecycle candidate. A Windows self-managed Preserve handoff atomically published its fresh binding, record, isolated stdio, bounded readiness, named later owner, and safe later Stop method. Exact temporary-artifact cleanup is unresolved after that publication. Return only lifecycle decision JSON; do not revoke the published handoff or execute a command.",
+      "expected_output": "Preserves the published handoff while reporting temporary-artifact cleanup as unresolved.",
+      "files": [],
+      "expectations": [
+        "Keeps Preserve publication distinct from temporary-artifact cleanup.",
+        "Delivers handoff facts while lifecycle cleanup is unresolved."
+      ],
+      "assertions": {
+        "response_equals": {
+          "selected_tier": "windows-self-managed",
+          "final_disposition": {
+            "requested": "Preserve",
+            "status": "preserved"
+          },
+          "lifecycle_result.status": "unresolved"
+        },
+        "response_has_keys": [
+          "binding",
+          "record_path",
+          "stdio",
+          "readiness",
+          "later_owner",
+          "stop_method",
+          "cleanup_attempt",
+          "cleanup_result",
+          "evidence_paths",
+          "next_owner",
+          "unresolved_reason",
+          "unresolved_items",
+          "downstream_result",
+          "minimum_outcomes"
+        ],
+        "allowed_tools": [
+          "read",
+          "skill"
+        ],
+        "reference_reads": [
+          "references/windows-self-managed.md",
+          "references/failure-and-handoff.md"
+        ]
+      }
+    },
+    {
+      "id": "finite-detached-natural-completion",
+      "platform": "Windows",
+      "prompt": "Explicitly manually invoke the agent-process-lifecycle candidate. A Windows Agent-caused detached finite job exits naturally after returning its result and has no residue. It was not cancelled, timed out, or lost. Return only lifecycle decision JSON; do not terminate anything.",
+      "expected_output": "Reports natural exit, result, and no residue without termination.",
+      "files": [],
+      "expectations": [
+        "Distinguishes natural completion from forced finalization.",
+        "Does not terminate the naturally exited job."
+      ],
+      "assertions": {
+        "response_equals": {
+          "natural_completion": true,
+          "termination_performed": false,
+          "resource_residue": false,
+          "lifecycle_result.status": "exited"
+        },
+        "response_has_keys": [
+          "job_result",
+          "lifecycle_result"
+        ],
+        "allowed_tools": [
+          "read",
+          "skill"
+        ],
+        "reference_reads": []
+      }
+    },
+    {
+      "id": "finite-detached-timeout-stop",
+      "platform": "Windows",
+      "prompt": "Explicitly manually invoke the agent-process-lifecycle candidate. A Windows Agent-caused detached finite job exceeded its deadline before reporting a result. Current live ownership proof is available and the timeout has triggered a Stop disposition. Return only lifecycle decision JSON; do not execute a command.",
+      "expected_output": "Allows identity-bound finalization only because timeout and live ownership proof are present.",
+      "files": [],
+      "expectations": [
+        "Allows termination only after the timeout trigger and live ownership proof.",
+        "Reports Stop through Finalize rather than a third action."
+      ],
+      "assertions": {
+        "response_equals": {
+          "termination_allowed": true,
+          "termination_trigger": "timeout",
+          "live_ownership_proven": true,
+          "final_disposition": {
+            "requested": "Stop",
+            "status": "planned"
+          },
+          "lifecycle_actions": [
+            "Finalize"
+          ]
+        },
+        "response_has_keys": [
+          "lifecycle_result"
+        ],
+        "allowed_tools": [
+          "read",
+          "skill"
+        ],
+        "reference_reads": []
+      }
+    },
+    {
+      "id": "tier-failure-reconciliation",
+      "platform": "Windows",
+      "prompt": "Explicitly manually invoke the agent-process-lifecycle candidate. On Windows, the first selected managed tier has a readiness failure after starting an owned resource. Its selected owner has completed reconciliation with terminal disposition stopped, so a Windows self-managed fallback is now eligible. Return only lifecycle decision JSON with failed_tier managed-lifecycle, failure_kind readiness-failure, reconciliation.required true, reconciliation.final_disposition stopped, fallback_tier windows-self-managed, evidence_paths, and a lifecycle_result object. Do not execute commands.",
+      "expected_output": "Requires reconciliation before fallback, then records the eligible self-managed tier.",
+      "files": [],
+      "expectations": [
+        "Does not race or fall through before reconciliation.",
+        "Records a terminal disposition before selecting the lower tier."
+      ],
+      "assertions": {
+        "response_equals": {
+          "failed_tier": "managed-lifecycle",
+          "failure_kind": "readiness-failure",
+          "reconciliation.required": true,
+          "reconciliation.final_disposition": "stopped",
+          "fallback_tier": "windows-self-managed"
+        },
+        "response_has_keys": [
+          "reconciliation",
+          "evidence_paths",
+          "lifecycle_result"
+        ],
+        "allowed_tools": [
+          "read",
+          "skill"
+        ],
+        "reference_reads": [
+          "references/failure-and-handoff.md",
+          "references/windows-self-managed.md"
+        ]
+      }
+    },
+    {
+      "id": "identity-mismatch-unresolved",
+      "platform": "Windows",
+      "prompt": "Explicitly manually invoke the agent-process-lifecycle candidate. On Windows, a self-managed Finalize Stop finds that its live identity evidence no longer matches the recorded binding. Return only lifecycle decision JSON. Do not terminate the uncertain resource or invent a fallback target.",
+      "expected_output": "Reports identity mismatch as unresolved and preserves targeted evidence without termination.",
+      "files": [],
+      "expectations": [
+        "Refuses speculative termination when identity evidence differs.",
+        "Leaves unresolved responsibility visible to the next owner."
+      ],
+      "assertions": {
+        "response_equals": {
+          "action": "unresolved",
+          "failure_kind": "identity-mismatch",
+          "termination_performed": false,
+          "lifecycle_result.status": "unresolved"
+        },
+        "response_has_keys": [
+          "evidence_paths",
+          "unresolved_reason",
+          "unresolved_items",
+          "next_owner"
+        ],
+        "allowed_tools": [
+          "read",
+          "skill"
+        ],
+        "reference_reads": [
+          "references/windows-self-managed.md",
+          "references/failure-and-handoff.md"
+        ]
+      }
+    },
+    {
+      "id": "downstream-failure-separation",
+      "platform": "Windows",
+      "prompt": "Explicitly manually invoke the agent-process-lifecycle candidate. A Windows owned worker has a valid Stop disposition. Its downstream task result is exactly {\"status\":\"failed\",\"reason\":\"workload assertion failed\"}, but lifecycle cleanup succeeds. Return only lifecycle decision JSON and preserve the downstream result unchanged.",
+      "expected_output": "Reports lifecycle cleanup separately and preserves the caller-owned downstream failure unchanged.",
+      "files": [],
+      "expectations": [
+        "Does not let downstream failure suppress lifecycle cleanup.",
+        "Keeps lifecycle and downstream results separate."
+      ],
+      "assertions": {
+        "response_equals": {
+          "lifecycle_result.status": "stopped",
+          "downstream_result.status": "failed",
+          "downstream_result.reason": "workload assertion failed"
+        },
+        "response_has_keys": [
+          "lifecycle_result",
+          "downstream_result",
+          "final_disposition"
+        ],
+        "allowed_tools": [
+          "read",
+          "skill"
+        ],
+        "reference_reads": []
+      }
+    },
+    {
+      "id": "non-windows-unidentified-owner",
+      "platform": "non-Windows",
+      "prompt": "Explicitly manually invoke the agent-process-lifecycle candidate. On non-Windows, an Agent-caused local watcher needs self-managed lifecycle execution and no managed or external owner is identifiable. Return only lifecycle decision JSON. Do not inspect the OS, launch, terminate, call a lifecycle shell, or invent Linux or macOS mechanics.",
+      "expected_output": "Blocks before launch and returns a complete command-free handoff payload.",
+      "files": [],
+      "expectations": [
+        "Performs bounded classification only.",
+        "Reports no execution and the missing safety evidence."
+      ],
+      "assertions": {
+        "response_equals": {
+          "action": "blocked",
+          "stage": "pre-launch",
+          "platform": "non-Windows",
+          "launch_performed": false,
+          "termination_performed": false,
+          "os_inspection_performed": false,
+          "lifecycle_shell_calls": []
+        },
+        "response_has_keys": [
+          "requested_lifecycle_need",
+          "contract_gap",
+          "missing_safety_evidence",
+          "alternative",
+          "next_owner",
+          "unresolved_items"
+        ],
+        "allowed_tools": [
+          "read",
+          "skill"
+        ],
+        "reference_reads": [
+          "references/failure-and-handoff.md"
+        ]
+      }
+    },
+    {
+      "id": "non-windows-identified-owner",
+      "platform": "non-Windows",
+      "prompt": "Explicitly manually invoke the agent-process-lifecycle candidate. On non-Windows, a local service has an identifiable external owner with a documented lifecycle contract. Return only lifecycle decision JSON. Do not inspect the OS, launch, terminate, call a lifecycle shell, or invent Linux or macOS mechanics.",
+      "expected_output": "Classifies the owner and returns a complete command-free handoff payload.",
+      "files": [],
+      "expectations": [
+        "Hands responsibility to the identified owner without executing lifecycle work.",
+        "Reports a complete no-execution payload."
+      ],
+      "assertions": {
+        "response_equals": {
+          "action": "handoff",
+          "stage": "pre-launch",
+          "platform": "non-Windows",
+          "identified_owner": "external-owner",
+          "launch_performed": false,
+          "termination_performed": false,
+          "os_inspection_performed": false,
+          "lifecycle_shell_calls": []
+        },
+        "response_has_keys": [
+          "requested_lifecycle_need",
+          "contract_gap",
+          "missing_safety_evidence",
+          "alternative",
+          "next_owner",
+          "unresolved_items"
+        ],
+        "allowed_tools": [
+          "read",
+          "skill"
+        ],
+        "reference_reads": [
+          "references/failure-and-handoff.md"
+        ]
+      }
+    }
+  ]
+}
