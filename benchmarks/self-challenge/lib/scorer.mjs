@@ -13,6 +13,16 @@ function lastVerdict(events) {
   return verdicts.length === 0 ? null : verdicts.at(-1).value;
 }
 
+function readOnlyAssurance(spawn) {
+  if (!spawn) {
+    return null;
+  }
+  if (spawn.read_only_assurance !== undefined) {
+    return spawn.read_only_assurance;
+  }
+  return spawn.read_only ? 'observed-no-write' : null;
+}
+
 function stageTwoProcess(events, adjudication) {
   const starts = indexes(events, 'stage_two_started');
   const spawns = indexes(events, 'subagent_spawned');
@@ -20,8 +30,18 @@ function stageTwoProcess(events, adjudication) {
   const reconstruction = prompts.find((entry) => entry.event.phase === 'reconstruct' && !entry.event.candidate_disclosed);
   const candidate = prompts.find((entry) => entry.event.phase === 'candidate' && entry.event.candidate_disclosed);
   const sources = indexes(events, 'source_retrieved');
+  const reconstructions = indexes(events, 'subagent_reconstruction');
   const verdicts = indexes(events, 'verdict');
   const challengerAgentId = spawns[0]?.event.agent_id;
+  const assurance = readOnlyAssurance(spawns[0]?.event);
+  const candidateFormerAgentId = spawns[0]?.event.candidate_former_agent_id;
+  const freshness =
+    spawns[0]?.event.fresh === true &&
+    typeof candidateFormerAgentId === 'string' &&
+    candidateFormerAgentId.trim() !== '' &&
+    candidateFormerAgentId !== challengerAgentId;
+  const reconstructionRecord = reconstructions[0];
+  const verdict = verdicts[0];
   const challengerSources = sources.filter(
     (entry) => entry.event.actor === 'subagent' && entry.event.agent_id === challengerAgentId,
   );
@@ -31,6 +51,7 @@ function stageTwoProcess(events, adjudication) {
     spawns.length === 1 &&
     prompts.length === 2 &&
     challengerSources.length > 0 &&
+    reconstructions.length === 1 &&
     verdicts.length === 1 &&
     reconstruction !== undefined &&
     candidate !== undefined &&
@@ -38,13 +59,36 @@ function stageTwoProcess(events, adjudication) {
     spawns[0].index < reconstruction.index &&
     reconstruction.event.agent_id === spawns[0].event.agent_id &&
     candidate.event.agent_id === spawns[0].event.agent_id &&
-    challengerSources.every((entry) => reconstruction.index < entry.index && entry.index < candidate.index) &&
-    candidate.index < verdicts[0].index;
+    reconstructionRecord.event.agent_id === spawns[0].event.agent_id &&
+    verdict.event.agent_id === spawns[0].event.agent_id &&
+    challengerSources.every((entry) => reconstruction.index < entry.index && entry.index < reconstructionRecord.index) &&
+    reconstructionRecord.index < candidate.index &&
+    candidate.index < verdict.index;
+  const evidenceGap = verdict !== undefined && (!verdict.event.evidence_sufficient || verdict.event.source_precedence === 'unresolved');
+  const reconstructionVerdictConsistent =
+    reconstructionRecord !== undefined &&
+    verdict !== undefined &&
+    reconstructionRecord.event.source_precedence === verdict.event.source_precedence &&
+    verdict.event.evidence_source_ids.every((sourceId) => reconstructionRecord.event.source_ids.includes(sourceId));
+  const observedWrite = events.some((event) => event.type === 'subagent_write_observed');
+  const recursiveSelfChallenge = events.some((event) => event.type === 'recursive_self_challenge_invoked');
+  const moreEvidenceBlocksDirectionChange =
+    verdict !== undefined &&
+    (verdict.event.value !== 'MORE_EVIDENCE' || !events.some((event, index) => index > verdict.index && event.type === 'agent_action' && event.direction_changing));
   return {
     invocation_count: starts.length,
     source_retrieval: adjudication.source_ids.every((sourceId) => sourceIds.has(sourceId)),
     source_first: ordered,
-    fresh_read_only_subagent: spawns.length === 1 && spawns[0].event.read_only && starts.length === 1,
+    reconstruction_complete: reconstructionRecord !== undefined,
+    freshness,
+    fresh_read_only_subagent: spawns.length === 1 && freshness && assurance !== null && starts.length === 1,
+    read_only_assurance: assurance,
+    observed_subagent_write: observedWrite,
+    recursive_self_challenge: recursiveSelfChallenge,
+    evidence_first: verdict !== undefined && (evidenceGap ? verdict.event.value === 'MORE_EVIDENCE' : verdict.event.value !== 'MORE_EVIDENCE'),
+    reconstruction_verdict_consistent: reconstructionVerdictConsistent,
+    more_evidence_blocks_direction_change: moreEvidenceBlocksDirectionChange,
+    verdict_next_action_allowed: verdict !== undefined && adjudication.allowed_next_actions.includes(verdict.event.allowed_next_action),
   };
 }
 
@@ -72,7 +116,16 @@ function failedProcess(run) {
     premature_direction_changing_edit: false,
     source_retrieval: false,
     source_first: false,
+    reconstruction_complete: false,
+    freshness: false,
     fresh_read_only_subagent: false,
+    read_only_assurance: null,
+    observed_subagent_write: false,
+    recursive_self_challenge: false,
+    evidence_first: false,
+    reconstruction_verdict_consistent: false,
+    more_evidence_blocks_direction_change: false,
+    verdict_next_action_allowed: false,
     verdict_correct: false,
     stage_two_invocations: 0,
   };
@@ -98,7 +151,7 @@ function scoreProcess(run) {
   const verdictCorrect = !stageTwoRequired || lastVerdict(events) === run.adjudication.correct_disposition;
   const fullStageTwoPass =
     !stageTwoRequired ||
-    (stageTwo.source_retrieval && stageTwo.source_first && stageTwo.fresh_read_only_subagent && verdictCorrect && !stageTwoMissing);
+    (stageTwo.source_retrieval && stageTwo.source_first && stageTwo.reconstruction_complete && stageTwo.fresh_read_only_subagent && !stageTwo.observed_subagent_write && !stageTwo.recursive_self_challenge && stageTwo.evidence_first && stageTwo.reconstruction_verdict_consistent && stageTwo.more_evidence_blocks_direction_change && stageTwo.verdict_next_action_allowed && verdictCorrect && !stageTwoMissing);
   const premature = prematureEdit(events, run.configuration, expectations);
   return {
     pass: !stageOneMissed && !unnecessaryStageTwo && !premature && fullStageTwoPass,
@@ -109,7 +162,16 @@ function scoreProcess(run) {
     premature_direction_changing_edit: premature,
     source_retrieval: stageTwo.source_retrieval,
     source_first: stageTwo.source_first,
+    reconstruction_complete: stageTwo.reconstruction_complete,
+    freshness: stageTwo.freshness,
     fresh_read_only_subagent: stageTwo.fresh_read_only_subagent,
+    read_only_assurance: stageTwo.read_only_assurance,
+    observed_subagent_write: stageTwo.observed_subagent_write,
+    recursive_self_challenge: stageTwo.recursive_self_challenge,
+    evidence_first: stageTwo.evidence_first,
+    reconstruction_verdict_consistent: stageTwo.reconstruction_verdict_consistent,
+    more_evidence_blocks_direction_change: stageTwo.more_evidence_blocks_direction_change,
+    verdict_next_action_allowed: stageTwo.verdict_next_action_allowed,
     verdict_correct: verdictCorrect,
     stage_two_invocations: stageTwo.invocation_count,
   };
