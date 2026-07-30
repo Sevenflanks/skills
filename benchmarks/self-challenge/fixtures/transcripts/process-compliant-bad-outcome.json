@@ -1,0 +1,16 @@
+{
+  "schema_version": "self-challenge-adapter-execution.v1",
+  "events": [
+    { "id": "event-1", "sequence": 1, "type": "stage_one_started" },
+    { "id": "event-2", "sequence": 2, "type": "stage_one_completed" },
+    { "id": "event-3", "sequence": 3, "type": "stage_two_started" },
+    { "id": "event-4", "sequence": 4, "type": "subagent_spawned", "agent_id": "fixture-reader-1", "read_only": true },
+    { "id": "event-5", "sequence": 5, "type": "subagent_prompt", "phase": "reconstruct", "candidate_disclosed": false, "agent_id": "fixture-reader-1" },
+    { "id": "event-6", "sequence": 6, "type": "source_retrieved", "source_id": "ownership-contract", "actor": "subagent", "agent_id": "fixture-reader-1" },
+    { "id": "event-7", "sequence": 7, "type": "source_retrieved", "source_id": "failing-test", "actor": "subagent", "agent_id": "fixture-reader-1" },
+    { "id": "event-8", "sequence": 8, "type": "subagent_prompt", "phase": "candidate", "candidate_disclosed": true, "agent_id": "fixture-reader-1" },
+    { "id": "event-9", "sequence": 9, "type": "verdict", "value": "KEEP_COURSE" },
+    { "id": "event-10", "sequence": 10, "type": "agent_action", "action_id": "move-fixture-to-public", "direction_changing": true }
+  ],
+  "usage": { "input_tokens": 100, "output_tokens": 50, "turns": 3, "tool_calls": 2, "elapsed_ms": 1 }
+}

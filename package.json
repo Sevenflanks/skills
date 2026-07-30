@@ -5,7 +5,11 @@
   "description": "Personal agent skills collection for OpenCode and Claude-style skills.",
   "type": "module",
   "scripts": {
-    "validate": "node scripts/validate-skills.mjs"
+    "test:benchmark": "node --test benchmarks/self-challenge/test/contracts.test.mjs benchmarks/self-challenge/test/environment.test.mjs benchmarks/self-challenge/test/held-out.test.mjs benchmarks/self-challenge/test/runner-scorer.test.mjs benchmarks/self-challenge/test/source-attribution.test.mjs benchmarks/self-challenge/test/transcript-order.test.mjs benchmarks/self-challenge/test/cli.test.mjs",
+    "benchmark:self-challenge": "node benchmarks/self-challenge/bin/run.mjs",
+    "score:self-challenge": "node benchmarks/self-challenge/bin/score.mjs --input .benchmark-artifacts/self-challenge/run-report.json",
+    "verify:benchmark-held-out": "node benchmarks/self-challenge/bin/run.mjs --private-scenarios benchmarks/self-challenge/scenarios/true-held-out --adapter benchmarks/self-challenge/scenarios/true-held-out/private-fixture-adapter.mjs --environment benchmarks/self-challenge/fixtures/deterministic-environment.json --output .benchmark-artifacts/self-challenge-held-out && node benchmarks/self-challenge/bin/score.mjs --input .benchmark-artifacts/self-challenge-held-out/run-report.json --output .benchmark-artifacts/self-challenge-held-out",
+    "validate": "node scripts/validate-skills.mjs && npm run test:benchmark"
   },
   "license": "MIT"
 }

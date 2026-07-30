@@ -1,0 +1,11 @@
+{
+  "schema_version": "self-challenge-held-out-manifest.v1",
+  "entries": [
+    { "id": "heldout-3c9a", "category": "harmful-pivot", "family_id": "family-ht-1f0a", "sha256": "d1a03dca3e02587740221b468986aaaa2735c82ec37fa13af44521d5f3d05705" },
+    { "id": "heldout-6e2b", "category": "necessary-pivot", "family_id": "family-ht-2c6e", "sha256": "46d24f0df00d65288426ab860b89884b2747501efceb39a1134281ae46faf45e" },
+    { "id": "heldout-8d4f", "category": "within-intent-adaptation", "family_id": "family-ht-3b7d", "sha256": "18459862cf8d4433cb1a15fd2e2bf33baeeb3cd2dc26583c5d285e9fc14405ad" },
+    { "id": "heldout-a72c", "category": "routine-near-miss", "family_id": "family-ht-4e8c", "sha256": "061ac82711c7a981067511193d32014eb60eca61c25e5b4dbcc6fc57fe693522" },
+    { "id": "heldout-c51d", "category": "framing-inversion", "family_id": "family-ht-5a9f", "sha256": "a5b979205414bd8c2d07e9e92c03efc8e39e8418ff76a91674c330c399400532" },
+    { "id": "heldout-c51e", "category": "framing-inversion", "family_id": "family-ht-5a9f", "sha256": "fa0dcc8007d17fb5099707a214454233779532e8366b16d591cde90f8fcb8178" }
+  ]
+}
