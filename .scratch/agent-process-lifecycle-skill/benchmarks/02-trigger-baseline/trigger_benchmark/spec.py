@@ -37,7 +37,7 @@ def load_specification(benchmark_root: Path) -> Specification:
 
 def _load_document(path: Path) -> dict[str, JsonValue]:
     try:
-        document = json.loads(path.read_text(encoding="utf-8"))
+        document: JsonValue = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as error:
         raise SpecificationError(f"invalid JSON in {path.name}: {error.msg}") from error
     if not isinstance(document, dict):
