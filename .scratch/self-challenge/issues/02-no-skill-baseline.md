@@ -20,3 +20,6 @@
 - 首次 30-slot baseline 在模型回覆前全數因 OpenCode `--file` argument ordering 失敗；未重試或覆寫。
 - 失敗證據與 unavailable metrics 記錄於 [`../reports/02-no-skill-baseline.md`](../reports/02-no-skill-baseline.md)。
 - Adapter ordering 已修正並有回歸測試；需要使用者決定是否授權新 artifact directory 與 fresh sessions 的 clean rerun。
+- 使用者已授權 clean rerun，並指定以 `C:\nvm4w\nodejs\opencode.cmd` 執行 OpenCode。
+- V2 已以 absolute executable、`--pure` 與 hidden background process 啟動，但第一個 model invocation 約五分鐘仍無 session 或 terminal evidence；process tree 已安全終止，未啟動第三批。
+- Ticket 02 目前被此 fixed runtime hang 阻擋；權威結果見 baseline report。

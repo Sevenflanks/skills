@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -12,6 +12,7 @@ import {
   parseOpenCodeEvidence,
 } from '../adapters/opencode-no-skill.mjs';
 import { createEmptyBaselineOutput } from '../bin/run-no-skill-baseline.mjs';
+import { OPENCODE_EXECUTABLE, createOpenCodeInvocation } from '../lib/opencode-runtime.mjs';
 import { summarizeNoSkillBaseline } from '../lib/no-skill-summary.mjs';
 import { createHarnessRun, loadTrainingScenarios, runBenchmark } from '../lib/runner.mjs';
 import { scoreReport } from '../lib/scorer.mjs';
@@ -109,6 +110,26 @@ test('Given a baseline prompt file, when its OpenCode arguments are built, then 
   ]);
   for (const forbidden of ['--auto', '--continue', '--session', '--fork']) {
     assert.equal(argumentsForRun.includes(forbidden), false, `${forbidden} must be absent`);
+  }
+});
+
+test('Given the OpenCode runtime seam, when adapter and controller invoke OpenCode, then they use the authorized absolute executable with pure mode and no PATH fallback', async () => {
+  const invocation = createOpenCodeInvocation(['export', '--pure', 'session-1']);
+  const [adapterSource, controllerSource] = await Promise.all([
+    readFile(path.join(benchmarkRoot, 'adapters', 'opencode-no-skill.mjs'), 'utf8'),
+    readFile(path.join(benchmarkRoot, 'bin', 'run-no-skill-baseline.mjs'), 'utf8'),
+  ]);
+
+  assert.equal(OPENCODE_EXECUTABLE, 'C:\\nvm4w\\nodejs\\opencode.cmd');
+  assert.deepEqual(invocation, {
+    executable: 'C:\\nvm4w\\nodejs\\opencode.cmd',
+    args: ['export', '--pure', 'session-1'],
+  });
+  for (const source of [adapterSource, controllerSource]) {
+    assert.match(source, /executeOpenCode/);
+    assert.equal(source.includes('ComSpec'), false);
+    assert.equal(source.includes("command: 'opencode'"), false);
+    assert.equal(source.includes("'opencode.cmd'"), false);
   }
 });
 

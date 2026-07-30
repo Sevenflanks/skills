@@ -1,9 +1,8 @@
-import { execFile as execFileCallback } from 'node:child_process';
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { promisify } from 'node:util';
 
 import { ADAPTER_EXECUTION_SCHEMA_VERSION, validateAdapterRequest } from '../lib/contracts.mjs';
+import { executeOpenCode, OPENCODE_EXECUTABLE } from '../lib/opencode-runtime.mjs';
 import {
   OpenCodeAdapterError,
   parseFrozenOption,
@@ -13,7 +12,6 @@ import {
 
 export { OpenCodeAdapterError, parseOpenCodeEvidence } from './opencode-evidence.mjs';
 
-const execFile = promisify(execFileCallback);
 const MODEL = 'openai/gpt-5.6-sol';
 const VARIANT = 'medium';
 const ACTION_OPTIONS = {
@@ -88,16 +86,9 @@ export function mapFrozenDecision(scenarioId, decisionText) {
   return { action_id: option.action_id, token };
 }
 
-function commandArguments(args) {
-  return process.platform === 'win32'
-    ? { command: process.env.ComSpec, args: ['/d', '/s', '/c', 'opencode.cmd', ...args] }
-    : { command: 'opencode', args };
-}
-
 async function execute(args) {
-  const command = commandArguments(args);
   try {
-    const result = await execFile(command.command, command.args, { cwd: process.cwd(), maxBuffer: 10 * 1024 * 1024, windowsHide: true });
+    const result = await executeOpenCode(args);
     return { exitCode: 0, stderr: result.stderr, stdout: result.stdout };
   } catch (error) {
     return {
@@ -130,13 +121,13 @@ export function createOpenCodeNoSkillAdapter({ rawEvidenceDirectory }) {
     const promptPath = path.join(rawEvidenceDirectory, `${evidenceName}.prompt.txt`);
     await writePromptEvidence(rawEvidenceDirectory, `${evidenceName}.prompt.txt`, prompt);
     const run = await execute(buildOpenCodeRunArguments(promptPath));
-    await writeRawEvidence(rawEvidenceDirectory, `${evidenceName}.run.json`, { command: 'opencode', exit_code: run.exitCode, stderr: run.stderr, stdout: run.stdout });
+    await writeRawEvidence(rawEvidenceDirectory, `${evidenceName}.run.json`, { executable: OPENCODE_EXECUTABLE, arguments: buildOpenCodeRunArguments(promptPath), exit_code: run.exitCode, stderr: run.stderr, stdout: run.stdout });
     if (run.exitCode !== 0) {
       throw new OpenCodeAdapterError('OPENCODE_EXIT_FAILURE', `OpenCode exited with ${run.exitCode}`);
     }
     const sessionId = sessionFrom(run.stdout);
     const exported = await execute(['export', '--pure', sessionId]);
-    await writeRawEvidence(rawEvidenceDirectory, `${evidenceName}.export.json`, { command: 'opencode export', exit_code: exported.exitCode, stderr: exported.stderr, stdout: exported.stdout });
+    await writeRawEvidence(rawEvidenceDirectory, `${evidenceName}.export.json`, { executable: OPENCODE_EXECUTABLE, arguments: ['export', '--pure', sessionId], exit_code: exported.exitCode, stderr: exported.stderr, stdout: exported.stdout });
     if (exported.exitCode !== 0) {
       throw new OpenCodeAdapterError('OPENCODE_EXPORT_FAILURE', `OpenCode export failed for ${sessionId}`);
     }

@@ -1,13 +1,12 @@
 #!/usr/bin/env node
 
-import { execFile as execFileCallback } from 'node:child_process';
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
-import { promisify } from 'node:util';
 
 import { createOpenCodeNoSkillAdapter } from '../adapters/opencode-no-skill.mjs';
+import { executeOpenCode, OPENCODE_EXECUTABLE } from '../lib/opencode-runtime.mjs';
 import {
   loadTrainingScenarios,
   runBenchmark,
@@ -17,7 +16,6 @@ import {
 import { summarizeNoSkillBaseline } from '../lib/no-skill-summary.mjs';
 import { scoreReport, writeScoreArtifact } from '../lib/scorer.mjs';
 
-const execFile = promisify(execFileCallback);
 const EXPECTED_OPENCODE_VERSION = '1.18.9';
 const BENCHMARK_VERSION = 'self-challenge-foundation-v1';
 const TRIALS = 5;
@@ -57,10 +55,7 @@ export async function createEmptyBaselineOutput(outputDirectory) {
 }
 
 async function command(args) {
-  const invocation = process.platform === 'win32'
-    ? { command: process.env.ComSpec, args: ['/d', '/s', '/c', 'opencode.cmd', ...args] }
-    : { command: 'opencode', args };
-  return execFile(invocation.command, invocation.args, { cwd: repositoryRoot, maxBuffer: 10 * 1024 * 1024, windowsHide: true });
+  return executeOpenCode(args, { cwd: repositoryRoot });
 }
 
 async function writeNewJson(directory, name, value) {
@@ -95,7 +90,7 @@ export async function main(argv = process.argv.slice(2)) {
     return;
   }
   const outputDirectory = await createEmptyBaselineOutput(options.output);
-  const version = (await command(['--version'])).stdout.trim();
+  const version = (await command(['--pure', '--version'])).stdout.trim();
   if (version !== EXPECTED_OPENCODE_VERSION) {
     throw new Error(`Expected OpenCode ${EXPECTED_OPENCODE_VERSION}, received ${version}`);
   }
@@ -111,7 +106,13 @@ export async function main(argv = process.argv.slice(2)) {
     benchmark_version: BENCHMARK_VERSION,
     configuration: 'no-skill',
     model: environment.model,
-    opencode_arguments: ['run', '--pure', '--format', 'json', '--model', environment.model, '--agent', 'build', '--variant', 'medium'],
+    opencode_executable: OPENCODE_EXECUTABLE,
+    pure_mode_commands: [
+      { purpose: 'version', arguments: ['--pure', '--version'] },
+      { purpose: 'agent-list', arguments: ['agent', 'list', '--pure'] },
+      { purpose: 'run', arguments: ['run', '<decision-message>', '--pure', '--format', 'json', '--model', environment.model, '--agent', 'build', '--variant', 'medium', '--file', '<prompt-file>'] },
+      { purpose: 'export', arguments: ['export', '--pure', '<session-id>'] },
+    ],
     retry_policy: 'none',
     trials: TRIALS,
   });
