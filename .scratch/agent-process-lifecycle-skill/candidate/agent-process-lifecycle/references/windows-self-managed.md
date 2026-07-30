@@ -1,6 +1,6 @@
 # 使用契約：Windows self-managed lifecycle helper
 
-這份 reference 描述 Windows self-managed helper 的 model-facing contract。它目前是 dormant reference，不由 `SKILL.md` 接線。
+這份 reference 描述 Windows self-managed helper 的 model-facing contract。只有在 `SKILL.md` 已選定 Windows self-managed tier 後，且在 pre-launch validation 與 `Launch`／`Finalize` 前才讀取它。
 
 ## 適用條件
 
