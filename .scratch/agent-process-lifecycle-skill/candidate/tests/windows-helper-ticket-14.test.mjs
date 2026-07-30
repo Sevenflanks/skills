@@ -92,6 +92,12 @@ function replaceJsonString(source, key, value) {
   );
 }
 
+function mutateJson(source, mutation) {
+  const record = JSON.parse(source);
+  mutation(record);
+  return JSON.stringify(record);
+}
+
 async function createInstrumentedHelper(directory, marker, injection) {
   const needle = `# TEST-INJECTION: ${marker}`;
   const source = await readFile(helperPath, "utf8");
@@ -371,13 +377,43 @@ test("Finalize rejects unverifiable authority before graceful or termination sid
       shapeTrusted: false,
     });
     await assertScenario(fixture, {
-      expected: { category: "caller", failureKind: "record-invalid", missingEvidence: ["schema-version"], reasonCode: "schema-or-type-invalid", runId: null, stage: "schema-types" },
+      expected: { category: "caller", failureKind: "record-invalid", missingEvidence: ["complete-record-schema"], reasonCode: "schema-or-type-invalid", runId: null, stage: "schema-types" },
       mutate: (source) => replaceOnce(source, /"schema_version":1/u, '"schema_version":"1"', "schema type"),
       shapeTrusted: false,
     });
+    for (const [label, mutation] of [
+      ["missing executable", (record) => { delete record.executable; }],
+      ["arguments are not an array", (record) => { record.arguments = "not-an-array"; }],
+      ["arguments contain a non-string", (record) => { record.arguments[0] = 1; }],
+      ["working directory is blank", (record) => { record.working_directory = ""; }],
+      ["root identity process id is not an integer", (record) => { record.root.process_id = "not-an-integer"; }],
+      ["stdio stdout path has the wrong type", (record) => { record.stdio.stdout_path = false; }],
+      ["readiness identity is blank", (record) => { record.readiness.identity = ""; }],
+      ["readiness deadline has the wrong type", (record) => { record.readiness.deadline_milliseconds = "5000"; }],
+      ["ready completion timestamp has the wrong type", (record) => { record.readiness.completed_at_utc = false; }],
+      ["ready completion timestamp is not round-trip", (record) => { record.readiness.completed_at_utc = "not-a-timestamp"; }],
+      ["ready elapsed time has the wrong type", (record) => { record.readiness.elapsed_milliseconds = null; }],
+      ["requested disposition has the wrong type", (record) => { record.requested_disposition = false; }],
+      ["requested later owner has the wrong type", (record) => { record.requested_later_owner = {}; }],
+      ["later owner has the wrong type", (record) => { record.later_owner = {}; }],
+      ["Finalize event has the wrong type", (record) => { record.events.finalize = false; }],
+    ]) {
+      await assertScenario(fixture, {
+        expected: { category: "caller", failureKind: "record-invalid", missingEvidence: ["complete-record-schema"], reasonCode: "schema-or-type-invalid", runId: null, stage: "schema-types" },
+        hook: { marker: "finalize-job-query", injection: "throw 'Ticket 14 schema guard must reject before authority lookup.'" },
+        mutate: (source) => mutateJson(source, mutation),
+        shapeTrusted: false,
+      });
+    }
     await assertScenario(fixture, {
       expected: { category: reconciliation, failureKind: "record-state", missingEvidence: ["ready-stop-state"], reasonCode: "record-not-ready", runId: currentRunId, stage: "state-readiness-disposition" },
-      mutate: (source) => replaceJsonString(replaceJsonString(source, "state", "bound"), "job_name", "not-a-derived-job"),
+      mutate: (source) => mutateJson(source, (record) => {
+        record.state = "bound";
+        record.job_name = "not-a-derived-job";
+        record.readiness.result = null;
+        record.readiness.completed_at_utc = null;
+        delete record.readiness.elapsed_milliseconds;
+      }),
     });
     await assertScenario(fixture, {
       expected: { category: reconciliation, failureKind: "record-state", missingEvidence: ["readiness-success"], reasonCode: "readiness-not-succeeded", runId: currentRunId, stage: "state-readiness-disposition" },

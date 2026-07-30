@@ -1531,6 +1531,25 @@ function Test-FinalizeRecordInteger {
         $Value -is [int32] -or $Value -is [uint32] -or $Value -is [int64] -or $Value -is [uint64]
 }
 
+function Test-FinalizeRecordStringArray {
+    param([object]$Value)
+
+    if ($Value -is [string] -or $Value -isnot [Collections.IEnumerable]) { return $false }
+    foreach ($item in $Value) {
+        if ($item -isnot [string]) { return $false }
+    }
+    return $true
+}
+
+function Test-FinalizeRecordRoundTripTimestamp {
+    param([object]$Value)
+
+    if (-not (Test-FinalizeRecordString -Value $Value)) { return $false }
+    $parsed = [DateTimeOffset]::MinValue
+    if (-not [DateTimeOffset]::TryParseExact([string]$Value, 'O', [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::None, [ref]$parsed)) { return $false }
+    return [string]::Equals($parsed.ToString('O', [Globalization.CultureInfo]::InvariantCulture), [string]$Value, [StringComparison]::Ordinal)
+}
+
 function Test-FinalizeIdentityShape {
     param([object]$Identity)
 
@@ -1545,11 +1564,18 @@ function Test-FinalizeRecordSchema {
 
     if ($Record -isnot [Collections.IDictionary]) { return $false }
     if (-not (Test-FinalizeRecordInteger -Value $Record['schema_version']) -or [int64]$Record['schema_version'] -ne 1) { return $false }
-    if (-not (Test-FinalizeRecordString -Value $Record['state']) -or -not (Test-FinalizeRecordString -Value $Record['run_id']) -or -not (Test-FinalizeRecordString -Value $Record['job_name'])) { return $false }
+    if ($Record['state'] -notin @('bound', 'ready', 'preserved') -or -not (Test-FinalizeRecordString -Value $Record['run_id']) -or -not (Test-FinalizeRecordString -Value $Record['job_name'])) { return $false }
+    if (-not (Test-FinalizeRecordString -Value $Record['executable']) -or -not (Test-FinalizeRecordStringArray -Value $Record['arguments']) -or -not (Test-FinalizeRecordString -Value $Record['working_directory'])) { return $false }
     if (-not (Test-FinalizeIdentityShape -Identity $Record['root']) -or -not (Test-FinalizeIdentityShape -Identity $Record['holder'])) { return $false }
     if ($Record['stdio'] -isnot [Collections.IDictionary] -or -not (Test-FinalizeRecordString -Value $Record['stdio']['stdout_path']) -or -not (Test-FinalizeRecordString -Value $Record['stdio']['stderr_path'])) { return $false }
-    if ($Record['readiness'] -isnot [Collections.IDictionary] -or -not (Test-FinalizeRecordString -Value $Record['readiness']['identity']) -or -not (Test-FinalizeRecordString -Value $Record['readiness']['result'])) { return $false }
-    if (-not (Test-FinalizeRecordString -Value $Record['requested_disposition'])) { return $false }
+    if ($Record['readiness'] -isnot [Collections.IDictionary] -or -not (Test-FinalizeRecordString -Value $Record['readiness']['identity']) -or -not (Test-FinalizeRecordInteger -Value $Record['readiness']['deadline_milliseconds']) -or [int64]$Record['readiness']['deadline_milliseconds'] -le 0) { return $false }
+    if ($Record['state'] -eq 'bound') {
+        if ($null -ne $Record['readiness']['result'] -or $null -ne $Record['readiness']['completed_at_utc']) { return $false }
+    }
+    elseif (-not (Test-FinalizeRecordString -Value $Record['readiness']['result']) -or -not (Test-FinalizeRecordRoundTripTimestamp -Value $Record['readiness']['completed_at_utc']) -or -not (Test-FinalizeRecordInteger -Value $Record['readiness']['elapsed_milliseconds']) -or [int64]$Record['readiness']['elapsed_milliseconds'] -lt 0) {
+        return $false
+    }
+    if ($Record['requested_disposition'] -notin @('Stop', 'Preserve')) { return $false }
     if (-not (Test-FinalizeNullableRecordString -Value $Record['requested_later_owner']) -or -not (Test-FinalizeNullableRecordString -Value $Record['later_owner'])) { return $false }
     return $Record['events'] -is [Collections.IDictionary] -and
         (Test-FinalizeRecordString -Value $Record['events']['finalize']) -and
@@ -1700,7 +1726,7 @@ function Get-FinalizePreservePublicationOutcome {
     }
     try {
         Assert-ExistingRecordPath -Path $RecordPath | Out-Null
-        $published = ([IO.File]::ReadAllText($RecordPath) | ConvertFrom-Json -AsHashtable)
+        $published = ([IO.File]::ReadAllText($RecordPath) | ConvertFrom-Json -AsHashtable -DateKind String)
         if ((Test-FinalizeRecordSchema -Record $published) -and
             $published['state'] -eq 'preserved' -and
             [string]::Equals([string]$published['later_owner'], $ExpectedLaterOwner, [StringComparison]::Ordinal) -and
@@ -1936,13 +1962,13 @@ function Invoke-Finalize {
         return New-FinalizeRejectionResult -FailureKind 'record-access' -UnresolvedReason $_.Exception.Message -ValidationStage 'protected-path-read-json' -ReasonCode 'record-read-failed' -MissingEvidence @('readable-protected-record') -RecordPath $recordPathForFinalize -RecordPresent $recordPresent -RecordBytes $recordBytes -LaterOwner 'compatible-session-security-context-owner' -ResponsibilityStatus 'transfer-required-not-completed'
     }
     try {
-        $record = $recordText | ConvertFrom-Json -AsHashtable
+        $record = $recordText | ConvertFrom-Json -AsHashtable -DateKind String
     }
     catch {
         return New-FinalizeRejectionResult -FailureKind 'record-invalid' -UnresolvedReason $_.Exception.Message -ValidationStage 'protected-path-read-json' -ReasonCode 'record-json-invalid' -MissingEvidence @('parseable-record') -RecordPath $recordPathForFinalize -RecordPresent $recordPresent -RecordBytes $recordBytes -ResponsibilityStatus 'retained-by-caller'
     }
     if (-not (Test-FinalizeRecordSchema -Record $record)) {
-        return New-FinalizeRejectionResult -FailureKind 'record-invalid' -UnresolvedReason 'The record schema or required field types are invalid.' -ValidationStage 'schema-types' -ReasonCode 'schema-or-type-invalid' -MissingEvidence @('schema-version') -RecordPath $recordPathForFinalize -RecordPresent $recordPresent -RecordBytes $recordBytes -ResponsibilityStatus 'retained-by-caller'
+        return New-FinalizeRejectionResult -FailureKind 'record-invalid' -UnresolvedReason 'The record schema or required field types are invalid.' -ValidationStage 'schema-types' -ReasonCode 'schema-or-type-invalid' -MissingEvidence @('complete-record-schema') -RecordPath $recordPathForFinalize -RecordPresent $recordPresent -RecordBytes $recordBytes -ResponsibilityStatus 'retained-by-caller'
     }
     $recordClaims = New-FinalizeRecordClaims -Record $record
 
