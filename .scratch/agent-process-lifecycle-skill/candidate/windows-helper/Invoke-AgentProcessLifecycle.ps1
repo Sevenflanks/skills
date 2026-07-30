@@ -611,6 +611,64 @@ function Assert-ExistingRecordPath {
     return $fullPath
 }
 
+function Test-StrictRecordPublicationArtifactName {
+    param([Parameter(Mandatory)][string]$RecordLeaf, [Parameter(Mandatory)][string]$Name)
+
+    return $Name -cmatch ('^\.' + [Regex]::Escape($RecordLeaf) + '\.[0-9a-f]{32}\.tmp(?:\.backup)?$')
+}
+
+function Assert-StrictRecordPublicationArtifactPath {
+    param([Parameter(Mandatory)][string]$RecordPath, [Parameter(Mandatory)][string]$ArtifactPath)
+
+    $recordFullPath = Assert-SafeRecordParent -Path $RecordPath
+    $artifactFullPath = [IO.Path]::GetFullPath($ArtifactPath)
+    $recordDirectory = [IO.Path]::GetDirectoryName($recordFullPath)
+    $artifactDirectory = [IO.Path]::GetDirectoryName($artifactFullPath)
+    if (-not [string]::Equals($artifactDirectory, $recordDirectory, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Publication artifact is not a direct child of the record parent: $artifactFullPath"
+    }
+    if (-not (Test-StrictRecordPublicationArtifactName -RecordLeaf (Split-Path -Leaf $recordFullPath) -Name (Split-Path -Leaf $artifactFullPath))) {
+        throw "Publication artifact name is not scoped to the exact record leaf: $artifactFullPath"
+    }
+    $item = Get-Item -LiteralPath $artifactFullPath -Force -ErrorAction SilentlyContinue
+    if ($null -eq $item -or $item.PSIsContainer) { throw "Publication artifact is not a file: $artifactFullPath" }
+    if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw "Publication artifact is a reparse point: $artifactFullPath" }
+    Assert-CurrentUserProtectedRecord -Path $artifactFullPath
+    return $artifactFullPath
+}
+
+function Get-StrictRecordPublicationArtifacts {
+    param([Parameter(Mandatory)][string]$RecordPath, [Exception]$Exception)
+
+    $recordFullPath = Assert-SafeRecordParent -Path $RecordPath
+    $recordDirectory = [IO.Path]::GetDirectoryName($recordFullPath)
+    $recordLeaf = Split-Path -Leaf $recordFullPath
+    $artifacts = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    $candidates = [Collections.Generic.List[string]]::new()
+    $current = $Exception
+    while ($null -ne $current) {
+        foreach ($path in @($current.Data['AgentProcessLifecycle.ArtifactPaths'])) {
+            if ($null -ne $path -and [IO.File]::Exists([string]$path)) { $candidates.Add([string]$path) }
+        }
+        $current = $current.InnerException
+    }
+    foreach ($item in @(Get-ChildItem -LiteralPath $recordDirectory -Force -File)) {
+        if (Test-StrictRecordPublicationArtifactName -RecordLeaf $recordLeaf -Name $item.Name) { $candidates.Add($item.FullName) }
+    }
+    foreach ($candidate in $candidates) {
+        try {
+            $artifacts.Add((Assert-StrictRecordPublicationArtifactPath -RecordPath $recordFullPath -ArtifactPath $candidate)) | Out-Null
+        }
+        catch {
+            $failure = [InvalidOperationException]::new("Publication artifact validation failed for ${candidate}: $($_.Exception.Message)", $_.Exception)
+            $failure.Data['AgentProcessLifecycle.ArtifactPaths'] = @($candidate)
+            $failure.Data['AgentProcessLifecycle.ArtifactCleanupIncomplete'] = $true
+            throw $failure
+        }
+    }
+    return @($artifacts)
+}
+
 function New-CurrentUserFileSecurity {
     $currentSid = Get-CurrentUserSid
     $security = [Security.AccessControl.FileSecurity]::new()
@@ -1112,7 +1170,8 @@ function Invoke-LaunchFailureCleanup {
         [string]$JobName,
         [string]$CleanupRecordPath,
         [bool]$RecordCreated,
-        [string[]]$ArtifactPaths = @()
+        [string[]]$ArtifactPaths = @(),
+        [Exception]$ArtifactValidationException = $null
     )
 
     $errors = [Collections.Generic.List[string]]::new()
@@ -1145,6 +1204,12 @@ function Invoke-LaunchFailureCleanup {
         $errors.Add($_.Exception.Message)
     }
 
+    if ($ArtifactValidationException) {
+        foreach ($artifactPath in @($ArtifactValidationException.Data['AgentProcessLifecycle.ArtifactPaths'])) {
+            $artifactStates.Add([ordered]@{ path = [string]$artifactPath; existed_before_cleanup = [IO.File]::Exists([string]$artifactPath); absent = $false })
+        }
+        $errors.Add("Publication artifact cleanup refused: $($ArtifactValidationException.Message)")
+    }
     foreach ($artifactPath in $ArtifactPaths) {
         try {
             $before = [IO.File]::Exists($artifactPath)
@@ -1403,13 +1468,16 @@ function Invoke-Launch {
     }
     catch {
         $recordCreated = $recordCreated -or ($_.Exception.Data['AgentProcessLifecycle.CreatedByCurrentInvocation'] -eq $true)
-        $failureException = $_.Exception
-        while ($failureException -and -not $failureException.Data['AgentProcessLifecycle.ArtifactPaths']) { $failureException = $failureException.InnerException }
-        if ($failureException -and $failureException.Data['AgentProcessLifecycle.ArtifactPaths']) { $publicationArtifacts = @($failureException.Data['AgentProcessLifecycle.ArtifactPaths']) }
-        if ($publicationArtifacts.Count -eq 0 -and $failureKind -eq 'record-publication') {
-            $publicationArtifacts = @(Get-ChildItem -LiteralPath ([IO.Path]::GetDirectoryName($recordPathForRun)) -Force -File -Filter ".$(Split-Path -Leaf $recordPathForRun).*tmp*" | ForEach-Object FullName)
+        $artifactValidationException = $null
+        if ($failureKind -eq 'record-publication') {
+            try {
+                $publicationArtifacts = @(Get-StrictRecordPublicationArtifacts -RecordPath $recordPathForRun -Exception $_.Exception)
+            }
+            catch {
+                $artifactValidationException = $_.Exception
+            }
         }
-        $cleanup = Invoke-LaunchFailureCleanup -Root $root -RootAssigned $rootAssigned -Holder $holder -JobHandle $jobHandle -FinalizeEvent $finalizeEvent -JobName $jobName -CleanupRecordPath $recordPathForRun -RecordCreated $recordCreated -ArtifactPaths $publicationArtifacts
+        $cleanup = Invoke-LaunchFailureCleanup -Root $root -RootAssigned $rootAssigned -Holder $holder -JobHandle $jobHandle -FinalizeEvent $finalizeEvent -JobName $jobName -CleanupRecordPath $recordPathForRun -RecordCreated $recordCreated -ArtifactPaths $publicationArtifacts -ArtifactValidationException $artifactValidationException
         $jobHandle = [IntPtr]::Zero
         $status = if ($cleanup.status -eq 'completed') { 'failed' } else { 'unresolved' }
         return [ordered]@{
@@ -1582,28 +1650,13 @@ function Test-FinalizeAccessDeniedException {
 function Get-FinalizeScopedPublicationArtifacts {
     param([Parameter(Mandatory)][string]$RecordPath)
 
-    $fullPath = Assert-ExistingRecordPath -Path $RecordPath
-    $leaf = Split-Path -Leaf $fullPath
-    return @(Get-ChildItem -LiteralPath ([IO.Path]::GetDirectoryName($fullPath)) -Force -File -Filter ".${leaf}.*.tmp*" | ForEach-Object FullName)
+    return @(Get-StrictRecordPublicationArtifacts -RecordPath $RecordPath)
 }
 
 function Get-FinalizePublicationArtifacts {
     param([Parameter(Mandatory)][string]$RecordPath, [Parameter(Mandatory)][Exception]$Exception)
 
-    $paths = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
-    $current = $Exception
-    while ($null -ne $current) {
-        if ($current.Data['AgentProcessLifecycle.ArtifactPaths']) {
-            foreach ($path in @($current.Data['AgentProcessLifecycle.ArtifactPaths'])) {
-                if ([IO.File]::Exists([string]$path)) { $paths.Add([string]$path) | Out-Null }
-            }
-        }
-        $current = $current.InnerException
-    }
-    foreach ($artifact in @(Get-FinalizeScopedPublicationArtifacts -RecordPath $RecordPath)) {
-        $paths.Add($artifact) | Out-Null
-    }
-    return @($paths)
+    return @(Get-StrictRecordPublicationArtifacts -RecordPath $RecordPath -Exception $Exception)
 }
 
 function Remove-FinalizeScopedPublicationArtifacts {
@@ -1614,7 +1667,7 @@ function Remove-FinalizeScopedPublicationArtifacts {
     }
     catch {
         $failure = [InvalidOperationException]::new("Failed to enumerate Preserve publication artifacts: $($_.Exception.Message)")
-        $failure.Data['AgentProcessLifecycle.ArtifactPaths'] = @()
+        $failure.Data['AgentProcessLifecycle.ArtifactPaths'] = @($_.Exception.Data['AgentProcessLifecycle.ArtifactPaths'])
         $failure.Data['AgentProcessLifecycle.ArtifactCleanupIncomplete'] = $true
         throw $failure
     }

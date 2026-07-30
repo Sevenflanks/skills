@@ -894,7 +894,7 @@ test("Preserve publication failures distinguish absent, published, and unknown h
     },
     {
       name: "preserved-with-artifact-residue",
-      injection: "Write-Record -Record $record -DestinationPath $recordPathForFinalize; $artifact = Join-Path ([IO.Path]::GetDirectoryName($recordPathForFinalize)) \".$(Split-Path -Leaf $recordPathForFinalize).ticket15.tmp\"; [IO.File]::WriteAllText($artifact, 'residue'); $failure = [InvalidOperationException]::new('Ticket 15 injected publication residue.'); $failure.Data['AgentProcessLifecycle.ArtifactPaths'] = @($artifact); throw $failure",
+      injection: "Write-Record -Record $record -DestinationPath $recordPathForFinalize; $directory = [IO.Path]::GetDirectoryName($recordPathForFinalize); $leaf = Split-Path -Leaf $recordPathForFinalize; $artifact = Join-Path $directory \".$leaf.$([Guid]::NewGuid().ToString('N')).tmp\"; Write-ProtectedJsonFile -Record @{ artifact = 'ticket-15' } -Path $artifact; [IO.File]::WriteAllText((Join-Path $directory \".$leaf.notes.tmpkeep\"), 'decoy'); $failure = [InvalidOperationException]::new('Ticket 15 injected publication residue.'); $failure.Data['AgentProcessLifecycle.ArtifactPaths'] = @($artifact); throw $failure",
       expectedStatus: "unresolved",
       restoreBeforeCleanup: false,
     },
@@ -957,6 +957,7 @@ $result | ConvertTo-Json -Depth 12 -Compress
         });
         assert.equal(failed.evidence.publication_artifacts.length, 1);
         const artifactPath = failed.evidence.publication_artifacts[0];
+        const decoyPath = join(paths.directory, ".run-record.json.notes.tmpkeep");
         assert.equal(await pathExists(artifactPath), true);
         const laterStop = join(paths.directory, "later-stop-after-residue.ps1");
         await writeFile(
@@ -969,6 +970,7 @@ $result | ConvertTo-Json -Depth 12 -Compress
         assert.equal((await runPowerShell(laterStop)).lifecycle_result.status, "success");
         assert.equal(await pathExists(paths.record), false, "returned handoff can be finalized later");
         assert.equal(await pathExists(artifactPath), false, "later Stop removes the exact Preserve publication artifact");
+        assert.equal(await readFile(decoyPath, "utf8"), "decoy", "later Stop preserves the tmp-like decoy");
         assert.equal(isAlive(launch.binding.root_process_id), false);
         assert.equal(isAlive(launch.binding.holder_identity.process_id), false);
         assert.equal(await namedJobExists(launch.binding.job_name), false);
@@ -994,7 +996,7 @@ $result | ConvertTo-Json -Depth 12 -Compress
       const preserveHelper = await createInstrumentedHelper(
         paths.directory,
         "preserve-record-publication",
-        "Write-Record -Record $record -DestinationPath $recordPathForFinalize; $artifact = Join-Path ([IO.Path]::GetDirectoryName($recordPathForFinalize)) \".$(Split-Path -Leaf $recordPathForFinalize).ticket15.tmp\"; [IO.File]::WriteAllText($artifact, 'residue'); $failure = [InvalidOperationException]::new('Ticket 15 injected publication residue.'); $failure.Data['AgentProcessLifecycle.ArtifactPaths'] = @($artifact); throw $failure",
+        "Write-Record -Record $record -DestinationPath $recordPathForFinalize; $directory = [IO.Path]::GetDirectoryName($recordPathForFinalize); $leaf = Split-Path -Leaf $recordPathForFinalize; $artifact = Join-Path $directory \".$leaf.$([Guid]::NewGuid().ToString('N')).tmp\"; Write-ProtectedJsonFile -Record @{ artifact = 'ticket-15' } -Path $artifact; $failure = [InvalidOperationException]::new('Ticket 15 injected publication residue.'); $failure.Data['AgentProcessLifecycle.ArtifactPaths'] = @($artifact); throw $failure",
       );
       const preserve = join(paths.directory, "preserve-with-residue.ps1");
       await writeFile(
@@ -1056,6 +1058,56 @@ $result | ConvertTo-Json -Depth 12 -Compress
       }
     }
   });
+});
+
+test("later Stop refuses an unprotected exact-name publication artifact with unresolved evidence", async () => {
+  let fixture;
+  try {
+    fixture = await launchPreserveFixture();
+    const { launch, paths } = fixture;
+    await writeFile(
+      paths.preserve,
+      `$result = & ${powerShellLiteral(helperPath)} -Action Finalize -RecordPath ${powerShellLiteral(paths.record)} -Disposition Preserve -LaterOwner 'ticket-15-later-owner'
+$result | ConvertTo-Json -Depth 12 -Compress
+`,
+      "utf8",
+    );
+    assert.equal((await runPowerShell(paths.preserve)).lifecycle_result.status, "success");
+
+    const artifactPath = join(paths.directory, ".run-record.json.abcdef0123456789abcdef0123456789.tmp");
+    const stopHelper = await createInstrumentedHelper(
+      paths.directory,
+      "finalize-before-stop",
+      `$artifact = ${powerShellLiteral(artifactPath)}; [IO.File]::WriteAllText($artifact, 'unprotected')`,
+    );
+    const laterStop = join(paths.directory, "later-stop-unprotected-artifact.ps1");
+    await writeFile(
+      laterStop,
+      `$result = & ${powerShellLiteral(stopHelper)} -Action Finalize -RecordPath ${powerShellLiteral(paths.record)} -Disposition Stop
+$result | ConvertTo-Json -Depth 12 -Compress
+`,
+      "utf8",
+    );
+    const unresolved = await runPowerShell(laterStop);
+
+    assert.equal(unresolved.lifecycle_result.status, "unresolved");
+    assert.equal(unresolved.lifecycle_result.failure_kind, "publication-artifact-cleanup");
+    assert.equal(unresolved.lifecycle_result.cleanup.status, "unresolved");
+    assert.deepEqual(unresolved.evidence.publication_artifacts, [artifactPath]);
+    assert.equal(unresolved.evidence.record_present, true);
+    assert.equal(await readFile(artifactPath, "utf8"), "unprotected");
+    assert.equal(await pathExists(paths.record), true);
+    assert.equal(isAlive(launch.binding.root_process_id), false);
+    assert.equal(isAlive(launch.binding.holder_identity.process_id), false);
+    assert.equal(await namedJobExists(launch.binding.job_name), false);
+  } finally {
+    if (fixture && isAlive(fixture.launch.binding.root_process_id)) {
+      await cleanupFixture(fixture);
+    } else if (fixture) {
+      await rm(fixture.paths.directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+      assert.equal(await pathExists(fixture.paths.directory), false, "unprotected artifact fixture leaves no residue");
+    }
+  }
 });
 
 async function assertLaterStopOwnerRejection() {

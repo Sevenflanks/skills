@@ -54,12 +54,12 @@ async function runPowerShell(scriptPath) {
   return JSON.parse(stdout);
 }
 
-async function createInstrumentedHelper(directory, markers) {
+async function createInstrumentedHelper(directory, markers, injections = {}) {
   let helper = await readFile(helperPath, "utf8");
   for (const marker of markers) {
     const needle = `# TEST-INJECTION: ${marker}`;
     assert.ok(helper.includes(needle), `missing test injection marker: ${marker}`);
-    const injection = marker === "cleanup-verification"
+    const injection = injections[marker] ?? (marker === "cleanup-verification"
       ? "$errors.Add('Ticket 12 injected incomplete cleanup verification.')"
       : marker === "preparing-before-create"
         ? "[IO.File]::WriteAllText($Path, '{\"winner\":\"concurrent-launch\"}')"
@@ -69,7 +69,7 @@ async function createInstrumentedHelper(directory, markers) {
           ? "$trustedSids = @('S-1-5-18')"
           : marker === "workload-job-handle-probe"
             ? "$ArgumentList = @($ArgumentList) + @('-JobHandleValue', [string]$jobHandle.ToInt64())"
-        : `throw 'Ticket 12 injected failure at ${marker}.'`;
+            : `throw 'Ticket 12 injected failure at ${marker}.'`);
     helper = helper.replace(needle, injection);
   }
   const instrumentedPath = join(directory, "Invoke-AgentProcessLifecycle.instrumented.ps1");
@@ -442,11 +442,11 @@ test("Launch failure injection cleans retained current-run authority for stdio, 
 });
 
 test("Write-Record artifact failure markers publish exact cleanup evidence and leave no fixture residue", async () => {
-  for (const [markers, label, expectsArtifactEvidence] of [
-    [["write-record-after-temp-create"], "write-record-after-temp-create", false],
-    [["write-record-before-replace"], "write-record-before-replace", false],
-    [["write-record-before-replace", "write-record-temp-delete"], "write-record-temp-delete", true],
-    [["write-record-backup-delete"], "write-record-backup-delete", true],
+  for (const [markers, label, expectedArtifactCount] of [
+    [["write-record-after-temp-create"], "write-record-after-temp-create", 0],
+    [["write-record-before-replace"], "write-record-before-replace", 0],
+    [["write-record-before-replace", "write-record-temp-delete"], "write-record-temp-delete", 1],
+    [["write-record-backup-delete"], "write-record-backup-delete", 1],
   ]) {
     const directory = await mkdtemp(`agent-process-lifecycle-ticket-12-${label}-`);
     const recordPath = join(directory, "run-record.json");
@@ -459,8 +459,8 @@ test("Write-Record artifact failure markers publish exact cleanup evidence and l
       assert.equal(result.lifecycle_result.failure_kind, "record-publication", label);
       assert.equal(result.lifecycle_result.cleanup.status, "completed", label);
       const artifacts = result.lifecycle_result.cleanup.publication_artifacts;
-      if (expectsArtifactEvidence) {
-        assert.equal(artifacts.length, 2, label);
+      if (expectedArtifactCount > 0) {
+        assert.equal(artifacts.length, expectedArtifactCount, label);
         assert.ok(artifacts.some((artifact) => artifact.existed_before_cleanup === true), label);
         assert.ok(artifacts.every((artifact) => artifact.absent === true), label);
         assert.ok(artifacts.every((artifact) => /\.tmp(?:\.backup)?$/u.test(artifact.path)), label);
@@ -494,6 +494,63 @@ test("publication artifact that survives Write-Record and outer cleanup is unres
     assert.equal(await namedJobExists(result.binding.job_name), false);
     assert.equal(await pathExists(recordPath), false);
     assert.equal(await pathExists(artifact.path), true, "the artifact remains until test-owned cleanup");
+  } finally {
+    await cleanupCurrentRun({ directory, recordPath, result });
+  }
+});
+
+test("Launch fallback cleanup removes only its strict protected publication artifact", async () => {
+  const directory = await mkdtemp("agent-process-lifecycle-ticket-12-artifact-scope-");
+  const recordPath = join(directory, "run-record.json");
+  const decoyPath = join(directory, ".run-record.json.notes.tmpkeep");
+  const artifactPath = join(directory, ".run-record.json.0123456789abcdef0123456789abcdef.tmp");
+  let result;
+  try {
+    await writeFile(decoyPath, "preserve this tmp-like decoy", "utf8");
+    const instrumentedHelper = await createInstrumentedHelper(directory, ["bound-record-publication"], {
+      "bound-record-publication": `$artifact = ${powerShellLiteral(artifactPath)}; Write-ProtectedJsonFile -Record @{ artifact = 'ticket-12' } -Path $artifact; throw 'Ticket 12 injected strict publication artifact failure.'`,
+    });
+    result = await runPowerShell(await writeLaunchScript(directory, recordPath, instrumentedHelper, "$true"));
+
+    assert.equal(result.lifecycle_result.status, "failed");
+    assert.equal(result.lifecycle_result.failure_kind, "record-publication");
+    assert.equal(result.lifecycle_result.cleanup.status, "completed");
+    assert.deepEqual(
+      result.lifecycle_result.cleanup.publication_artifacts.map((artifact) => artifact.path),
+      [artifactPath],
+      "cleanup evidence is restricted to the exact record publication artifact",
+    );
+    assert.equal(await pathExists(artifactPath), false, "the protected strict artifact is removed");
+    assert.equal(await readFile(decoyPath, "utf8"), "preserve this tmp-like decoy");
+    await assertFailedRunAbsent(result, recordPath);
+  } finally {
+    await cleanupCurrentRun({ directory, recordPath, result });
+  }
+});
+
+test("Launch refuses an unprotected exact-name publication artifact without deleting it", async () => {
+  const directory = await mkdtemp("agent-process-lifecycle-ticket-12-artifact-unprotected-");
+  const recordPath = join(directory, "run-record.json");
+  const artifactPath = join(directory, ".run-record.json.abcdef0123456789abcdef0123456789.tmp");
+  let result;
+  try {
+    const instrumentedHelper = await createInstrumentedHelper(directory, ["bound-record-publication"], {
+      "bound-record-publication": `$artifact = ${powerShellLiteral(artifactPath)}; [IO.File]::WriteAllText($artifact, 'unprotected'); throw 'Ticket 12 injected unprotected strict publication artifact failure.'`,
+    });
+    result = await runPowerShell(await writeLaunchScript(directory, recordPath, instrumentedHelper, "$true"));
+
+    assert.equal(result.lifecycle_result.status, "unresolved");
+    assert.equal(result.lifecycle_result.failure_kind, "record-publication");
+    assert.equal(result.lifecycle_result.cleanup.status, "unresolved");
+    assert.deepEqual(
+      result.lifecycle_result.cleanup.publication_artifacts.map((artifact) => artifact.path),
+      [artifactPath],
+      "unresolved evidence identifies only the refused exact artifact",
+    );
+    assert.equal(result.lifecycle_result.cleanup.publication_artifacts[0].absent, false);
+    assert.match(result.lifecycle_result.unresolved_reason, /Publication artifact cleanup refused/u);
+    assert.equal(await readFile(artifactPath, "utf8"), "unprotected");
+    await assertFailedRunAbsent(result, recordPath);
   } finally {
     await cleanupCurrentRun({ directory, recordPath, result });
   }
