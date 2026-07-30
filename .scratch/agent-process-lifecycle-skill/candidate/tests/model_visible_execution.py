@@ -6,10 +6,24 @@ import subprocess
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import assert_never
+from typing import Final, assert_never
 
 from model_visible_contract import AnyEquals, BoundaryError, Case, InvalidModelResponse, ModelResponse, StreamEvent, parse_events, parse_preflight, parse_response
 from model_visible_json import JsonArray, JsonObject, JsonValue, expect_object, expect_string, json_text, lookup, portable, record, reference_paths, values_equal
+
+
+FIXTURE_PERMISSION_POLICY: Final = record(
+    ("*", "deny"),
+    (
+        "read",
+        record(
+            ("*", "deny"),
+            ("*.opencode/skills/agent-process-lifecycle/references/windows-self-managed.md", "allow"),
+            ("*.opencode/skills/agent-process-lifecycle/references/failure-and-handoff.md", "allow"),
+        ),
+    ),
+    ("skill", "allow"),
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,9 +101,7 @@ class FixtureStream:
 def _with_fixture(prompt: str, config: ExecutionConfig) -> FixtureStream:
     with tempfile.TemporaryDirectory(prefix="ticket-16-agent-process-lifecycle-") as temporary_directory:
         project = Path(temporary_directory)
-        skill_path = project / ".opencode/skills" / config.skill_name
-        shutil.copytree(config.skill_directory, skill_path)
-        (project / "opencode.json").write_text('{"permission":{"*":"deny","skill":"allow","read":"allow"}}\n', encoding="utf-8")
+        skill_path = _create_fixture(project, config)
         preflight = _command((config.opencode, "debug", "skill", "--pure"), project, 30)
         discovered = parse_preflight(preflight.stdout)
         expected_location = str((skill_path / "SKILL.md").resolve())
@@ -98,6 +110,20 @@ def _with_fixture(prompt: str, config: ExecutionConfig) -> FixtureStream:
             raise BoundaryError("OpenCode preflight", "fixture did not discover exactly the candidate skill")
         completed = _command((config.opencode, "run", "--pure", "--format", "json", "--model", config.model, "--agent", "build", "--dir", str(project), prompt), project, 120)
         return FixtureStream(completed.returncode, completed.stdout, str(skill_path.resolve()))
+
+
+def _create_fixture(project: Path, config: ExecutionConfig) -> Path:
+    skill_path = project / ".opencode/skills" / config.skill_name
+    for relative_path in (
+        Path("SKILL.md"),
+        Path("references/windows-self-managed.md"),
+        Path("references/failure-and-handoff.md"),
+    ):
+        destination = skill_path / relative_path
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(config.skill_directory / relative_path, destination)
+    (project / "opencode.json").write_text(f"{json_text(record(('permission', FIXTURE_PERMISSION_POLICY)))}\n", encoding="utf-8")
+    return skill_path
 
 
 def _command(arguments: tuple[str, ...], cwd: Path, timeout: int) -> subprocess.CompletedProcess[str]:

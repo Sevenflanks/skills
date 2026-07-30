@@ -13,12 +13,14 @@ from pathlib import Path
 from typing import Final
 
 from model_visible_contract import Case, load_cases
-from model_visible_execution import CaseResult, ExecutionConfig, run_case
+from model_visible_execution import FIXTURE_PERMISSION_POLICY, CaseResult, ExecutionConfig, run_case
 from model_visible_json import JsonArray, JsonObject, JsonValue, json_text, record
 
 ROOT: Final = Path(__file__).resolve().parents[4]
-SKILL_DIRECTORY: Final = ROOT / ".scratch/agent-process-lifecycle-skill/candidate/agent-process-lifecycle"
+CANDIDATE_DIRECTORY: Final = ROOT / ".scratch/agent-process-lifecycle-skill/candidate"
+SKILL_DIRECTORY: Final = CANDIDATE_DIRECTORY / "agent-process-lifecycle"
 EVALS_PATH: Final = SKILL_DIRECTORY / "evals/evals.json"
+CANONICAL_EVIDENCE_DIRECTORY: Final = (CANDIDATE_DIRECTORY / "evidence/model-visible-ticket-16").resolve()
 NAME: Final = "agent-process-lifecycle"
 MODEL: Final = "openai/gpt-5.6-sol"
 MODULES: Final = tuple(Path(__file__).with_name(name) for name in ("run_candidate_smoke.py", "model_visible_execution.py", "model_visible_contract.py", "model_visible_json.py"))
@@ -48,9 +50,8 @@ def _output_path() -> Path:
     if len(sys.argv) != 2:
         raise HarnessError("usage: run_candidate_smoke.py <scratch-evidence-directory>")
     output = (ROOT / sys.argv[1]).resolve()
-    scratch = (ROOT / ".scratch/agent-process-lifecycle-skill").resolve()
-    if not output.is_relative_to(scratch):
-        raise HarnessError("output must be under .scratch/agent-process-lifecycle-skill")
+    if output != CANONICAL_EVIDENCE_DIRECTORY:
+        raise HarnessError("output must be candidate/evidence/model-visible-ticket-16")
     if output.exists():
         shutil.rmtree(output)
     output.mkdir(parents=True)
@@ -64,7 +65,7 @@ def _manifest(cases: tuple[Case, ...]) -> JsonObject:
         ("evidence_type", "ticket-16-model-visible"),
         ("model", MODEL),
         ("case_ids", JsonArray(tuple(case.identifier for case in cases))),
-        ("permission_policy", record(("*", "deny"), ("read", "allow"), ("skill", "allow"))),
+        ("permission_policy", FIXTURE_PERMISSION_POLICY),
         ("input_hash_mode", "sha256-lf-normalized-text"),
         ("inputs", inputs),
         ("archived_evidence_policy", "Archived routing and Windows runtime evidence were hashed only; neither was rerun or recalculated."),

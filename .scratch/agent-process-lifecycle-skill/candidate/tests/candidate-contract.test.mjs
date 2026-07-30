@@ -165,7 +165,7 @@ test("candidate references and harness isolate the model-visible seam", async ()
   assert.match(boundaryContract, /load_cases/u);
   assert.match(boundaryJson, /class BoundaryError/u);
   assert.match(boundaryExecution, /model_visible_contract/u);
-  assert.match(boundaryExecution, /copytree/u);
+  assert.match(boundaryExecution, /_create_fixture/u);
 });
 
 test("published inventory bytes remain pinned and exclude the candidate", async () => {

@@ -22,7 +22,11 @@
 ],
   "permission_policy": {
   "*": "deny",
-  "read": "allow",
+  "read": {
+  "*": "deny",
+  "*.opencode/skills/agent-process-lifecycle/references/windows-self-managed.md": "allow",
+  "*.opencode/skills/agent-process-lifecycle/references/failure-and-handoff.md": "allow"
+},
   "skill": "allow"
 },
   "input_hash_mode": "sha256-lf-normalized-text",
@@ -31,8 +35,8 @@
   ".scratch/agent-process-lifecycle-skill/candidate/agent-process-lifecycle/references/windows-self-managed.md": "85a8f953331297c4494c55e082a7e173490f5c3ca2f155e6971cf3b9f686b201",
   ".scratch/agent-process-lifecycle-skill/candidate/agent-process-lifecycle/references/failure-and-handoff.md": "d9ab32a4a6850a4fc21ee9b37e282ae0c0e718efe833704942532331335de44d",
   ".scratch/agent-process-lifecycle-skill/candidate/agent-process-lifecycle/evals/evals.json": "06e6d69a2443ef9abcc6faba6f47d9d5e4a88df6ad22040f7b30f652976124e0",
-  ".scratch/agent-process-lifecycle-skill/candidate/tests/run_candidate_smoke.py": "aafc3745e4323d35998c82e059a3ebceac45c3e012de31e4cee049848cfe944c",
-  ".scratch/agent-process-lifecycle-skill/candidate/tests/model_visible_execution.py": "2736e3ace0c870676dfa205b61e6217b73423899dface1de82f6d52965ca0220",
+  ".scratch/agent-process-lifecycle-skill/candidate/tests/run_candidate_smoke.py": "b1c4572fd0b3871350e5873fb14e0250fd1fca5854d21014435ee10e599ce9f6",
+  ".scratch/agent-process-lifecycle-skill/candidate/tests/model_visible_execution.py": "498e2120f19d06417a3505f2de6a27e2562c01f0e33b37807a64d2842e745d07",
   ".scratch/agent-process-lifecycle-skill/candidate/tests/model_visible_contract.py": "0c097b6366b6330aa6ad2fbff525d3afb593557c84a162c1e62ad08209559ced",
   ".scratch/agent-process-lifecycle-skill/candidate/tests/model_visible_json.py": "64bfae3d6f4713e8fd55d7dc3ca021bb2eaee14a22f4c1db4b4045abc355a5de",
   ".scratch/agent-process-lifecycle-skill/candidate/evidence/routing-smoke-20260729-r7/summary.json": "d9f6ff89ef0edae2ef3bf39b70de60f412a159ba309f89d74ec71be396a08be9",
