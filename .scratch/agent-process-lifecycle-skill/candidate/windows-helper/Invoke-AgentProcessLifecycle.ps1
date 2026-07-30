@@ -1136,19 +1136,217 @@ function Invoke-Launch {
     }
 }
 
+function Test-FinalizeRecordString {
+    param([object]$Value)
+
+    return $Value -is [string] -and -not [string]::IsNullOrWhiteSpace($Value)
+}
+
+function Test-FinalizeRecordInteger {
+    param([object]$Value)
+
+    return $Value -is [byte] -or $Value -is [sbyte] -or $Value -is [int16] -or $Value -is [uint16] -or
+        $Value -is [int32] -or $Value -is [uint32] -or $Value -is [int64] -or $Value -is [uint64]
+}
+
+function Test-FinalizeIdentityShape {
+    param([object]$Identity)
+
+    return $Identity -is [Collections.IDictionary] -and
+        (Test-FinalizeRecordInteger -Value $Identity['process_id']) -and [int64]$Identity['process_id'] -gt 0 -and
+        (Test-FinalizeRecordInteger -Value $Identity['creation_time_filetime']) -and [int64]$Identity['creation_time_filetime'] -gt 0 -and
+        (Test-FinalizeRecordString -Value $Identity['image_path'])
+}
+
+function Test-FinalizeRecordSchema {
+    param([object]$Record)
+
+    if ($Record -isnot [Collections.IDictionary]) { return $false }
+    if (-not (Test-FinalizeRecordInteger -Value $Record['schema_version']) -or [int64]$Record['schema_version'] -ne 1) { return $false }
+    if (-not (Test-FinalizeRecordString -Value $Record['state']) -or -not (Test-FinalizeRecordString -Value $Record['run_id']) -or -not (Test-FinalizeRecordString -Value $Record['job_name'])) { return $false }
+    if (-not (Test-FinalizeIdentityShape -Identity $Record['root']) -or -not (Test-FinalizeIdentityShape -Identity $Record['holder'])) { return $false }
+    if ($Record['stdio'] -isnot [Collections.IDictionary] -or -not (Test-FinalizeRecordString -Value $Record['stdio']['stdout_path']) -or -not (Test-FinalizeRecordString -Value $Record['stdio']['stderr_path'])) { return $false }
+    if ($Record['readiness'] -isnot [Collections.IDictionary] -or -not (Test-FinalizeRecordString -Value $Record['readiness']['identity']) -or -not (Test-FinalizeRecordString -Value $Record['readiness']['result'])) { return $false }
+    if (-not (Test-FinalizeRecordString -Value $Record['requested_disposition'])) { return $false }
+    return $Record['events'] -is [Collections.IDictionary] -and
+        (Test-FinalizeRecordString -Value $Record['events']['finalize']) -and
+        (Test-FinalizeRecordString -Value $Record['events']['holder_exited'])
+}
+
+function Test-FinalizeRecordUnchanged {
+    param([string]$Path, [byte[]]$OriginalBytes)
+
+    if ($null -eq $OriginalBytes) { return $true }
+    try {
+        $currentBytes = [IO.File]::ReadAllBytes($Path)
+        if ($currentBytes.Length -ne $OriginalBytes.Length) { return $false }
+        for ($index = 0; $index -lt $OriginalBytes.Length; $index++) {
+            if ($currentBytes[$index] -ne $OriginalBytes[$index]) { return $false }
+        }
+        return $true
+    }
+    catch {
+        return $false
+    }
+}
+
+function New-FinalizeRecordClaims {
+    param([Parameter(Mandatory)][Collections.IDictionary]$Record)
+
+    return [ordered]@{
+        run_id = $Record['run_id']
+        job_name = $Record['job_name']
+        root_process_id = $Record['root']['process_id']
+        holder_process_id = $Record['holder']['process_id']
+        finalize_event = $Record['events']['finalize']
+        holder_exited_event = $Record['events']['holder_exited']
+    }
+}
+
+function New-FinalizeRejectionResult {
+    param(
+        [Parameter(Mandatory)][string]$FailureKind,
+        [Parameter(Mandatory)][string]$UnresolvedReason,
+        [Parameter(Mandatory)][string]$ValidationStage,
+        [Parameter(Mandatory)][string]$ReasonCode,
+        [Parameter(Mandatory)][string[]]$MissingEvidence,
+        [Parameter(Mandatory)][string]$RecordPath,
+        [Parameter(Mandatory)][bool]$RecordPresent,
+        [byte[]]$RecordBytes,
+        [object]$RecordClaims = $null,
+        [object]$LaterOwner = $null,
+        [Parameter(Mandatory)][string]$ResponsibilityStatus
+    )
+
+    return [ordered]@{
+        action = 'Finalize'
+        tier = 'windows-self-managed'
+        requested_disposition = 'Stop'
+        binding = $null
+        stdio = $null
+        readiness = $null
+        lifecycle_result = [ordered]@{
+            status = 'unresolved'
+            operation = 'finalize-rejected'
+            failure_kind = $FailureKind
+            cleanup = [ordered]@{ attempted = $false; status = 'not-attempted'; result = 'authority-unverified' }
+            unresolved_reason = $UnresolvedReason
+        }
+        downstream_result = $DownstreamResult
+        final_disposition = [ordered]@{ requested = 'Stop'; status = 'unresolved' }
+        later_owner = $LaterOwner
+        evidence = [ordered]@{
+            validation_stage = $ValidationStage
+            reason_code = $ReasonCode
+            missing_evidence = @($MissingEvidence)
+            record_path = $RecordPath
+            record_present = $RecordPresent
+            record_unchanged = (Test-FinalizeRecordUnchanged -Path $RecordPath -OriginalBytes $RecordBytes)
+            record_claims = $RecordClaims
+            authority_verified = $false
+            graceful_action_invocations = 0
+            termination_attempted = $false
+            forced_termination_used = $false
+            responsibility_status = $ResponsibilityStatus
+        }
+    }
+}
+
+function Test-FinalizeAccessDeniedException {
+    param([Parameter(Mandatory)][Exception]$Exception)
+
+    $current = $Exception
+    while ($null -ne $current) {
+        if ($current -is [UnauthorizedAccessException]) { return $true }
+        if ($current -is [ComponentModel.Win32Exception] -and $current.NativeErrorCode -eq 5) { return $true }
+        $current = $current.InnerException
+    }
+    return $false
+}
+
 function Invoke-Finalize {
     if ($Disposition -ne 'Stop') {
         throw 'Ticket 11 Finalize only supports Stop.'
     }
-    $recordPathForFinalize = Assert-ExistingRecordPath -Path $RecordPath
-    $record = [IO.File]::ReadAllText($recordPathForFinalize) | ConvertFrom-Json -AsHashtable
-    if ($record.schema_version -ne 1 -or $record.state -ne 'ready' -or $record.requested_disposition -ne 'Stop') {
-        throw 'The run binding is not a ready Stop record.'
+
+    $recordPathForFinalize = $RecordPath
+    $recordPresent = $false
+    $recordBytes = $null
+    $record = $null
+    $recordClaims = $null
+    try {
+        $recordPathForFinalize = Assert-ExistingRecordPath -Path $RecordPath
+        $recordPresent = $true
+    }
+    catch {
+        $isAbsent = $_.Exception.Message -eq 'The expected record file is absent.'
+        if ($isAbsent) {
+            $failureKind = 'record-unavailable'
+            $reasonCode = 'record-absent'
+            $missingEvidence = @('protected-record')
+            $laterOwner = $null
+            $responsibilityStatus = 'retained-by-caller'
+        }
+        else {
+            $failureKind = 'record-access'
+            $reasonCode = 'record-path-unverifiable'
+            $missingEvidence = @('protected-record-path')
+            $laterOwner = 'compatible-session-security-context-owner'
+            $responsibilityStatus = 'transfer-required-not-completed'
+        }
+        return New-FinalizeRejectionResult -FailureKind $failureKind -UnresolvedReason $_.Exception.Message -ValidationStage 'protected-path-read-json' -ReasonCode $reasonCode -MissingEvidence $missingEvidence -RecordPath $recordPathForFinalize -RecordPresent $false -LaterOwner $laterOwner -ResponsibilityStatus $responsibilityStatus
+    }
+
+    try {
+        # TEST-INJECTION: finalize-record-read
+        $recordBytes = [IO.File]::ReadAllBytes($recordPathForFinalize)
+        $recordText = [IO.File]::ReadAllText($recordPathForFinalize)
+    }
+    catch {
+        return New-FinalizeRejectionResult -FailureKind 'record-access' -UnresolvedReason $_.Exception.Message -ValidationStage 'protected-path-read-json' -ReasonCode 'record-read-failed' -MissingEvidence @('readable-protected-record') -RecordPath $recordPathForFinalize -RecordPresent $recordPresent -RecordBytes $recordBytes -LaterOwner 'compatible-session-security-context-owner' -ResponsibilityStatus 'transfer-required-not-completed'
+    }
+    try {
+        $record = $recordText | ConvertFrom-Json -AsHashtable
+    }
+    catch {
+        return New-FinalizeRejectionResult -FailureKind 'record-invalid' -UnresolvedReason $_.Exception.Message -ValidationStage 'protected-path-read-json' -ReasonCode 'record-json-invalid' -MissingEvidence @('parseable-record') -RecordPath $recordPathForFinalize -RecordPresent $recordPresent -RecordBytes $recordBytes -ResponsibilityStatus 'retained-by-caller'
+    }
+    if (-not (Test-FinalizeRecordSchema -Record $record)) {
+        return New-FinalizeRejectionResult -FailureKind 'record-invalid' -UnresolvedReason 'The record schema or required field types are invalid.' -ValidationStage 'schema-types' -ReasonCode 'schema-or-type-invalid' -MissingEvidence @('schema-version') -RecordPath $recordPathForFinalize -RecordPresent $recordPresent -RecordBytes $recordBytes -ResponsibilityStatus 'retained-by-caller'
+    }
+    $recordClaims = New-FinalizeRecordClaims -Record $record
+
+    if ($record['state'] -ne 'ready') {
+        return New-FinalizeRejectionResult -FailureKind 'record-state' -UnresolvedReason 'The record is not ready for Finalize.' -ValidationStage 'state-readiness-disposition' -ReasonCode 'record-not-ready' -MissingEvidence @('ready-stop-state') -RecordPath $recordPathForFinalize -RecordPresent $recordPresent -RecordBytes $recordBytes -RecordClaims $recordClaims -LaterOwner 'lifecycle-reconciliation-owner' -ResponsibilityStatus 'transfer-required-not-completed'
+    }
+    if ($record['readiness']['result'] -ne 'succeeded') {
+        return New-FinalizeRejectionResult -FailureKind 'record-state' -UnresolvedReason 'The recorded readiness result does not prove a ready workload.' -ValidationStage 'state-readiness-disposition' -ReasonCode 'readiness-not-succeeded' -MissingEvidence @('readiness-success') -RecordPath $recordPathForFinalize -RecordPresent $recordPresent -RecordBytes $recordBytes -RecordClaims $recordClaims -LaterOwner 'lifecycle-reconciliation-owner' -ResponsibilityStatus 'transfer-required-not-completed'
+    }
+    if ($record['requested_disposition'] -ne 'Stop') {
+        return New-FinalizeRejectionResult -FailureKind 'record-state' -UnresolvedReason 'The recorded requested disposition is not Stop.' -ValidationStage 'state-readiness-disposition' -ReasonCode 'record-disposition-not-stop' -MissingEvidence @('stop-disposition') -RecordPath $recordPathForFinalize -RecordPresent $recordPresent -RecordBytes $recordBytes -RecordClaims $recordClaims -LaterOwner 'lifecycle-reconciliation-owner' -ResponsibilityStatus 'transfer-required-not-completed'
+    }
+
+    $runId = [string]$record['run_id']
+    if ($runId -cnotmatch '^[0-9a-f]{32}$') {
+        return New-FinalizeRejectionResult -FailureKind 'binding-inconsistent' -UnresolvedReason 'The record run_id is not a launch-derived identifier.' -ValidationStage 'binding-consistency' -ReasonCode 'run-id-invalid' -MissingEvidence @('derived-run-id') -RecordPath $recordPathForFinalize -RecordPresent $recordPresent -RecordBytes $recordBytes -RecordClaims $recordClaims -LaterOwner 'lifecycle-reconciliation-owner' -ResponsibilityStatus 'transfer-required-not-completed'
+    }
+    $namePrefix = "Local\AgentProcessLifecycle.$runId"
+    if (-not [string]::Equals([string]$record['job_name'], "$namePrefix.Job", [StringComparison]::Ordinal)) {
+        return New-FinalizeRejectionResult -FailureKind 'binding-inconsistent' -UnresolvedReason 'The record Job name does not match its run_id.' -ValidationStage 'binding-consistency' -ReasonCode 'job-name-mismatch' -MissingEvidence @('derived-job-name') -RecordPath $recordPathForFinalize -RecordPresent $recordPresent -RecordBytes $recordBytes -RecordClaims $recordClaims -LaterOwner 'lifecycle-reconciliation-owner' -ResponsibilityStatus 'transfer-required-not-completed'
+    }
+    if (-not [string]::Equals([string]$record['events']['finalize'], "$namePrefix.Finalize", [StringComparison]::Ordinal)) {
+        return New-FinalizeRejectionResult -FailureKind 'binding-inconsistent' -UnresolvedReason 'The record Finalize event does not match its run_id.' -ValidationStage 'binding-consistency' -ReasonCode 'finalize-event-mismatch' -MissingEvidence @('derived-finalize-event') -RecordPath $recordPathForFinalize -RecordPresent $recordPresent -RecordBytes $recordBytes -RecordClaims $recordClaims -LaterOwner 'lifecycle-reconciliation-owner' -ResponsibilityStatus 'transfer-required-not-completed'
+    }
+    if (-not [string]::Equals([string]$record['events']['holder_exited'], "$namePrefix.HolderExited", [StringComparison]::Ordinal)) {
+        return New-FinalizeRejectionResult -FailureKind 'binding-inconsistent' -UnresolvedReason 'The record HolderExited event does not match its run_id.' -ValidationStage 'binding-consistency' -ReasonCode 'holder-exited-event-mismatch' -MissingEvidence @('derived-holder-exited-event') -RecordPath $recordPathForFinalize -RecordPresent $recordPresent -RecordBytes $recordBytes -RecordClaims $recordClaims -LaterOwner 'lifecycle-reconciliation-owner' -ResponsibilityStatus 'transfer-required-not-completed'
     }
 
     $jobHandle = [IntPtr]::Zero
     $rootHandle = [IntPtr]::Zero
     $holderHandle = [IntPtr]::Zero
+    $finalizeEvent = $null
+    $holderExitedEvent = $null
+    $authorityVerified = $false
     $gracefulActionInvocations = 0
     $gracefulActionOutcome = 'not-provided'
     $forcedTerminationUsed = $false
@@ -1156,16 +1354,125 @@ function Invoke-Finalize {
     $rootAbsent = $false
     $callbackCleanupFailure = $null
     try {
-        $jobHandle = [CandidateAgentProcessLifecycle.Native]::OpenNamedJob([string]$record.job_name)
-        $rootHandle = [CandidateAgentProcessLifecycle.Native]::OpenRoot([uint32]$record.root.process_id)
-        if ([CandidateAgentProcessLifecycle.Native]::CreationTimeFileTime($rootHandle) -ne [int64]$record.root.creation_time_filetime -or
-            -not [CandidateAgentProcessLifecycle.Native]::IsMember($rootHandle, $jobHandle) -or
-            -not [string]::Equals([CandidateAgentProcessLifecycle.Native]::ImagePath($rootHandle), [string]$record.root.image_path, [StringComparison]::OrdinalIgnoreCase)) {
-            throw 'The reopened binding does not prove the recorded root instance.'
+        try {
+            $jobHandle = [CandidateAgentProcessLifecycle.Native]::OpenNamedJob([string]$record['job_name'])
+            # TEST-INJECTION: finalize-job-query
+            $null = [CandidateAgentProcessLifecycle.Native]::ActiveProcessCount($jobHandle)
+        }
+        catch {
+            $laterOwner = if (Test-FinalizeAccessDeniedException -Exception $_.Exception) { 'compatible-session-security-context-owner' } else { 'lifecycle-reconciliation-owner' }
+            if ($jobHandle -eq [IntPtr]::Zero) {
+                $reasonCode = 'job-unavailable'
+                $missingEvidence = @('retained-job-handle')
+            }
+            else {
+                $reasonCode = 'job-retain-or-query-failed'
+                $missingEvidence = @('queryable-job-handle')
+            }
+            return New-FinalizeRejectionResult -FailureKind 'job-unverifiable' -UnresolvedReason $_.Exception.Message -ValidationStage 'job-retain-query' -ReasonCode $reasonCode -MissingEvidence $missingEvidence -RecordPath $recordPathForFinalize -RecordPresent $recordPresent -RecordBytes $recordBytes -RecordClaims $recordClaims -LaterOwner $laterOwner -ResponsibilityStatus 'transfer-required-not-completed'
+        }
+
+        try {
+            $rootVerificationStep = 'identity'
+            $rootHandle = [CandidateAgentProcessLifecycle.Native]::OpenRoot([uint32]$record['root']['process_id'])
+            # TEST-INJECTION: finalize-root-query
+            $rootCreationTime = [CandidateAgentProcessLifecycle.Native]::CreationTimeFileTime($rootHandle)
+            if ($rootCreationTime -ne [int64]$record['root']['creation_time_filetime']) {
+                return New-FinalizeRejectionResult -FailureKind 'root-unverifiable' -UnresolvedReason 'The retained root handle does not match the recorded creation time.' -ValidationStage 'root-retain-verify' -ReasonCode 'root-creation-time-mismatch' -MissingEvidence @('matching-root-creation-time') -RecordPath $recordPathForFinalize -RecordPresent $recordPresent -RecordBytes $recordBytes -RecordClaims $recordClaims -LaterOwner 'lifecycle-reconciliation-owner' -ResponsibilityStatus 'transfer-required-not-completed'
+            }
+            $rootImagePath = [CandidateAgentProcessLifecycle.Native]::ImagePath($rootHandle)
+            if (-not [string]::Equals($rootImagePath, [string]$record['root']['image_path'], [StringComparison]::OrdinalIgnoreCase)) {
+                return New-FinalizeRejectionResult -FailureKind 'root-unverifiable' -UnresolvedReason 'The retained root handle does not match the recorded image.' -ValidationStage 'root-retain-verify' -ReasonCode 'root-image-mismatch' -MissingEvidence @('matching-root-image') -RecordPath $recordPathForFinalize -RecordPresent $recordPresent -RecordBytes $recordBytes -RecordClaims $recordClaims -LaterOwner 'lifecycle-reconciliation-owner' -ResponsibilityStatus 'transfer-required-not-completed'
+            }
+            $rootIsLive = -not [CandidateAgentProcessLifecycle.Native]::WaitForExit($rootHandle, 0)
+            # TEST-INJECTION: finalize-root-live
+            if (-not $rootIsLive) {
+                return New-FinalizeRejectionResult -FailureKind 'root-unverifiable' -UnresolvedReason 'The retained root handle is already exited.' -ValidationStage 'root-retain-verify' -ReasonCode 'root-not-live' -MissingEvidence @('live-root-instance') -RecordPath $recordPathForFinalize -RecordPresent $recordPresent -RecordBytes $recordBytes -RecordClaims $recordClaims -LaterOwner 'lifecycle-reconciliation-owner' -ResponsibilityStatus 'transfer-required-not-completed'
+            }
+            $rootVerificationStep = 'membership'
+            # TEST-INJECTION: finalize-root-membership-query
+            $rootIsMember = [CandidateAgentProcessLifecycle.Native]::IsMember($rootHandle, $jobHandle)
+            # TEST-INJECTION: finalize-root-membership
+            if (-not $rootIsMember) {
+                return New-FinalizeRejectionResult -FailureKind 'root-unverifiable' -UnresolvedReason 'The retained root handle is not a member of the retained Job.' -ValidationStage 'root-retain-verify' -ReasonCode 'root-not-job-member' -MissingEvidence @('root-job-membership') -RecordPath $recordPathForFinalize -RecordPresent $recordPresent -RecordBytes $recordBytes -RecordClaims $recordClaims -LaterOwner 'lifecycle-reconciliation-owner' -ResponsibilityStatus 'transfer-required-not-completed'
+            }
+        }
+        catch {
+            $laterOwner = if (Test-FinalizeAccessDeniedException -Exception $_.Exception) { 'compatible-session-security-context-owner' } else { 'lifecycle-reconciliation-owner' }
+            if ($rootHandle -eq [IntPtr]::Zero) {
+                $reasonCode = 'root-unavailable'
+                $missingEvidence = @('live-root-instance')
+            }
+            else {
+                $reasonCode = 'root-retain-or-query-failed'
+                if ($rootVerificationStep -eq 'membership') {
+                    $missingEvidence = @('queryable-root-membership')
+                }
+                else {
+                    $missingEvidence = @('queryable-root-instance')
+                }
+            }
+            return New-FinalizeRejectionResult -FailureKind 'root-unverifiable' -UnresolvedReason $_.Exception.Message -ValidationStage 'root-retain-verify' -ReasonCode $reasonCode -MissingEvidence $missingEvidence -RecordPath $recordPathForFinalize -RecordPresent $recordPresent -RecordBytes $recordBytes -RecordClaims $recordClaims -LaterOwner $laterOwner -ResponsibilityStatus 'transfer-required-not-completed'
+        }
+
+        try {
+            $holderHandle = [CandidateAgentProcessLifecycle.Native]::OpenRoot([uint32]$record['holder']['process_id'])
+            # TEST-INJECTION: finalize-holder-query
+            $holderCreationTime = [CandidateAgentProcessLifecycle.Native]::CreationTimeFileTime($holderHandle)
+            if ($holderCreationTime -ne [int64]$record['holder']['creation_time_filetime']) {
+                return New-FinalizeRejectionResult -FailureKind 'holder-unverifiable' -UnresolvedReason 'The retained holder handle does not match the recorded creation time.' -ValidationStage 'holder-retain-verify' -ReasonCode 'holder-creation-time-mismatch' -MissingEvidence @('matching-holder-creation-time') -RecordPath $recordPathForFinalize -RecordPresent $recordPresent -RecordBytes $recordBytes -RecordClaims $recordClaims -LaterOwner 'lifecycle-reconciliation-owner' -ResponsibilityStatus 'transfer-required-not-completed'
+            }
+            $holderImagePath = [CandidateAgentProcessLifecycle.Native]::ImagePath($holderHandle)
+            if (-not [string]::Equals($holderImagePath, [string]$record['holder']['image_path'], [StringComparison]::OrdinalIgnoreCase)) {
+                return New-FinalizeRejectionResult -FailureKind 'holder-unverifiable' -UnresolvedReason 'The retained holder handle does not match the recorded image.' -ValidationStage 'holder-retain-verify' -ReasonCode 'holder-image-mismatch' -MissingEvidence @('matching-holder-image') -RecordPath $recordPathForFinalize -RecordPresent $recordPresent -RecordBytes $recordBytes -RecordClaims $recordClaims -LaterOwner 'lifecycle-reconciliation-owner' -ResponsibilityStatus 'transfer-required-not-completed'
+            }
+            $holderIsLive = -not [CandidateAgentProcessLifecycle.Native]::WaitForExit($holderHandle, 0)
+            # TEST-INJECTION: finalize-holder-live
+            if (-not $holderIsLive) {
+                return New-FinalizeRejectionResult -FailureKind 'holder-unverifiable' -UnresolvedReason 'The retained holder handle is already exited.' -ValidationStage 'holder-retain-verify' -ReasonCode 'holder-not-live' -MissingEvidence @('live-holder-instance') -RecordPath $recordPathForFinalize -RecordPresent $recordPresent -RecordBytes $recordBytes -RecordClaims $recordClaims -LaterOwner 'lifecycle-reconciliation-owner' -ResponsibilityStatus 'transfer-required-not-completed'
+            }
+        }
+        catch {
+            $laterOwner = if (Test-FinalizeAccessDeniedException -Exception $_.Exception) { 'compatible-session-security-context-owner' } else { 'lifecycle-reconciliation-owner' }
+            if ($holderHandle -eq [IntPtr]::Zero) {
+                $reasonCode = 'holder-unavailable'
+                $missingEvidence = @('live-holder-instance')
+            }
+            else {
+                $reasonCode = 'holder-retain-or-query-failed'
+                $missingEvidence = @('queryable-holder-instance')
+            }
+            return New-FinalizeRejectionResult -FailureKind 'holder-unverifiable' -UnresolvedReason $_.Exception.Message -ValidationStage 'holder-retain-verify' -ReasonCode $reasonCode -MissingEvidence $missingEvidence -RecordPath $recordPathForFinalize -RecordPresent $recordPresent -RecordBytes $recordBytes -RecordClaims $recordClaims -LaterOwner $laterOwner -ResponsibilityStatus 'transfer-required-not-completed'
+        }
+
+        try {
+            # TEST-INJECTION: finalize-finalize-event-open
+            $finalizeEvent = [Threading.EventWaitHandle]::OpenExisting("$namePrefix.Finalize")
+        }
+        catch {
+            $laterOwner = if (Test-FinalizeAccessDeniedException -Exception $_.Exception) { 'compatible-session-security-context-owner' } else { 'lifecycle-reconciliation-owner' }
+            return New-FinalizeRejectionResult -FailureKind 'event-unverifiable' -UnresolvedReason $_.Exception.Message -ValidationStage 'event-retain-verify' -ReasonCode 'finalize-event-unavailable' -MissingEvidence @('exact-finalize-event') -RecordPath $recordPathForFinalize -RecordPresent $recordPresent -RecordBytes $recordBytes -RecordClaims $recordClaims -LaterOwner $laterOwner -ResponsibilityStatus 'transfer-required-not-completed'
+        }
+        try {
+            # TEST-INJECTION: finalize-holder-exited-event-open
+            $holderExitedEvent = [Threading.EventWaitHandle]::OpenExisting("$namePrefix.HolderExited")
+        }
+        catch {
+            $laterOwner = if (Test-FinalizeAccessDeniedException -Exception $_.Exception) { 'compatible-session-security-context-owner' } else { 'lifecycle-reconciliation-owner' }
+            return New-FinalizeRejectionResult -FailureKind 'event-unverifiable' -UnresolvedReason $_.Exception.Message -ValidationStage 'event-retain-verify' -ReasonCode 'holder-exited-event-unavailable' -MissingEvidence @('exact-holder-exited-event') -RecordPath $recordPathForFinalize -RecordPresent $recordPresent -RecordBytes $recordBytes -RecordClaims $recordClaims -LaterOwner $laterOwner -ResponsibilityStatus 'transfer-required-not-completed'
+        }
+
+        try {
+            # Ticket 14: no callback, event signal, record mutation, or termination may begin until this complete authority chain is retained.
+            # TEST-INJECTION: finalize-unexpected-preflight
+            $authorityVerified = $true
+        }
+        catch {
+            return New-FinalizeRejectionResult -FailureKind 'preflight-unexpected' -UnresolvedReason $_.Exception.Message -ValidationStage 'unexpected-preflight' -ReasonCode 'unexpected-preflight-failure' -MissingEvidence @('complete-finalize-authority') -RecordPath $recordPathForFinalize -RecordPresent $recordPresent -RecordBytes $recordBytes -RecordClaims $recordClaims -LaterOwner 'lifecycle-reconciliation-owner' -ResponsibilityStatus 'transfer-required-not-completed'
         }
 
         # TEST-INJECTION: finalize-before-stop
-        $binding = [ordered]@{ run_id = $record.run_id; job_name = $record.job_name; root_process_id = $record.root.process_id; graceful_context = $GracefulContext }
+        $binding = [ordered]@{ run_id = $record['run_id']; job_name = $record['job_name']; root_process_id = $record['root']['process_id']; graceful_context = $GracefulContext }
         if ($null -ne $GracefulAction) {
             $gracefulActionInvocations = 1
             $gracefulWatch = [Diagnostics.Stopwatch]::StartNew()
@@ -1214,24 +1521,10 @@ function Invoke-Finalize {
             if (-not $rootAbsent) { throw 'The owned Job emptied without confirming root exit.' }
         }
 
-        $holderHandle = [CandidateAgentProcessLifecycle.Native]::OpenRoot([uint32]$record.holder.process_id)
-        if ([CandidateAgentProcessLifecycle.Native]::CreationTimeFileTime($holderHandle) -ne [int64]$record.holder.creation_time_filetime -or
-            -not [string]::Equals([CandidateAgentProcessLifecycle.Native]::ImagePath($holderHandle), [string]$record.holder.image_path, [StringComparison]::OrdinalIgnoreCase)) {
-            throw 'The retained holder handle does not prove the recorded holder instance.'
+        $finalizeEvent.Set() | Out-Null
+        if (-not $holderExitedEvent.WaitOne(1000)) {
+            throw 'The Job handle holder did not exit within the graceful deadline.'
         }
-        $finalizeEvent = [Threading.EventWaitHandle]::OpenExisting([string]$record.events.finalize)
-        $holderExitedEvent = [Threading.EventWaitHandle]::OpenExisting([string]$record.events.holder_exited)
-        try {
-            $finalizeEvent.Set() | Out-Null
-            if (-not $holderExitedEvent.WaitOne(1000)) {
-                throw 'The Job handle holder did not exit within the graceful deadline.'
-            }
-        }
-        finally {
-            $finalizeEvent.Dispose()
-            $holderExitedEvent.Dispose()
-        }
-
         if (-not [CandidateAgentProcessLifecycle.Native]::WaitForExit($holderHandle, 1000)) {
             throw 'The Job handle holder did not terminate within the graceful deadline.'
         }
@@ -1241,7 +1534,7 @@ function Invoke-Finalize {
         $rootHandle = [IntPtr]::Zero
         [CandidateAgentProcessLifecycle.Native]::Close($jobHandle)
         $jobHandle = [IntPtr]::Zero
-        $namedJobAbsent = -not [CandidateAgentProcessLifecycle.Native]::NamedJobExists([string]$record.job_name)
+        $namedJobAbsent = -not [CandidateAgentProcessLifecycle.Native]::NamedJobExists([string]$record['job_name'])
         if (-not $namedJobAbsent) {
             throw 'The named Job remained after the holder released its handle.'
         }
@@ -1252,9 +1545,9 @@ function Invoke-Finalize {
             action = 'Finalize'
             tier = 'windows-self-managed'
             requested_disposition = 'Stop'
-            binding = [ordered]@{ run_id = $record.run_id; job_name = $record.job_name; root_process_id = $record.root.process_id }
-            stdio = [ordered]@{ isolated = $true; stdout_path = $record.stdio.stdout_path; stderr_path = $record.stdio.stderr_path }
-            readiness = [ordered]@{ identity = $record.readiness.identity; succeeded = ($record.readiness.result -eq 'succeeded') }
+            binding = [ordered]@{ run_id = $record['run_id']; job_name = $record['job_name']; root_process_id = $record['root']['process_id'] }
+            stdio = [ordered]@{ isolated = $true; stdout_path = $record['stdio']['stdout_path']; stderr_path = $record['stdio']['stderr_path'] }
+            readiness = [ordered]@{ identity = $record['readiness']['identity']; succeeded = ($record['readiness']['result'] -eq 'succeeded') }
             lifecycle_result = [ordered]@{
                 status = if ($callbackCleanupFailure) { 'unresolved' } else { 'success' }
                 operation = if ($forcedTerminationUsed) { 'forced-stop' } else { 'graceful-stop' }
@@ -1263,10 +1556,18 @@ function Invoke-Finalize {
             }
             downstream_result = $DownstreamResult
             final_disposition = [ordered]@{ requested = 'Stop'; status = if ($callbackCleanupFailure) { 'unresolved' } else { 'completed' } }
-            evidence = [ordered]@{ graceful_action_invocations = $gracefulActionInvocations; graceful_action_outcome = $gracefulActionOutcome; callback_cleanup_failure = $callbackCleanupFailure; forced_termination_used = $forcedTerminationUsed; owned_tree_empty = $ownedTreeEmpty; root_process_absent = $rootAbsent; named_job_absent = $true; job_holder_absent = $true }
+            evidence = [ordered]@{ authority_verified = $authorityVerified; graceful_action_invocations = $gracefulActionInvocations; graceful_action_outcome = $gracefulActionOutcome; callback_cleanup_failure = $callbackCleanupFailure; forced_termination_used = $forcedTerminationUsed; owned_tree_empty = $ownedTreeEmpty; root_process_absent = $rootAbsent; named_job_absent = $true; job_holder_absent = $true }
         }
     }
+    catch {
+        if (-not $authorityVerified) {
+            return New-FinalizeRejectionResult -FailureKind 'preflight-unexpected' -UnresolvedReason $_.Exception.Message -ValidationStage 'unexpected-preflight' -ReasonCode 'unexpected-preflight-failure' -MissingEvidence @('complete-finalize-authority') -RecordPath $recordPathForFinalize -RecordPresent $recordPresent -RecordBytes $recordBytes -RecordClaims $recordClaims -LaterOwner 'lifecycle-reconciliation-owner' -ResponsibilityStatus 'transfer-required-not-completed'
+        }
+        throw
+    }
     finally {
+        if ($finalizeEvent) { $finalizeEvent.Dispose() }
+        if ($holderExitedEvent) { $holderExitedEvent.Dispose() }
         if ($holderHandle -ne [IntPtr]::Zero) { [CandidateAgentProcessLifecycle.Native]::Close($holderHandle) }
         if ($rootHandle -ne [IntPtr]::Zero) { [CandidateAgentProcessLifecycle.Native]::Close($rootHandle) }
         if ($jobHandle -ne [IntPtr]::Zero) { [CandidateAgentProcessLifecycle.Native]::Close($jobHandle) }
