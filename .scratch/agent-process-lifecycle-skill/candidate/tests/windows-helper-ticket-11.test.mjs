@@ -4,8 +4,10 @@ import { access, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join, parse, resolve } from "node:path";
 import { promisify } from "node:util";
 import { execFile as execFileCallback } from "node:child_process";
-import test from "node:test";
-import { mkdtemp } from "./protected-test-fixture.mjs";
+import test, { after } from "node:test";
+import { cleanupFixtureRoot, fixtureRoot, mkdtemp } from "./protected-test-fixture.mjs";
+
+after(cleanupFixtureRoot);
 
 const execFile = promisify(execFileCallback);
 const helperPath = resolve(
@@ -18,7 +20,6 @@ function powerShellLiteral(value) {
 }
 
 function assertProtectedFixtureRecordPath(recordPath) {
-  const fixtureRoot = join(process.env.USERPROFILE, ".agent-process-lifecycle", "Tests");
   assert.ok(
     recordPath.startsWith(`${fixtureRoot}\\`),
     "Launch exposes its record beneath the protected user-local fixture root",

@@ -4,12 +4,13 @@ import { randomUUID } from "node:crypto";
 import { access, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
-import test from "node:test";
-import { mkdtemp } from "./protected-test-fixture.mjs";
+import test, { after } from "node:test";
+import { cleanupFixtureRoot, fixtureRoot, mkdtemp } from "./protected-test-fixture.mjs";
+
+after(cleanupFixtureRoot);
 
 const execFile = promisify(execFileCallback);
 const helperPath = resolve(import.meta.dirname, "../windows-helper/Invoke-AgentProcessLifecycle.ps1");
-const fixtureRoot = join(process.env.USERPROFILE, ".agent-process-lifecycle", "Tests");
 const downstreamResult = { source: "ticket-14", status: "unchanged" };
 
 function powerShellLiteral(value) {
@@ -508,7 +509,8 @@ test("Ticket 14 public invocations remain hidden and protected-fixture scoped", 
   const source = await readFile(resolve(import.meta.dirname, "windows-helper-ticket-14.test.mjs"), "utf8");
   assert.match(source, /windowsHide: true/gu);
   assert.match(source, /from "\.\/protected-test-fixture\.mjs"/u);
-  assert.match(source, /\.agent-process-lifecycle", "Tests"/u);
+  assert.match(source, /cleanupFixtureRoot, fixtureRoot, mkdtemp/u);
+  assert.match(source, /after\(cleanupFixtureRoot\)/u);
 });
 
 test("Ticket 14 leaves the protected fixture root empty", async () => {

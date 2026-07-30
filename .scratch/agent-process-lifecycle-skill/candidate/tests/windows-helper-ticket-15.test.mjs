@@ -4,13 +4,14 @@ import { randomUUID } from "node:crypto";
 import { access, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
-import test from "node:test";
-import { mkdtemp } from "./protected-test-fixture.mjs";
+import test, { after } from "node:test";
+import { cleanupFixtureRoot, fixtureRoot, mkdtemp } from "./protected-test-fixture.mjs";
+
+after(cleanupFixtureRoot);
 
 const execFile = promisify(execFileCallback);
 const helperPath = resolve(import.meta.dirname, "../windows-helper/Invoke-AgentProcessLifecycle.ps1");
 const holderPath = resolve(import.meta.dirname, "../windows-helper/JobHandleHolder.ps1");
-const fixtureRoot = join(process.env.USERPROFILE, ".agent-process-lifecycle", "Tests");
 
 function powerShellLiteral(value) {
   return `'${value.replaceAll("'", "''")}'`;
@@ -1090,7 +1091,8 @@ test("Ticket 15 runtime invocations stay hidden in protected fixture scope", asy
 
   assert.match(source, /windowsHide: true/gu);
   assert.match(source, /from "\.\/protected-test-fixture\.mjs"/u);
-  assert.match(source, /\.agent-process-lifecycle", "Tests"/u);
+  assert.match(source, /cleanupFixtureRoot, fixtureRoot, mkdtemp/u);
+  assert.match(source, /after\(cleanupFixtureRoot\)/u);
   assert.match(helper, /ValidateSet\('Launch', 'Finalize'\)/u);
   assert.doesNotMatch(helper, /KILL_ON_JOB_CLOSE|Stop-Process|Get-NetTCPConnection|TerminateOwnedJob/u);
   assert.deepEqual(await readdir(fixtureRoot), []);
