@@ -25,16 +25,17 @@
   "read": "allow",
   "skill": "allow"
 },
+  "input_hash_mode": "sha256-lf-normalized-text",
   "inputs": {
   ".scratch/agent-process-lifecycle-skill/candidate/agent-process-lifecycle/SKILL.md": "ae94ff183aa566dac5f32379530d449709288c7d6617ff73ed5868e97ce68a16",
   ".scratch/agent-process-lifecycle-skill/candidate/agent-process-lifecycle/references/windows-self-managed.md": "85a8f953331297c4494c55e082a7e173490f5c3ca2f155e6971cf3b9f686b201",
   ".scratch/agent-process-lifecycle-skill/candidate/agent-process-lifecycle/references/failure-and-handoff.md": "d9ab32a4a6850a4fc21ee9b37e282ae0c0e718efe833704942532331335de44d",
   ".scratch/agent-process-lifecycle-skill/candidate/agent-process-lifecycle/evals/evals.json": "06e6d69a2443ef9abcc6faba6f47d9d5e4a88df6ad22040f7b30f652976124e0",
-  ".scratch/agent-process-lifecycle-skill/candidate/tests/run_candidate_smoke.py": "6de5e9737f084300f24407349a9079e375dc767eb9d6796403e2870e11a1717b",
+  ".scratch/agent-process-lifecycle-skill/candidate/tests/run_candidate_smoke.py": "aafc3745e4323d35998c82e059a3ebceac45c3e012de31e4cee049848cfe944c",
   ".scratch/agent-process-lifecycle-skill/candidate/tests/model_visible_execution.py": "2736e3ace0c870676dfa205b61e6217b73423899dface1de82f6d52965ca0220",
   ".scratch/agent-process-lifecycle-skill/candidate/tests/model_visible_contract.py": "0c097b6366b6330aa6ad2fbff525d3afb593557c84a162c1e62ad08209559ced",
   ".scratch/agent-process-lifecycle-skill/candidate/tests/model_visible_json.py": "64bfae3d6f4713e8fd55d7dc3ca021bb2eaee14a22f4c1db4b4045abc355a5de",
-  ".scratch/agent-process-lifecycle-skill/candidate/evidence/routing-smoke-20260729-r7/summary.json": "6eb5d81620911cab75533f3bb8ab00ceb197ef303b6a5448d3fd5a4dbe121299",
+  ".scratch/agent-process-lifecycle-skill/candidate/evidence/routing-smoke-20260729-r7/summary.json": "d9f6ff89ef0edae2ef3bf39b70de60f412a159ba309f89d74ec71be396a08be9",
   ".scratch/agent-process-lifecycle-skill/candidate/evidence/windows-helper-acceptance.md": "682b52432d9ccd4766bb204aa9f8989bf65b0f38d6bd582b88e627df3f2a8e12"
 },
   "archived_evidence_policy": "Archived routing and Windows runtime evidence were hashed only; neither was rerun or recalculated.",

@@ -59,12 +59,13 @@ def _output_path() -> Path:
 
 def _manifest(cases: tuple[Case, ...]) -> JsonObject:
     hashed = (SKILL_DIRECTORY / "SKILL.md", SKILL_DIRECTORY / "references/windows-self-managed.md", SKILL_DIRECTORY / "references/failure-and-handoff.md", EVALS_PATH, *MODULES, *ARCHIVED_EVIDENCE)
-    inputs = JsonObject(tuple((str(path.relative_to(ROOT)).replace("\\", "/"), _hash_file(path)) for path in hashed))
+    inputs = JsonObject(tuple((str(path.relative_to(ROOT)).replace("\\", "/"), _lf_normalized_text_hash(path)) for path in hashed))
     return record(
         ("evidence_type", "ticket-16-model-visible"),
         ("model", MODEL),
         ("case_ids", JsonArray(tuple(case.identifier for case in cases))),
         ("permission_policy", record(("*", "deny"), ("read", "allow"), ("skill", "allow"))),
+        ("input_hash_mode", "sha256-lf-normalized-text"),
         ("inputs", inputs),
         ("archived_evidence_policy", "Archived routing and Windows runtime evidence were hashed only; neither was rerun or recalculated."),
         ("baseline_run", False),
@@ -90,8 +91,8 @@ def _write_json(path: Path, value: JsonValue) -> None:
     path.write_text(f"{json_text(value, indent=2)}\n", encoding="utf-8")
 
 
-def _hash_file(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+def _lf_normalized_text_hash(path: Path) -> str:
+    return hashlib.sha256(path.read_text(encoding="utf-8").replace("\r\n", "\n").encode()).hexdigest()
 
 
 if __name__ == "__main__":
