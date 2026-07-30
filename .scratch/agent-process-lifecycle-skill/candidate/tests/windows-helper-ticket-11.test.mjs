@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { access, readFile, rm, writeFile } from "node:fs/promises";
-import { dirname, join, parse, resolve } from "node:path";
+import { access, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { basename, dirname, join, parse, resolve } from "node:path";
 import { promisify } from "node:util";
 import { execFile as execFileCallback } from "node:child_process";
 import test, { after } from "node:test";
@@ -62,9 +62,63 @@ function isAlive(processId) {
 }
 
 async function namedJobExists(name) {
+  if (!name) return false;
   const script = `Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public static class Ticket11Native { [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)] public static extern IntPtr OpenJobObjectW(uint access, bool inherit, string name); [DllImport("kernel32.dll", SetLastError=true)] public static extern bool CloseHandle(IntPtr handle); }'; $handle = [Ticket11Native]::OpenJobObjectW(4, $false, ${powerShellLiteral(name)}); if ($handle -eq [IntPtr]::Zero) { 'false' } else { [Ticket11Native]::CloseHandle($handle) | Out-Null; 'true' }`;
   const { stdout } = await execFile("pwsh", ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script], { windowsHide: true });
   return stdout.trim() === "true";
+}
+
+async function addObjectInheritWriteAce(directory) {
+  const script = `$directory = [IO.DirectoryInfo]::new(${powerShellLiteral(directory)}); $security = [IO.FileSystemAclExtensions]::GetAccessControl($directory); $currentSid = [Security.Principal.WindowsIdentity]::GetCurrent().User; $security.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($currentSid, [Security.AccessControl.FileSystemRights]::FullControl, [Security.AccessControl.InheritanceFlags]::ObjectInherit, [Security.AccessControl.PropagationFlags]::InheritOnly, [Security.AccessControl.AccessControlType]::Allow)); $security.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new([Security.Principal.SecurityIdentifier]::new('S-1-1-0'), [Security.AccessControl.FileSystemRights]::Write, [Security.AccessControl.InheritanceFlags]::ObjectInherit, [Security.AccessControl.PropagationFlags]::InheritOnly, [Security.AccessControl.AccessControlType]::Allow)); [IO.FileSystemAclExtensions]::SetAccessControl($directory, $security)`;
+  await execFile("pwsh", ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script], { windowsHide: true });
+}
+
+async function callbackArtifactPaths(directory, purpose) {
+  const callbackDirectoryPattern = new RegExp(`^${purpose}-[0-9a-f]{32}\\.callback[\\\\/](?:context\\.xml|result\\.xml|callback\\.ps1|stdout\\.log|stderr\\.log)$`, "u");
+  const legacyArtifactPattern = new RegExp(`^${purpose}-[0-9a-f]{32}\\.(?:context\\.xml|result\\.xml|ps1|stdout\\.log|stderr\\.log)$`, "u");
+  return (await readdir(directory, { recursive: true }))
+    .filter((entry) => callbackDirectoryPattern.test(entry) || legacyArtifactPattern.test(entry))
+    .map((entry) => join(directory, entry));
+}
+
+async function waitForCallbackArtifacts(directory, purpose, timeoutMilliseconds = 6000) {
+  const deadline = Date.now() + timeoutMilliseconds;
+  let observedEntries = [];
+  while (Date.now() < deadline) {
+    const paths = await callbackArtifactPaths(directory, purpose);
+    if (paths.length === 5) return paths;
+    observedEntries = await readdir(directory, { recursive: true });
+    await new Promise((resolveWait) => setTimeout(resolveWait, 20));
+  }
+  throw new Error(`Timed out waiting for all ${purpose} callback artifacts. Observed: ${observedEntries.join(", ")}`);
+}
+
+async function inspectPathSecurity(paths) {
+  const literals = paths.map(powerShellLiteral).join(", ");
+  const script = `$currentSid = [Security.Principal.WindowsIdentity]::GetCurrent().User; $writeRights = [Security.AccessControl.FileSystemRights]::Write -bor [Security.AccessControl.FileSystemRights]::AppendData -bor [Security.AccessControl.FileSystemRights]::Modify -bor [Security.AccessControl.FileSystemRights]::Delete -bor [Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles -bor [Security.AccessControl.FileSystemRights]::ChangePermissions -bor [Security.AccessControl.FileSystemRights]::TakeOwnership; @(${literals}) | ForEach-Object { $item = Get-Item -LiteralPath $_ -Force; $security = [IO.FileSystemAclExtensions]::GetAccessControl($item); $rules = @($security.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])); [pscustomobject]@{ path = $item.FullName; is_directory = $item.PSIsContainer; reparse = (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0); protected = $security.AreAccessRulesProtected; owner = $security.GetOwner([Security.Principal.SecurityIdentifier]).Value; current_user = $currentSid.Value; current_user_full_control = @($rules | Where-Object { $_.AccessControlType -eq [Security.AccessControl.AccessControlType]::Allow -and $_.IdentityReference.Value -eq $currentSid.Value -and ($_.FileSystemRights -band [Security.AccessControl.FileSystemRights]::FullControl) -eq [Security.AccessControl.FileSystemRights]::FullControl }).Count -gt 0; other_write_sids = @($rules | Where-Object { $_.AccessControlType -eq [Security.AccessControl.AccessControlType]::Allow -and $_.IdentityReference.Value -ne $currentSid.Value -and ($_.FileSystemRights -band $writeRights) -ne 0 } | ForEach-Object { $_.IdentityReference.Value }) } } | ConvertTo-Json -Depth 6 -Compress`;
+  const { stdout, stderr } = await execFile(
+    "pwsh",
+    ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script],
+    { windowsHide: true, maxBuffer: 1024 * 1024 },
+  );
+  assert.equal(stderr, "", `PowerShell stderr: ${stderr}`);
+  const result = JSON.parse(stdout);
+  return Array.isArray(result) ? result : [result];
+}
+
+function assertCurrentUserOnlySecurity(item, expectedDirectory) {
+  assert.equal(item.is_directory, expectedDirectory, `${item.path} has the expected artifact type`);
+  assert.equal(item.reparse, false, `${item.path} is not a reparse point`);
+  assert.equal(item.protected, true, `${item.path} has protected ACL inheritance`);
+  assert.equal(item.owner, item.current_user, `${item.path} is owned by the current SID`);
+  assert.equal(item.current_user_full_control, true, `${item.path} grants the current SID FullControl`);
+  assert.deepEqual(item.other_write_sids, [], `${item.path} grants no other SID callback mutation rights`);
+}
+
+async function assertNoCallbackResidue(directory, purpose) {
+  assert.deepEqual(await callbackArtifactPaths(directory, purpose), [], `${purpose} callback artifacts are absent`);
+  const callbackDirectories = (await readdir(directory)).filter((entry) => new RegExp(`^${purpose}-[0-9a-f]{32}\\.callback$`, "u").test(entry));
+  assert.deepEqual(callbackDirectories, [], `${purpose} callback directories are absent`);
 }
 
 async function cleanupCurrentRun(recordPath, stopEventName, result) {
@@ -165,6 +219,7 @@ finally {
     assert.ok(launch.binding.job_name.startsWith("Local\\AgentProcessLifecycle."));
     assertProtectedFixtureRecordPath(launch.binding.record_path);
     assert.equal(isAlive(launch.binding.root_process_id), true, "workload survives the Launch invocation");
+    await assertNoCallbackResidue(runtimeDirectory, "readiness");
 
     await writeFile(
       finalizeScript,
@@ -201,6 +256,7 @@ $result | ConvertTo-Json -Depth 12 -Compress
     assert.equal(await pathExists(paths.record), false, "Finalize removes its temporary ownership record");
     assert.match(await readFile(paths.stdout, "utf8"), /workload-stopped-gracefully/u);
     assert.match(await readFile(paths.stderr, "utf8"), /workload-stderr-isolated/u);
+    await assertNoCallbackResidue(runtimeDirectory, "graceful");
     acceptanceCompleted = true;
   } finally {
     if (!acceptanceCompleted) await cleanupCurrentRun(paths.record, paths.stopEvent, launch);
@@ -228,9 +284,77 @@ test("Ticket 11 test-generated callback children stay hidden", async () => {
   const source = await readFile(resolve(import.meta.dirname, "windows-helper-ticket-11.test.mjs"), "utf8");
   const childLaunches = [...source.matchAll(/\$child = Start-Process -FilePath \$PSHOME\\\\pwsh\.exe[^\r\n]*/gu)];
 
-  assert.equal(childLaunches.length, 2, "the two callback child launch sites remain explicit");
+  assert.equal(childLaunches.length, 3, "the three callback child launch sites remain explicit");
   for (const [launch] of childLaunches) {
     assert.match(launch, /-WindowStyle Hidden -PassThru/u);
+  }
+});
+
+test("callback artifacts reject object-inherited cross-principal write access", async () => {
+  const directory = await mkdtemp("agent-process-lifecycle-ticket-11-callback-acl-");
+  const recordPath = join(directory, "run-record.json");
+  const scriptPath = join(directory, "launch.ps1");
+  const childReadyPath = join(directory, "callback-child-ready.signal");
+  const sentinelPath = join(directory, "unrelated-sentinel.txt");
+  const sentinel = "ticket-11-unrelated-sentinel";
+  let activeResult;
+  let launchSettlement;
+
+  try {
+    await writeFile(sentinelPath, sentinel, "utf8");
+    await writeFile(
+      scriptPath,
+      `$result = & ${powerShellLiteral(helperPath)} -Action Launch -RecordPath ${powerShellLiteral(recordPath)} -Executable $PSHOME\\pwsh.exe -ArgumentList @('-NoLogo','-NoProfile','-NonInteractive','-Command','Start-Sleep -Seconds 20') -WorkingDirectory ${powerShellLiteral(directory)} -StdoutPath ${powerShellLiteral(join(directory, "workload.stdout.log"))} -StderrPath ${powerShellLiteral(join(directory, "workload.stderr.log"))} -ReadinessIdentity 'callback-acl-regression' -ReadinessContext @{ child_ready_path = ${powerShellLiteral(childReadyPath)} } -ReadinessCheck { param($context) $child = Start-Process -FilePath $PSHOME\\pwsh.exe -ArgumentList @('-NoLogo','-NoProfile','-NonInteractive','-Command','Start-Sleep -Seconds 20') -WindowStyle Hidden -PassThru; [IO.File]::WriteAllText($context.child_ready_path, 'started'); $true } -ReadinessDeadlineMilliseconds 8000 -RequestedDisposition Stop
+$result | ConvertTo-Json -Depth 12 -Compress`,
+      "utf8",
+    );
+    await addObjectInheritWriteAce(directory);
+
+    launchSettlement = runPowerShell(scriptPath).then(
+      (value) => ({ value }),
+      (error) => ({ error }),
+    );
+    const firstOutcome = await Promise.race([
+      waitForCallbackArtifacts(directory, "readiness").then((artifactPaths) => ({ artifactPaths })),
+      launchSettlement.then((settled) => ({ settled })),
+    ]);
+    if (firstOutcome.settled) {
+      if (firstOutcome.settled.error) throw firstOutcome.settled.error;
+      assert.fail(`Launch completed before callback artifacts could be inspected: ${JSON.stringify(firstOutcome.settled.value)}`);
+    }
+    const { artifactPaths } = firstOutcome;
+    const artifacts = await inspectPathSecurity(artifactPaths);
+    assert.equal(artifacts.length, 5, "the blocked callback exposes all five protected leaves for inspection");
+    for (const artifact of artifacts) assertCurrentUserOnlySecurity(artifact, false);
+
+    const callbackDirectories = [...new Set(artifactPaths.map(dirname))];
+    assert.equal(callbackDirectories.length, 1, "one callback invocation owns one private directory");
+    assert.notEqual(callbackDirectories[0], directory, "callback artifacts are not created beside the record");
+    assert.match(basename(callbackDirectories[0]), /^readiness-[0-9a-f]{32}\.callback$/u);
+    const [callbackDirectorySecurity] = await inspectPathSecurity(callbackDirectories);
+    assertCurrentUserOnlySecurity(callbackDirectorySecurity, true);
+    assert.deepEqual(
+      artifactPaths.map((artifactPath) => basename(artifactPath)).sort(),
+      ["callback.ps1", "context.xml", "result.xml", "stderr.log", "stdout.log"],
+      "the private directory contains the exact callback artifact set",
+    );
+
+    const settled = await launchSettlement;
+    if (settled.error) throw settled.error;
+    activeResult = settled.value;
+    assert.equal(activeResult.lifecycle_result.status, "failed");
+    assert.equal(activeResult.lifecycle_result.failure_kind, "readiness");
+    assert.equal(activeResult.lifecycle_result.cleanup.status, "completed");
+    await assertNoCallbackResidue(directory, "readiness");
+    assert.equal(await readFile(sentinelPath, "utf8"), sentinel, "callback cleanup does not alter an unrelated sentinel");
+  } finally {
+    if (launchSettlement && !activeResult) {
+      const settled = await launchSettlement;
+      if (!settled.error) activeResult = settled.value;
+    }
+    await cleanupCurrentRun(recordPath, undefined, activeResult);
+    await rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+    assert.equal(await pathExists(directory), false, "callback ACL fixture leaves no temporary artifacts");
   }
 });
 

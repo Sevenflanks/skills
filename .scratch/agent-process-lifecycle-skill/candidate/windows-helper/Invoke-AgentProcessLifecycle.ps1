@@ -165,6 +165,17 @@ namespace CandidateAgentProcessLifecycle
         [return: MarshalAs(UnmanagedType.Bool)]
         private static extern bool CreateProcessW(string applicationName, StringBuilder commandLine, IntPtr processAttributes, IntPtr threadAttributes, bool inheritHandles, uint flags, IntPtr environment, string currentDirectory, ref StartupInfoEx startupInfo, out ProcessInformation processInformation);
 
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool CreateDirectoryW(string path, ref SecurityAttributes securityAttributes);
+
+        [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool ConvertStringSecurityDescriptorToSecurityDescriptorW(string descriptor, uint revision, out IntPtr securityDescriptor, out uint size);
+
+        [DllImport("kernel32.dll")]
+        private static extern IntPtr LocalFree(IntPtr memory);
+
         [DllImport("kernel32.dll", SetLastError = true)]
         [return: MarshalAs(UnmanagedType.Bool)]
         private static extern bool InitializeProcThreadAttributeList(IntPtr attributeList, int attributeCount, uint flags, ref IntPtr size);
@@ -242,6 +253,31 @@ namespace CandidateAgentProcessLifecycle
         public static NativeProcess StartHolder(string executable, string[] arguments, string workingDirectory, IntPtr jobHandle)
         {
             return Start(executable, arguments, workingDirectory, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, new IntPtr[] { jobHandle }, CreateNoWindow);
+        }
+
+        public static void CreateCurrentUserProtectedDirectory(string path, string currentUserSid)
+        {
+            IntPtr securityDescriptor = IntPtr.Zero;
+            uint size;
+            string descriptor = "O:" + currentUserSid + "D:P(A;;FA;;;" + currentUserSid + ")";
+            if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(descriptor, 1, out securityDescriptor, out size))
+            {
+                ThrowLastError("ConvertStringSecurityDescriptorToSecurityDescriptorW");
+            }
+            try
+            {
+                SecurityAttributes attributes = new SecurityAttributes
+                {
+                    Length = Marshal.SizeOf<SecurityAttributes>(),
+                    SecurityDescriptor = securityDescriptor,
+                    InheritHandle = false
+                };
+                if (!CreateDirectoryW(path, ref attributes)) ThrowLastError("CreateDirectoryW(callback directory)");
+            }
+            finally
+            {
+                if (securityDescriptor != IntPtr.Zero) LocalFree(securityDescriptor);
+            }
         }
 
         public static NativeProcess StartSuspended(string executable, string[] arguments, string workingDirectory, string stdoutPath, string stderrPath)
@@ -706,6 +742,80 @@ function New-CallbackCleanupFailure {
     return $failure
 }
 
+function Assert-CurrentUserProtectedCallbackItem {
+    param([Parameter(Mandatory)][IO.FileSystemInfo]$Item, [Parameter(Mandatory)][bool]$Directory)
+
+    if (-not $Item.Exists) { throw "The protected callback artifact is absent: $($Item.FullName)" }
+    if (($Item -is [IO.DirectoryInfo]) -ne $Directory) { throw "The protected callback artifact has the wrong type: $($Item.FullName)" }
+    if (($Item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw "The protected callback artifact is a reparse point: $($Item.FullName)" }
+
+    $security = [IO.FileSystemAclExtensions]::GetAccessControl($Item)
+    $currentSid = Get-CurrentUserSid
+    if (-not $security.AreAccessRulesProtected -or $security.GetOwner([Security.Principal.SecurityIdentifier]).Value -ne $currentSid.Value) {
+        throw "The callback artifact ACL is not protected for the current user: $($Item.FullName)"
+    }
+
+    $allowsCurrentUser = $false
+    foreach ($rule in $security.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
+        if ($rule.AccessControlType -ne [Security.AccessControl.AccessControlType]::Allow) { continue }
+        if ($rule.IdentityReference.Value -ne $currentSid.Value) { throw "The callback artifact ACL allows an unapproved principal: $($Item.FullName)" }
+        if (($rule.FileSystemRights -band [Security.AccessControl.FileSystemRights]::FullControl) -eq [Security.AccessControl.FileSystemRights]::FullControl) {
+            $allowsCurrentUser = $true
+        }
+    }
+    if (-not $allowsCurrentUser) { throw "The current user does not have full control of the callback artifact: $($Item.FullName)" }
+}
+
+function New-ProtectedCallbackDirectory {
+    param([Parameter(Mandatory)][string]$ParentPath, [Parameter(Mandatory)][string]$Purpose, [Parameter(Mandatory)][string]$Token)
+
+    Assert-SafeRecordParent -Path (Join-Path $ParentPath 'callback-parent-check') | Out-Null
+    $path = Join-Path $ParentPath "$Purpose-$Token.callback"
+    $created = $false
+    try {
+        [CandidateAgentProcessLifecycle.Native]::CreateCurrentUserProtectedDirectory($path, (Get-CurrentUserSid).Value)
+        $created = $true
+        Assert-CurrentUserProtectedCallbackItem -Item ([IO.DirectoryInfo]::new($path)) -Directory $true
+        return $path
+    }
+    catch {
+        if ($created -and [IO.Directory]::Exists($path)) { [IO.Directory]::Delete($path) }
+        throw
+    }
+}
+
+function New-ProtectedCallbackFile {
+    param([Parameter(Mandatory)][string]$Path, [AllowNull()][string]$Content)
+
+    $stream = $null
+    try {
+        $stream = [IO.FileSystemAclExtensions]::Create(
+            [IO.FileInfo]::new($Path),
+            [IO.FileMode]::CreateNew,
+            [Security.AccessControl.FileSystemRights]::FullControl,
+            [IO.FileShare]::None,
+            4096,
+            [IO.FileOptions]::WriteThrough,
+            (New-CurrentUserFileSecurity)
+        )
+        if ($null -ne $Content) {
+            $writer = [IO.StreamWriter]::new($stream, [Text.UTF8Encoding]::new($false), 4096, $true)
+            try {
+                $writer.Write($Content)
+                $writer.Flush()
+                $stream.Flush($true)
+            }
+            finally {
+                $writer.Dispose()
+            }
+        }
+    }
+    finally {
+        if ($stream) { $stream.Dispose() }
+    }
+    Assert-CurrentUserProtectedCallbackItem -Item ([IO.FileInfo]::new($Path)) -Directory $false
+}
+
 function Get-CallbackActiveProcessCount {
     param([Parameter(Mandatory)][IntPtr]$JobHandle, [Parameter(Mandatory)][string]$Purpose)
 
@@ -731,13 +841,15 @@ function Stop-CallbackJob {
 function Invoke-BoundedCallback {
     param([Parameter(Mandatory)][scriptblock]$Callback, [Parameter(Mandatory)][hashtable]$Context, [Parameter(Mandatory)][int]$DeadlineMilliseconds, [Parameter(Mandatory)][string]$Purpose)
 
-    $token = [Guid]::NewGuid().ToString('N')
-    $directory = Split-Path -Parent $RecordPath
-    $contextPath = Join-Path $directory "$Purpose-$token.context.xml"
-    $resultPath = Join-Path $directory "$Purpose-$token.result.xml"
-    $scriptPath = Join-Path $directory "$Purpose-$token.ps1"
-    $stdoutPath = Join-Path $directory "$Purpose-$token.stdout.log"
-    $stderrPath = Join-Path $directory "$Purpose-$token.stderr.log"
+    $token = New-RunId
+    $recordParent = Split-Path -Parent (Assert-SafeRecordParent -Path $RecordPath)
+    $directory = $null
+    $contextPath = $null
+    $resultPath = $null
+    $scriptPath = $null
+    $stdoutPath = $null
+    $stderrPath = $null
+    $artifactPaths = @()
     $worker = $null
     $callbackJob = [IntPtr]::Zero
     $workerStartedSuspended = $false
@@ -745,9 +857,20 @@ function Invoke-BoundedCallback {
     $callbackCompleted = $false
     $watch = $null
     try {
-        $Context | Export-Clixml -LiteralPath $contextPath
+        $directory = New-ProtectedCallbackDirectory -ParentPath $recordParent -Purpose $Purpose -Token $token
+        $contextPath = Join-Path $directory 'context.xml'
+        $resultPath = Join-Path $directory 'result.xml'
+        $scriptPath = Join-Path $directory 'callback.ps1'
+        $stdoutPath = Join-Path $directory 'stdout.log'
+        $stderrPath = Join-Path $directory 'stderr.log'
+        $artifactPaths = @($contextPath, $resultPath, $scriptPath, $stdoutPath, $stderrPath)
         $callbackText = $Callback.ToString()
-        [IO.File]::WriteAllText($scriptPath, "param([string]`$ContextPath, [string]`$ResultPath)`n`$context = Import-Clixml -LiteralPath `$ContextPath`n`$result = & { $callbackText } `$context`n`$result | Export-Clixml -LiteralPath `$ResultPath")
+        # 每個 leaf 都先以 protected DACL 原子建立，避免 parent 的 object-inherit ACE 在 worker 讀取前取得 callback 寫入權。
+        New-ProtectedCallbackFile -Path $contextPath -Content ([Management.Automation.PSSerializer]::Serialize($Context))
+        New-ProtectedCallbackFile -Path $resultPath
+        New-ProtectedCallbackFile -Path $scriptPath -Content "param([string]`$ContextPath, [string]`$ResultPath)`n`$context = Import-Clixml -LiteralPath `$ContextPath`n`$result = & { $callbackText } `$context`n`$result | Export-Clixml -LiteralPath `$ResultPath"
+        New-ProtectedCallbackFile -Path $stdoutPath
+        New-ProtectedCallbackFile -Path $stderrPath
         $callbackJob = [CandidateAgentProcessLifecycle.Native]::CreateNamedJob("Local\AgentProcessLifecycle.Callback.$token.Job")
         $worker = [CandidateAgentProcessLifecycle.Native]::StartSuspended("$PSHOME\pwsh.exe", [string[]]@('-NoLogo', '-NoProfile', '-NonInteractive', '-File', $scriptPath, '-ContextPath', $contextPath, '-ResultPath', $resultPath), $directory, $stdoutPath, $stderrPath)
         $workerStartedSuspended = $true
@@ -772,7 +895,7 @@ function Invoke-BoundedCallback {
             if ((Get-CallbackActiveProcessCount -JobHandle $callbackJob -Purpose $Purpose) -ne 0) { throw (New-CallbackCleanupFailure -Purpose $Purpose -Detail 'The callback Job did not empty after descendant timeout.') }
             throw "The $Purpose callback descendants exceeded its deadline."
         }
-        if (-not [IO.File]::Exists($resultPath)) { throw "The $Purpose callback did not publish a result." }
+        if (-not [IO.File]::Exists($resultPath) -or [IO.FileInfo]::new($resultPath).Length -eq 0) { throw "The $Purpose callback did not publish a result." }
         $result = Import-Clixml -LiteralPath $resultPath
         $callbackCompleted = $true
         return $result
@@ -803,7 +926,8 @@ function Invoke-BoundedCallback {
         }
         if ($callbackJob -ne [IntPtr]::Zero) { [CandidateAgentProcessLifecycle.Native]::Close($callbackJob) }
         $artifactCleanupErrors = [Collections.Generic.List[string]]::new()
-        foreach ($path in @($contextPath, $resultPath, $scriptPath, $stdoutPath, $stderrPath)) {
+        # 只刪除本次已知 leaves，再以 non-recursive delete 移除精確 directory；未知內容必須讓 cleanup fail closed。
+        foreach ($path in $artifactPaths) {
             $deadline = [Diagnostics.Stopwatch]::StartNew()
             try {
                 while ([IO.File]::Exists($path)) {
@@ -815,6 +939,18 @@ function Invoke-BoundedCallback {
             }
             catch {
                 $artifactCleanupErrors.Add("${path}: $($_.Exception.Message)")
+            }
+        }
+        if ($directory) {
+            try {
+                if ([IO.Directory]::Exists($directory)) {
+                    Assert-CurrentUserProtectedCallbackItem -Item ([IO.DirectoryInfo]::new($directory)) -Directory $true
+                    [IO.Directory]::Delete($directory)
+                }
+                if ([IO.Directory]::Exists($directory)) { $artifactCleanupErrors.Add("Callback directory remained: $directory") }
+            }
+            catch {
+                $artifactCleanupErrors.Add("${directory}: $($_.Exception.Message)")
             }
         }
         if ($artifactCleanupErrors.Count -gt 0) { throw (New-CallbackCleanupFailure -Purpose $Purpose -Detail ($artifactCleanupErrors -join ' ')) }
