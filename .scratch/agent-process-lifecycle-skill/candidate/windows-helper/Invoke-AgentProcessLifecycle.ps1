@@ -17,10 +17,12 @@ param(
     [scriptblock]$ReadinessCheck,
     [ValidateRange(1, 60000)]
     [int]$ReadinessDeadlineMilliseconds = 5000,
-    [ValidateSet('Stop')]
+    [ValidateSet('Stop', 'Preserve')]
     [string]$RequestedDisposition = 'Stop',
-    [ValidateSet('Stop')]
+    [string]$RequestedLaterOwner,
+    [ValidateSet('Stop', 'Preserve')]
     [string]$Disposition = 'Stop',
+    [string]$LaterOwner,
     [scriptblock]$GracefulAction,
     [hashtable]$GracefulContext = @{},
     [ValidateRange(1, 60000)]
@@ -30,6 +32,10 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+$script:ExplicitParameters = @{}
+foreach ($parameterName in $PSBoundParameters.Keys) {
+    $script:ExplicitParameters[$parameterName] = $true
+}
 
 if (-not [Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([Runtime.InteropServices.OSPlatform]::Windows)) {
     throw 'The self-managed lifecycle helper only supports Windows.'
@@ -969,6 +975,16 @@ function Invoke-LaunchFailureCleanup {
 }
 
 function Invoke-Launch {
+    $requestedLaterOwnerProvided = $script:ExplicitParameters.ContainsKey('RequestedLaterOwner')
+    if ($RequestedDisposition -eq 'Preserve') {
+        if (-not $requestedLaterOwnerProvided -or [string]::IsNullOrWhiteSpace($RequestedLaterOwner)) {
+            throw 'RequestedLaterOwner is required and must be nonblank when RequestedDisposition is Preserve.'
+        }
+    }
+    elseif ($requestedLaterOwnerProvided) {
+        throw 'RequestedLaterOwner is only valid when RequestedDisposition is Preserve.'
+    }
+
     foreach ($name in 'Executable', 'WorkingDirectory', 'StdoutPath', 'StderrPath', 'ReadinessIdentity') {
         if (-not (Get-Variable -Name $name -ValueOnly)) {
             throw "$name is required for Launch."
@@ -1063,6 +1079,7 @@ function Invoke-Launch {
             stdio = [ordered]@{ stdout_path = [IO.Path]::GetFullPath($StdoutPath); stderr_path = [IO.Path]::GetFullPath($StderrPath) }
             readiness = [ordered]@{ identity = $ReadinessIdentity; deadline_milliseconds = $ReadinessDeadlineMilliseconds; result = $null; completed_at_utc = $null }
             requested_disposition = $RequestedDisposition
+            requested_later_owner = if ($RequestedDisposition -eq 'Preserve') { $RequestedLaterOwner } else { $null }
             later_owner = $null
             events = [ordered]@{ finalize = "$namePrefix.Finalize"; holder_exited = "$namePrefix.HolderExited" }
         }
@@ -1092,6 +1109,7 @@ function Invoke-Launch {
             lifecycle_result = [ordered]@{ status = 'success'; operation = 'launch' }
             downstream_result = $DownstreamResult
             final_disposition = [ordered]@{ requested = $RequestedDisposition; status = 'pending' }
+            later_owner = if ($RequestedDisposition -eq 'Preserve') { $RequestedLaterOwner } else { $null }
             evidence = [ordered]@{ record_path = $recordPathForRun; named_job_retained = $true; job_holder_process_id = $holder.ProcessId; root_identity = $rootIdentity; holder_identity = $holderIdentity }
         }
     }
@@ -1116,7 +1134,7 @@ function Invoke-Launch {
             lifecycle_result = [ordered]@{ status = $status; operation = 'launch'; failure_kind = $failureKind; cleanup = $cleanup; unresolved_reason = if ($status -eq 'unresolved') { ($cleanup.errors -join ' ') } else { $null }; error = $_.Exception.Message }
             downstream_result = $DownstreamResult
             final_disposition = [ordered]@{ requested = $RequestedDisposition; status = 'not-established' }
-            later_owner = $null
+            later_owner = if ($RequestedDisposition -eq 'Preserve') { $RequestedLaterOwner } else { $null }
             evidence = [ordered]@{ record_path = $recordPathForRun; cleanup = $cleanup; job_holder_process_id = if ($holder) { $holder.ProcessId } else { $null }; root_identity = $rootIdentity; holder_identity = $holderIdentity }
         }
     }
@@ -1140,6 +1158,12 @@ function Test-FinalizeRecordString {
     param([object]$Value)
 
     return $Value -is [string] -and -not [string]::IsNullOrWhiteSpace($Value)
+}
+
+function Test-FinalizeNullableRecordString {
+    param([object]$Value)
+
+    return $null -eq $Value -or (Test-FinalizeRecordString -Value $Value)
 }
 
 function Test-FinalizeRecordInteger {
@@ -1168,6 +1192,7 @@ function Test-FinalizeRecordSchema {
     if ($Record['stdio'] -isnot [Collections.IDictionary] -or -not (Test-FinalizeRecordString -Value $Record['stdio']['stdout_path']) -or -not (Test-FinalizeRecordString -Value $Record['stdio']['stderr_path'])) { return $false }
     if ($Record['readiness'] -isnot [Collections.IDictionary] -or -not (Test-FinalizeRecordString -Value $Record['readiness']['identity']) -or -not (Test-FinalizeRecordString -Value $Record['readiness']['result'])) { return $false }
     if (-not (Test-FinalizeRecordString -Value $Record['requested_disposition'])) { return $false }
+    if (-not (Test-FinalizeNullableRecordString -Value $Record['requested_later_owner']) -or -not (Test-FinalizeNullableRecordString -Value $Record['later_owner'])) { return $false }
     return $Record['events'] -is [Collections.IDictionary] -and
         (Test-FinalizeRecordString -Value $Record['events']['finalize']) -and
         (Test-FinalizeRecordString -Value $Record['events']['holder_exited'])
@@ -1221,7 +1246,7 @@ function New-FinalizeRejectionResult {
     return [ordered]@{
         action = 'Finalize'
         tier = 'windows-self-managed'
-        requested_disposition = 'Stop'
+        requested_disposition = $Disposition
         binding = $null
         stdio = $null
         readiness = $null
@@ -1233,7 +1258,7 @@ function New-FinalizeRejectionResult {
             unresolved_reason = $UnresolvedReason
         }
         downstream_result = $DownstreamResult
-        final_disposition = [ordered]@{ requested = 'Stop'; status = 'unresolved' }
+        final_disposition = [ordered]@{ requested = $Disposition; status = 'unresolved' }
         later_owner = $LaterOwner
         evidence = [ordered]@{
             validation_stage = $ValidationStage
@@ -1264,11 +1289,209 @@ function Test-FinalizeAccessDeniedException {
     return $false
 }
 
-function Invoke-Finalize {
-    if ($Disposition -ne 'Stop') {
-        throw 'Ticket 11 Finalize only supports Stop.'
-    }
+function Get-FinalizeScopedPublicationArtifacts {
+    param([Parameter(Mandatory)][string]$RecordPath)
 
+    $fullPath = Assert-ExistingRecordPath -Path $RecordPath
+    $leaf = Split-Path -Leaf $fullPath
+    return @(Get-ChildItem -LiteralPath ([IO.Path]::GetDirectoryName($fullPath)) -Force -File -Filter ".${leaf}.*.tmp*" | ForEach-Object FullName)
+}
+
+function Get-FinalizePublicationArtifacts {
+    param([Parameter(Mandatory)][string]$RecordPath, [Parameter(Mandatory)][Exception]$Exception)
+
+    $paths = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    $current = $Exception
+    while ($null -ne $current) {
+        if ($current.Data['AgentProcessLifecycle.ArtifactPaths']) {
+            foreach ($path in @($current.Data['AgentProcessLifecycle.ArtifactPaths'])) {
+                if ([IO.File]::Exists([string]$path)) { $paths.Add([string]$path) | Out-Null }
+            }
+        }
+        $current = $current.InnerException
+    }
+    foreach ($artifact in @(Get-FinalizeScopedPublicationArtifacts -RecordPath $RecordPath)) {
+        $paths.Add($artifact) | Out-Null
+    }
+    return @($paths)
+}
+
+function Remove-FinalizeScopedPublicationArtifacts {
+    param([Parameter(Mandatory)][string]$RecordPath)
+
+    try {
+        $artifacts = @(Get-FinalizeScopedPublicationArtifacts -RecordPath $RecordPath)
+    }
+    catch {
+        $failure = [InvalidOperationException]::new("Failed to enumerate Preserve publication artifacts: $($_.Exception.Message)")
+        $failure.Data['AgentProcessLifecycle.ArtifactPaths'] = @()
+        $failure.Data['AgentProcessLifecycle.ArtifactCleanupIncomplete'] = $true
+        throw $failure
+    }
+    foreach ($artifact in $artifacts) {
+        try {
+            # TEST-INJECTION: finalize-publication-artifact-delete
+            [IO.File]::Delete($artifact)
+            if ([IO.File]::Exists($artifact)) { throw "Publication artifact remained: $artifact" }
+        }
+        catch {
+            $failure = [InvalidOperationException]::new("Failed to remove Preserve publication artifact ${artifact}: $($_.Exception.Message)")
+            $failure.Data['AgentProcessLifecycle.ArtifactPaths'] = @($artifacts)
+            $failure.Data['AgentProcessLifecycle.ArtifactCleanupIncomplete'] = $true
+            throw $failure
+        }
+    }
+    return @($artifacts)
+}
+
+function Get-FinalizePreservePublicationOutcome {
+    param(
+        [Parameter(Mandatory)][string]$RecordPath,
+        [Parameter(Mandatory)][byte[]]$OriginalBytes,
+        [Parameter(Mandatory)][string]$ExpectedLaterOwner,
+        [Parameter(Mandatory)][AllowEmptyCollection()][string[]]$ArtifactPaths
+    )
+
+    if (Test-FinalizeRecordUnchanged -Path $RecordPath -OriginalBytes $OriginalBytes) {
+        return 'original-unchanged'
+    }
+    try {
+        Assert-ExistingRecordPath -Path $RecordPath | Out-Null
+        $published = ([IO.File]::ReadAllText($RecordPath) | ConvertFrom-Json -AsHashtable)
+        if ((Test-FinalizeRecordSchema -Record $published) -and
+            $published['state'] -eq 'preserved' -and
+            [string]::Equals([string]$published['later_owner'], $ExpectedLaterOwner, [StringComparison]::Ordinal) -and
+            $ArtifactPaths.Count -gt 0) {
+            return 'preserved-with-artifact-residue'
+        }
+    }
+    catch {
+    }
+    return 'unknown'
+}
+
+function New-FinalizePreservePublicationFailureResult {
+    param(
+        [Parameter(Mandatory)][string]$RecordPath,
+        [Parameter(Mandatory)][object]$Record,
+        [Parameter(Mandatory)][string]$PublicationOutcome,
+        [Parameter(Mandatory)][AllowEmptyCollection()][string[]]$ArtifactPaths,
+        [Parameter(Mandatory)][string]$ErrorMessage
+    )
+
+    $handoffPublished = $PublicationOutcome -eq 'preserved-with-artifact-residue'
+    $unresolved = $PublicationOutcome -ne 'original-unchanged'
+    $result = [ordered]@{
+        action = 'Finalize'
+        tier = 'windows-self-managed'
+        requested_disposition = 'Preserve'
+        binding = [ordered]@{ run_id = $Record['run_id']; record_path = $RecordPath; root_process_id = $Record['root']['process_id'] }
+        stdio = [ordered]@{ isolated = $true; stdout_path = $Record['stdio']['stdout_path']; stderr_path = $Record['stdio']['stderr_path'] }
+        readiness = [ordered]@{ identity = $Record['readiness']['identity']; succeeded = $true }
+        lifecycle_result = [ordered]@{
+            status = if ($unresolved) { 'unresolved' } else { 'failed' }
+            operation = 'preserve'
+            failure_kind = 'record-publication'
+            cleanup = [ordered]@{ attempted = $false; status = 'not-attempted'; result = 'workload-retained' }
+            unresolved_reason = if ($unresolved) { "Preserve publication outcome is ${PublicationOutcome}: $ErrorMessage" } else { $null }
+            error = $ErrorMessage
+        }
+        downstream_result = $DownstreamResult
+        final_disposition = [ordered]@{ requested = 'Preserve'; status = if ($handoffPublished) { 'preserved' } elseif ($unresolved) { 'unresolved' } else { 'not-established' } }
+        later_owner = if ($handoffPublished) { $Record['later_owner'] } else { $null }
+        evidence = [ordered]@{
+            authority_verified = $true
+            handoff_published = $handoffPublished
+            publication_outcome = $PublicationOutcome
+            publication_artifacts = @($ArtifactPaths)
+            graceful_action_invocations = 0
+            termination_attempted = $false
+            forced_termination_used = $false
+        }
+    }
+    if ($handoffPublished) {
+        $result['stop_method'] = [ordered]@{ action = 'Finalize'; disposition = 'Stop'; record_path = $RecordPath }
+    }
+    return $result
+}
+
+function Get-FinalizeArtifactPathsFromException {
+    param([Parameter(Mandatory)][Exception]$Exception)
+
+    $paths = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    $current = $Exception
+    while ($null -ne $current) {
+        foreach ($path in @($current.Data['AgentProcessLifecycle.ArtifactPaths'])) {
+            if ($null -ne $path) { $paths.Add([string]$path) | Out-Null }
+        }
+        $current = $current.InnerException
+    }
+    return @($paths)
+}
+
+function New-FinalizeStopArtifactCleanupFailureResult {
+    param(
+        [Parameter(Mandatory)][Collections.IDictionary]$Record,
+        [Parameter(Mandatory)][string]$RecordPath,
+        [Parameter(Mandatory)][string[]]$ArtifactPaths,
+        [Parameter(Mandatory)][string]$ErrorMessage,
+        [Parameter(Mandatory)][bool]$ForcedTerminationUsed,
+        [Parameter(Mandatory)][int]$GracefulActionInvocations,
+        [Parameter(Mandatory)][string]$GracefulActionOutcome,
+        [Parameter(Mandatory)][bool]$OwnedTreeEmpty,
+        [Parameter(Mandatory)][bool]$RootAbsent
+    )
+
+    return [ordered]@{
+        action = 'Finalize'
+        tier = 'windows-self-managed'
+        requested_disposition = 'Stop'
+        binding = [ordered]@{ run_id = $Record['run_id']; job_name = $Record['job_name']; root_process_id = $Record['root']['process_id'] }
+        stdio = [ordered]@{ isolated = $true; stdout_path = $Record['stdio']['stdout_path']; stderr_path = $Record['stdio']['stderr_path'] }
+        readiness = [ordered]@{ identity = $Record['readiness']['identity']; succeeded = ($Record['readiness']['result'] -eq 'succeeded') }
+        lifecycle_result = [ordered]@{
+            status = 'unresolved'
+            operation = if ($ForcedTerminationUsed) { 'forced-stop' } else { 'graceful-stop' }
+            failure_kind = 'publication-artifact-cleanup'
+            cleanup = [ordered]@{ attempted = $true; status = 'unresolved'; result = 'artifact-cleanup-incomplete' }
+            unresolved_reason = $ErrorMessage
+        }
+        downstream_result = $DownstreamResult
+        final_disposition = [ordered]@{ requested = 'Stop'; status = 'unresolved' }
+        later_owner = 'lifecycle-reconciliation-owner'
+        evidence = [ordered]@{
+            authority_verified = $true
+            graceful_action_invocations = $GracefulActionInvocations
+            graceful_action_outcome = $GracefulActionOutcome
+            forced_termination_used = $ForcedTerminationUsed
+            owned_tree_empty = $OwnedTreeEmpty
+            root_process_absent = $RootAbsent
+            job_holder_absent = $true
+            named_job_absent = $true
+            record_path = $RecordPath
+            record_present = $true
+            record_state = $Record['state']
+            publication_artifacts = @($ArtifactPaths)
+            responsibility_status = 'transfer-required-not-completed'
+        }
+    }
+}
+
+function New-FinalizeStateRejection {
+    param(
+        [Parameter(Mandatory)][string]$UnresolvedReason,
+        [Parameter(Mandatory)][string]$ReasonCode,
+        [Parameter(Mandatory)][string[]]$MissingEvidence,
+        [Parameter(Mandatory)][string]$RecordPath,
+        [Parameter(Mandatory)][bool]$RecordPresent,
+        [Parameter(Mandatory)][byte[]]$RecordBytes,
+        [Parameter(Mandatory)][object]$RecordClaims
+    )
+
+    return New-FinalizeRejectionResult -FailureKind 'record-state' -UnresolvedReason $UnresolvedReason -ValidationStage 'state-readiness-disposition' -ReasonCode $ReasonCode -MissingEvidence $MissingEvidence -RecordPath $RecordPath -RecordPresent $RecordPresent -RecordBytes $RecordBytes -RecordClaims $RecordClaims -LaterOwner 'lifecycle-reconciliation-owner' -ResponsibilityStatus 'transfer-required-not-completed'
+}
+
+function Invoke-Finalize {
     $recordPathForFinalize = $RecordPath
     $recordPresent = $false
     $recordBytes = $null
@@ -1316,14 +1539,47 @@ function Invoke-Finalize {
     }
     $recordClaims = New-FinalizeRecordClaims -Record $record
 
-    if ($record['state'] -ne 'ready') {
-        return New-FinalizeRejectionResult -FailureKind 'record-state' -UnresolvedReason 'The record is not ready for Finalize.' -ValidationStage 'state-readiness-disposition' -ReasonCode 'record-not-ready' -MissingEvidence @('ready-stop-state') -RecordPath $recordPathForFinalize -RecordPresent $recordPresent -RecordBytes $recordBytes -RecordClaims $recordClaims -LaterOwner 'lifecycle-reconciliation-owner' -ResponsibilityStatus 'transfer-required-not-completed'
+    if ($record['state'] -ne 'ready' -and $record['state'] -ne 'preserved') {
+        return New-FinalizeStateRejection -UnresolvedReason 'The record is not ready for Finalize.' -ReasonCode 'record-not-ready' -MissingEvidence @('ready-stop-state') -RecordPath $recordPathForFinalize -RecordPresent $recordPresent -RecordBytes $recordBytes -RecordClaims $recordClaims
     }
     if ($record['readiness']['result'] -ne 'succeeded') {
-        return New-FinalizeRejectionResult -FailureKind 'record-state' -UnresolvedReason 'The recorded readiness result does not prove a ready workload.' -ValidationStage 'state-readiness-disposition' -ReasonCode 'readiness-not-succeeded' -MissingEvidence @('readiness-success') -RecordPath $recordPathForFinalize -RecordPresent $recordPresent -RecordBytes $recordBytes -RecordClaims $recordClaims -LaterOwner 'lifecycle-reconciliation-owner' -ResponsibilityStatus 'transfer-required-not-completed'
+        return New-FinalizeStateRejection -UnresolvedReason 'The recorded readiness result does not prove a ready workload.' -ReasonCode 'readiness-not-succeeded' -MissingEvidence @('readiness-success') -RecordPath $recordPathForFinalize -RecordPresent $recordPresent -RecordBytes $recordBytes -RecordClaims $recordClaims
     }
-    if ($record['requested_disposition'] -ne 'Stop') {
-        return New-FinalizeRejectionResult -FailureKind 'record-state' -UnresolvedReason 'The recorded requested disposition is not Stop.' -ValidationStage 'state-readiness-disposition' -ReasonCode 'record-disposition-not-stop' -MissingEvidence @('stop-disposition') -RecordPath $recordPathForFinalize -RecordPresent $recordPresent -RecordBytes $recordBytes -RecordClaims $recordClaims -LaterOwner 'lifecycle-reconciliation-owner' -ResponsibilityStatus 'transfer-required-not-completed'
+    if ($Disposition -eq 'Stop' -and $script:ExplicitParameters.ContainsKey('LaterOwner')) {
+        return New-FinalizeStateRejection -UnresolvedReason 'LaterOwner is not valid for Stop.' -ReasonCode 'stop-prohibits-later-owner' -MissingEvidence @('stop-without-later-owner') -RecordPath $recordPathForFinalize -RecordPresent $recordPresent -RecordBytes $recordBytes -RecordClaims $recordClaims
+    }
+    if ($record['state'] -eq 'ready') {
+        if ($record['requested_disposition'] -eq 'Stop') {
+            if ($Disposition -ne 'Stop') {
+                return New-FinalizeStateRejection -UnresolvedReason 'The ready record was launched for Stop and cannot be preserved.' -ReasonCode 'ready-stop-requires-stop' -MissingEvidence @('ready-stop-transition') -RecordPath $recordPathForFinalize -RecordPresent $recordPresent -RecordBytes $recordBytes -RecordClaims $recordClaims
+            }
+        }
+        elseif ($record['requested_disposition'] -eq 'Preserve') {
+            if ($Disposition -ne 'Preserve') {
+                return New-FinalizeStateRejection -UnresolvedReason 'The recorded requested disposition is not Stop.' -ReasonCode 'record-disposition-not-stop' -MissingEvidence @('stop-disposition') -RecordPath $recordPathForFinalize -RecordPresent $recordPresent -RecordBytes $recordBytes -RecordClaims $recordClaims
+            }
+            if (-not (Test-FinalizeRecordString -Value $record['requested_later_owner'])) {
+                return New-FinalizeStateRejection -UnresolvedReason 'The Preserve record does not contain a requested later owner.' -ReasonCode 'requested-later-owner-missing' -MissingEvidence @('requested-later-owner') -RecordPath $recordPathForFinalize -RecordPresent $recordPresent -RecordBytes $recordBytes -RecordClaims $recordClaims
+            }
+            if (-not $script:ExplicitParameters.ContainsKey('LaterOwner') -or [string]::IsNullOrWhiteSpace($LaterOwner) -or -not [string]::Equals($LaterOwner, [string]$record['requested_later_owner'], [StringComparison]::Ordinal)) {
+                return New-FinalizeStateRejection -UnresolvedReason 'Preserve requires the matching nonblank LaterOwner.' -ReasonCode 'later-owner-mismatch' -MissingEvidence @('matching-later-owner') -RecordPath $recordPathForFinalize -RecordPresent $recordPresent -RecordBytes $recordBytes -RecordClaims $recordClaims
+            }
+            $explicitGracefulInputs = @(@('GracefulAction', 'GracefulContext', 'GracefulDeadlineMilliseconds') | Where-Object { $script:ExplicitParameters.ContainsKey($_) })
+            if ($explicitGracefulInputs.Count -ne 0) {
+                return New-FinalizeStateRejection -UnresolvedReason 'Preserve does not accept explicitly supplied graceful inputs.' -ReasonCode 'preserve-prohibits-graceful-inputs' -MissingEvidence @('preserve-without-graceful-inputs') -RecordPath $recordPathForFinalize -RecordPresent $recordPresent -RecordBytes $recordBytes -RecordClaims $recordClaims
+            }
+        }
+        else {
+            return New-FinalizeStateRejection -UnresolvedReason 'The recorded requested disposition is invalid.' -ReasonCode 'record-disposition-invalid' -MissingEvidence @('valid-requested-disposition') -RecordPath $recordPathForFinalize -RecordPresent $recordPresent -RecordBytes $recordBytes -RecordClaims $recordClaims
+        }
+    }
+    else {
+        if ($record['requested_disposition'] -ne 'Preserve' -or -not (Test-FinalizeRecordString -Value $record['later_owner'])) {
+            return New-FinalizeStateRejection -UnresolvedReason 'The preserved record does not contain a valid Preserve handoff.' -ReasonCode 'preserved-handoff-invalid' -MissingEvidence @('preserved-handoff') -RecordPath $recordPathForFinalize -RecordPresent $recordPresent -RecordBytes $recordBytes -RecordClaims $recordClaims
+        }
+        if ($Disposition -ne 'Stop') {
+            return New-FinalizeStateRejection -UnresolvedReason 'A preserved record can only be finalized by a later Stop.' -ReasonCode 'preserved-requires-stop' -MissingEvidence @('later-stop-transition') -RecordPath $recordPathForFinalize -RecordPresent $recordPresent -RecordBytes $recordBytes -RecordClaims $recordClaims
+        }
     }
 
     $runId = [string]$record['run_id']
@@ -1471,6 +1727,44 @@ function Invoke-Finalize {
             return New-FinalizeRejectionResult -FailureKind 'preflight-unexpected' -UnresolvedReason $_.Exception.Message -ValidationStage 'unexpected-preflight' -ReasonCode 'unexpected-preflight-failure' -MissingEvidence @('complete-finalize-authority') -RecordPath $recordPathForFinalize -RecordPresent $recordPresent -RecordBytes $recordBytes -RecordClaims $recordClaims -LaterOwner 'lifecycle-reconciliation-owner' -ResponsibilityStatus 'transfer-required-not-completed'
         }
 
+        if ($Disposition -eq 'Preserve') {
+            # Preserve 只在完整 authority preflight 後變更 record；不可 signal holder 或觸發任何 Stop 路徑。
+            $record['state'] = 'preserved'
+            $record['later_owner'] = $LaterOwner
+            try {
+                # TEST-INJECTION: preserve-record-publication
+                Write-Record -Record $record -DestinationPath $recordPathForFinalize
+            }
+            catch {
+                $publicationArtifacts = @(Get-FinalizePublicationArtifacts -RecordPath $recordPathForFinalize -Exception $_.Exception)
+                $publicationOutcome = Get-FinalizePreservePublicationOutcome -RecordPath $recordPathForFinalize -OriginalBytes $recordBytes -ExpectedLaterOwner $LaterOwner -ArtifactPaths $publicationArtifacts
+                return New-FinalizePreservePublicationFailureResult -RecordPath $recordPathForFinalize -Record $record -PublicationOutcome $publicationOutcome -ArtifactPaths $publicationArtifacts -ErrorMessage $_.Exception.Message
+            }
+
+            return [ordered]@{
+                action = 'Finalize'
+                tier = 'windows-self-managed'
+                requested_disposition = 'Preserve'
+                binding = [ordered]@{ run_id = $record['run_id']; record_path = $recordPathForFinalize; root_process_id = $record['root']['process_id'] }
+                stdio = [ordered]@{ isolated = $true; stdout_path = $record['stdio']['stdout_path']; stderr_path = $record['stdio']['stderr_path'] }
+                readiness = [ordered]@{ identity = $record['readiness']['identity']; succeeded = $true }
+                lifecycle_result = [ordered]@{ status = 'success'; operation = 'preserve' }
+                downstream_result = $DownstreamResult
+                final_disposition = [ordered]@{ requested = 'Preserve'; status = 'preserved' }
+                later_owner = $LaterOwner
+                stop_method = [ordered]@{ action = 'Finalize'; disposition = 'Stop'; record_path = $recordPathForFinalize }
+                evidence = [ordered]@{
+                    authority_verified = $authorityVerified
+                    handoff_published = $true
+                    graceful_action_invocations = 0
+                    termination_attempted = $false
+                    forced_termination_used = $false
+                    root_process_live = $true
+                    job_holder_live = $true
+                }
+            }
+        }
+
         # TEST-INJECTION: finalize-before-stop
         $binding = [ordered]@{ run_id = $record['run_id']; job_name = $record['job_name']; root_process_id = $record['root']['process_id']; graceful_context = $GracefulContext }
         if ($null -ne $GracefulAction) {
@@ -1539,6 +1833,7 @@ function Invoke-Finalize {
             throw 'The named Job remained after the holder released its handle.'
         }
         Assert-ExistingRecordPath -Path $recordPathForFinalize | Out-Null
+        Remove-FinalizeScopedPublicationArtifacts -RecordPath $recordPathForFinalize | Out-Null
         [IO.File]::Delete($recordPathForFinalize)
 
         return [ordered]@{
@@ -1562,6 +1857,13 @@ function Invoke-Finalize {
     catch {
         if (-not $authorityVerified) {
             return New-FinalizeRejectionResult -FailureKind 'preflight-unexpected' -UnresolvedReason $_.Exception.Message -ValidationStage 'unexpected-preflight' -ReasonCode 'unexpected-preflight-failure' -MissingEvidence @('complete-finalize-authority') -RecordPath $recordPathForFinalize -RecordPresent $recordPresent -RecordBytes $recordBytes -RecordClaims $recordClaims -LaterOwner 'lifecycle-reconciliation-owner' -ResponsibilityStatus 'transfer-required-not-completed'
+        }
+        $artifactCleanupException = $_.Exception
+        while ($artifactCleanupException -and $artifactCleanupException.Data['AgentProcessLifecycle.ArtifactCleanupIncomplete'] -ne $true) {
+            $artifactCleanupException = $artifactCleanupException.InnerException
+        }
+        if ($artifactCleanupException) {
+            return New-FinalizeStopArtifactCleanupFailureResult -Record $record -RecordPath $recordPathForFinalize -ArtifactPaths @(Get-FinalizeArtifactPathsFromException -Exception $artifactCleanupException) -ErrorMessage $_.Exception.Message -ForcedTerminationUsed $forcedTerminationUsed -GracefulActionInvocations $gracefulActionInvocations -GracefulActionOutcome $gracefulActionOutcome -OwnedTreeEmpty $ownedTreeEmpty -RootAbsent $rootAbsent
         }
         throw
     }

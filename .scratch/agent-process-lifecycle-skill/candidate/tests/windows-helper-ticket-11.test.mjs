@@ -220,7 +220,7 @@ test("helper exposes only Launch and Finalize with scoped Job termination only",
   assert.match(helper, /\$workerStartedSuspended = \$false[\s\S]*?\$workerAssignedToCallbackJob = \$false[\s\S]*?\$callbackCompleted = \$false/u);
   assert.match(helper, /if \(\$workerAssignedToCallbackJob\)[\s\S]*?Stop-CallbackJob -JobHandle \$callbackJob[\s\S]*?else \{[\s\S]*?TerminateUnassignedCallbackWorker\(\$worker\.ProcessHandle\)/u);
   assert.doesNotMatch(helper, /KILL_ON_JOB_CLOSE|TerminateOwnedJob|Stop-Process|Get-Process|Get-NetTCPConnection/u);
-  assert.doesNotMatch(helper, /ValidateSet\([^)]*Preserve/u);
+  assert.match(helper, /ValidateSet\('Stop', 'Preserve'\)/u);
 });
 
 test("Ticket 11 test-generated callback children stay hidden", async () => {
