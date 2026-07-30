@@ -5,7 +5,6 @@ import { ADAPTER_EXECUTION_SCHEMA_VERSION, validateAdapterRequest } from '../lib
 import { executeOpenCode, OPENCODE_EXECUTABLE } from '../lib/opencode-runtime.mjs';
 import {
   OpenCodeAdapterError,
-  parseFrozenOption,
   parseOpenCodeEvidence,
   sessionFrom,
 } from './opencode-evidence.mjs';
@@ -77,24 +76,24 @@ export function buildOpenCodeRunArguments(promptFile) {
   ];
 }
 
-export function mapFrozenDecision(scenarioId, decisionText) {
-  const token = parseFrozenOption(decisionText);
-  const option = optionsFor(scenarioId).find((item) => item.token === token);
+export function mapFrozenDecision(scenarioId, decisionToken) {
+  const option = optionsFor(scenarioId).find((item) => item.token === decisionToken);
   if (!option) {
-    throw new OpenCodeAdapterError('UNMAPPABLE_ACTION', `Unknown action token ${token}`);
+    throw new OpenCodeAdapterError('UNMAPPABLE_ACTION', `Unknown action token ${decisionToken}`);
   }
-  return { action_id: option.action_id, token };
+  return { action_id: option.action_id, token: decisionToken };
 }
 
 async function execute(args) {
   try {
     const result = await executeOpenCode(args);
-    return { exitCode: 0, stderr: result.stderr, stdout: result.stdout };
+    return result;
   } catch (error) {
     return {
       exitCode: Number.isInteger(error.code) ? error.code : 1,
       stderr: typeof error.stderr === 'string' ? error.stderr : '',
       stdout: typeof error.stdout === 'string' ? error.stdout : '',
+      timedOut: false,
     };
   }
 }
@@ -121,13 +120,19 @@ export function createOpenCodeNoSkillAdapter({ rawEvidenceDirectory }) {
     const promptPath = path.join(rawEvidenceDirectory, `${evidenceName}.prompt.txt`);
     await writePromptEvidence(rawEvidenceDirectory, `${evidenceName}.prompt.txt`, prompt);
     const run = await execute(buildOpenCodeRunArguments(promptPath));
-    await writeRawEvidence(rawEvidenceDirectory, `${evidenceName}.run.json`, { executable: OPENCODE_EXECUTABLE, arguments: buildOpenCodeRunArguments(promptPath), exit_code: run.exitCode, stderr: run.stderr, stdout: run.stdout });
+    await writeRawEvidence(rawEvidenceDirectory, `${evidenceName}.run.json`, { executable: OPENCODE_EXECUTABLE, arguments: buildOpenCodeRunArguments(promptPath), exit_code: run.exitCode, stderr: run.stderr, stdout: run.stdout, timed_out: run.timedOut });
+    if (run.timedOut) {
+      throw new OpenCodeAdapterError('OPENCODE_TIMEOUT', 'OpenCode exceeded the benchmark timeout');
+    }
     if (run.exitCode !== 0) {
       throw new OpenCodeAdapterError('OPENCODE_EXIT_FAILURE', `OpenCode exited with ${run.exitCode}`);
     }
     const sessionId = sessionFrom(run.stdout);
     const exported = await execute(['export', '--pure', sessionId]);
-    await writeRawEvidence(rawEvidenceDirectory, `${evidenceName}.export.json`, { executable: OPENCODE_EXECUTABLE, arguments: ['export', '--pure', sessionId], exit_code: exported.exitCode, stderr: exported.stderr, stdout: exported.stdout });
+    await writeRawEvidence(rawEvidenceDirectory, `${evidenceName}.export.json`, { executable: OPENCODE_EXECUTABLE, arguments: ['export', '--pure', sessionId], exit_code: exported.exitCode, stderr: exported.stderr, stdout: exported.stdout, timed_out: exported.timedOut });
+    if (exported.timedOut) {
+      throw new OpenCodeAdapterError('OPENCODE_TIMEOUT', `OpenCode export timed out for ${sessionId}`);
+    }
     if (exported.exitCode !== 0) {
       throw new OpenCodeAdapterError('OPENCODE_EXPORT_FAILURE', `OpenCode export failed for ${sessionId}`);
     }

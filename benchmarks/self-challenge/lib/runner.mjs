@@ -73,7 +73,7 @@ function adjudicationFor(scenario) {
 function failedRun({ benchmarkVersion, configuration, scenario, trial, error }) {
   const failureCode = error instanceof ContractError
     ? 'ADAPTER_CONTRACT_VIOLATION'
-    : ['AMBIGUOUS_ACTION', 'UNMAPPABLE_ACTION', 'UNKNOWN_ACTION', 'OPENCODE_EXIT_FAILURE', 'OPENCODE_EXPORT_FAILURE', 'UNSCORABLE_EVIDENCE'].includes(error?.code)
+    : ['AMBIGUOUS_ACTION', 'UNMAPPABLE_ACTION', 'UNKNOWN_ACTION', 'OPENCODE_EXIT_FAILURE', 'OPENCODE_EXPORT_FAILURE', 'OPENCODE_TIMEOUT', 'UNSCORABLE_EVIDENCE'].includes(error?.code)
       ? error.code
       : 'ADAPTER_FAILURE';
   return {

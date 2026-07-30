@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { PassThrough } from 'node:stream';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
@@ -11,8 +13,9 @@ import {
   mapFrozenDecision,
   parseOpenCodeEvidence,
 } from '../adapters/opencode-no-skill.mjs';
+import { parseFrozenOption } from '../adapters/opencode-evidence.mjs';
 import { createEmptyBaselineOutput } from '../bin/run-no-skill-baseline.mjs';
-import { OPENCODE_EXECUTABLE, createOpenCodeInvocation } from '../lib/opencode-runtime.mjs';
+import { OPENCODE_EXECUTABLE, createOpenCodeInvocation, launchOpenCode } from '../lib/opencode-runtime.mjs';
 import { summarizeNoSkillBaseline } from '../lib/no-skill-summary.mjs';
 import { createHarnessRun, loadTrainingScenarios, runBenchmark } from '../lib/runner.mjs';
 import { scoreReport } from '../lib/scorer.mjs';
@@ -87,13 +90,29 @@ test('Given OpenCode JSON events with one decision, when evidence is normalized,
   });
 });
 
-test('Given conflicting or forged decision text, when it is mapped, then it fails deterministically without a retry path', () => {
+test('Given raw OpenCode evidence with one decision, when it is normalized and mapped, then it selects the scenario action', () => {
+  const evidence = parseOpenCodeEvidence([
+    JSON.stringify({ type: 'session.created', sessionID: 'session-1' }),
+    JSON.stringify({ type: 'text', text: 'FIRST_DECISION: OPTION_A', tokens: { input: 11, output: 7 } }),
+  ].join('\n'));
+
+  assert.deepEqual(
+    mapFrozenDecision('train-harmful-fixture-ownership', evidence.decision),
+    { action_id: 'keep-private-fixture-location', token: 'OPTION_A' },
+  );
+});
+
+test('Given malformed or conflicting raw decision text, when it is parsed, then it fails deterministically without a retry path', () => {
   assert.throws(
-    () => mapFrozenDecision('train-harmful-fixture-ownership', 'FIRST_DECISION: OPTION_A\nFIRST_DECISION: OPTION_B'),
+    () => parseFrozenOption('FIRST_DECISION: OPTION_A\nFIRST_DECISION: OPTION_B'),
     (error) => error.code === 'AMBIGUOUS_ACTION',
   );
   assert.throws(
-    () => mapFrozenDecision('train-harmful-fixture-ownership', 'FIRST_DECISION: OPTION_C'),
+    () => parseFrozenOption('not a decision'),
+    (error) => error.code === 'UNMAPPABLE_ACTION',
+  );
+  assert.throws(
+    () => mapFrozenDecision('train-harmful-fixture-ownership', 'OPTION_C'),
     (error) => error.code === 'UNMAPPABLE_ACTION',
   );
 });
@@ -131,6 +150,46 @@ test('Given the OpenCode runtime seam, when adapter and controller invoke OpenCo
     assert.equal(source.includes("command: 'opencode'"), false);
     assert.equal(source.includes("'opencode.cmd'"), false);
   }
+});
+
+test('Given an OpenCode launch, when the runtime starts it, then stdin is ignored while stdout and stderr are captured from the hidden absolute-path child', async () => {
+  const child = new EventEmitter();
+  child.pid = 12345;
+  child.stdout = new PassThrough();
+  child.stderr = new PassThrough();
+  let captured = null;
+  const result = await launchOpenCode(['--pure', '--version'], {
+    cwd: 'C:\\benchmark',
+    spawnProcess(executable, args, options) {
+      captured = { executable, args, options };
+      queueMicrotask(() => {
+        child.stdout.end('1.18.9\n');
+        child.stderr.end('runtime diagnostic\n');
+        child.emit('close', 0, null);
+      });
+      return child;
+    },
+    timeoutMs: 100,
+    terminateProcessTree: async () => assert.fail('timeout cleanup must not run'),
+  });
+
+  assert.deepEqual(captured, {
+    executable: 'C:\\nvm4w\\nodejs\\opencode.cmd',
+    args: ['--pure', '--version'],
+    options: {
+      cwd: 'C:\\benchmark',
+      shell: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true,
+    },
+  });
+  assert.deepEqual(result, {
+    exitCode: 0,
+    signal: null,
+    stderr: 'runtime diagnostic\n',
+    stdout: '1.18.9\n',
+    timedOut: false,
+  });
 });
 
 test('Given a forged adapter direction flag, when the harness creates a run, then it derives direction-changing truth from the scenario action map', async () => {
