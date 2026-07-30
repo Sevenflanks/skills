@@ -14,6 +14,7 @@ const smokeRunnerPath = resolve(import.meta.dirname, "run_candidate_smoke.py");
 const boundaryContractPath = resolve(import.meta.dirname, "model_visible_contract.py");
 const boundaryJsonPath = resolve(import.meta.dirname, "model_visible_json.py");
 const boundaryExecutionPath = resolve(import.meta.dirname, "model_visible_execution.py");
+const evidenceManifestPath = resolve(import.meta.dirname, "../evidence/model-visible-ticket-16/manifest.json");
 const evidenceResultsPath = resolve(import.meta.dirname, "../evidence/model-visible-ticket-16/results.ndjson");
 const evidenceSummaryPath = resolve(import.meta.dirname, "../evidence/model-visible-ticket-16/summary.json");
 const minimumOutcomeCategories = ["ownership_binding", "stdio", "readiness", "observation", "disposition", "cleanup_or_handoff", "lifecycle_callback"].sort();
@@ -58,8 +59,12 @@ const publishedInventoryHashes = new Map([
 ]);
 
 function frontmatterValue(document, key) {
-  const frontmatter = document.match(/^---\n([\s\S]*?)\n---/u)?.[1] ?? "";
-  return frontmatter.match(new RegExp(`^${key}: (.+)$`, "mu"))?.[1];
+  const frontmatter = document.match(/^---\r?\n([\s\S]*?)\r?\n---/u)?.[1] ?? "";
+  return frontmatter.match(new RegExp(`^${key}: (.+?)\r?$`, "mu"))?.[1];
+}
+
+function normalizedTextHash(document) {
+  return createHash("sha256").update(document.replace(/\r\n/gu, "\n"), "utf8").digest("hex");
 }
 
 async function evidenceResults() {
@@ -108,6 +113,13 @@ test("candidate remains manually invoked with routing-bearing frontmatter", asyn
   assert.match(description, /synchronous commands/u);
   assert.equal(frontmatterValue(document, "disable-model-invocation"), "true");
   assert.equal(document.match(/^\s*version: (.+)$/mu)?.[1], "1.0.0-candidate.10");
+});
+
+test("candidate frontmatter remains parseable after a CRLF checkout", () => {
+  const document = "---\r\nname: agent-process-lifecycle\r\ndisable-model-invocation: true\r\n---\r\n";
+
+  assert.equal(frontmatterValue(document, "name"), "agent-process-lifecycle");
+  assert.equal(frontmatterValue(document, "disable-model-invocation"), "true");
 });
 
 test("candidate eval migration accounts for every published lifecycle evaluation", async () => {
@@ -162,6 +174,16 @@ test("published inventory bytes remain pinned and exclude the candidate", async 
     const observedHash = createHash("sha256").update(document).digest("hex");
     assert.equal(observedHash, expectedHash, relativePath);
     assert.doesNotMatch(document.toString("utf8"), /agent-process-lifecycle/u, relativePath);
+  }
+});
+
+test("model-visible input hashes are portable across Git line-ending conversion", async () => {
+  const manifest = JSON.parse(await readFile(evidenceManifestPath, "utf8"));
+
+  assert.equal(manifest.input_hash_mode, "sha256-lf-normalized-text");
+  for (const [relativePath, expectedHash] of Object.entries(manifest.inputs)) {
+    const document = await readFile(resolve(repositoryRoot, relativePath), "utf8");
+    assert.equal(normalizedTextHash(document), expectedHash, relativePath);
   }
 });
 
