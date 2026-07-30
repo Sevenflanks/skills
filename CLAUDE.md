@@ -7,3 +7,17 @@
 ```powershell
 npm run validate
 ```
+
+## Agent skills
+
+### Issue tracker
+
+Issues 與 specs 使用 repo 內的 Local Markdown tracker。See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Triage 使用五個 canonical role strings。See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+本 repo 採 single-context layout，使用 root `CONTEXT.md` 與 `docs/adr/`。See `docs/agents/domain.md`.
