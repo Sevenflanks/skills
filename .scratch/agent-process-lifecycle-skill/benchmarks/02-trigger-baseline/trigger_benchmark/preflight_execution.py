@@ -44,8 +44,8 @@ def _persist_capture(output_directory: Path, variant: Variant, capture: Prefligh
     prefix = f"preflight-{variant.id}-{capture.evidence.fixture_id}-attempt-{attempt}"
     stdout_path = output_directory / "logs" / f"{prefix}.stdout.txt"
     stderr_path = output_directory / "logs" / f"{prefix}.stderr.txt"
-    stdout_path.write_text(capture.stdout, encoding="utf-8")
-    stderr_path.write_text(capture.stderr, encoding="utf-8")
+    stdout_path.write_text(capture.stdout, encoding="utf-8", newline="\n")
+    stderr_path.write_text(capture.stderr, encoding="utf-8", newline="\n")
     evidence = replace(capture.evidence, stdout_path=str(stdout_path.relative_to(output_directory)).replace("\\", "/"), stderr_path=str(stderr_path.relative_to(output_directory)).replace("\\", "/"))
     return replace(capture, evidence=evidence)
 
