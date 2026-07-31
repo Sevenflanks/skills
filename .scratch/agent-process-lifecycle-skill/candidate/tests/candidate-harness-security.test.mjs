@@ -176,6 +176,97 @@ test("candidate smoke preserves canonical evidence during execution and failed p
   }
 });
 
+test("candidate publisher fails closed when a foreign lock exists", async () => {
+  const scratchDirectory = resolve(repositoryRoot, ".scratch/agent-process-lifecycle-skill");
+  const testDirectory = await mkdtemp(resolve(scratchDirectory, "candidate-contract-publish-lock-"));
+  const probe = [
+    "from pathlib import Path",
+    `import sys; sys.path.insert(0, ${JSON.stringify(import.meta.dirname)})`,
+    "import run_candidate_smoke",
+    `test_directory = Path(${JSON.stringify(testDirectory)})`,
+    "canonical = test_directory / 'model-visible-ticket-16'",
+    "staging = test_directory / 'staging'",
+    "canonical.mkdir()",
+    "marker = canonical / 'canonical-marker.bin'",
+    "marker.write_bytes(b'canonical\\x00marker')",
+    "staging.mkdir()",
+    "(staging / 'staged-marker.bin').write_bytes(b'staged\\x00marker')",
+    "lock = canonical.with_name('model-visible-ticket-16.publish.lock')",
+    "lock.mkdir()",
+    "try:",
+    "    run_candidate_smoke._publish(staging, canonical)",
+    "except run_candidate_smoke.HarnessError as error:",
+    "    message = str(error)",
+    "else:",
+    "    raise AssertionError('expected foreign lock contention')",
+    "assert message == 'model evidence publication is already in progress'",
+    "assert marker.read_bytes() == b'canonical\\x00marker'",
+    "assert (staging / 'staged-marker.bin').read_bytes() == b'staged\\x00marker'",
+    "assert lock.is_dir()",
+    "assert not tuple(test_directory.glob('model-visible-ticket-16.rollback-*'))",
+  ].join("\n");
+
+  try {
+    const result = spawnSync("py", ["-3.12", "-c", probe], { cwd: repositoryRoot, encoding: "utf8" });
+
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  } finally {
+    await rm(testDirectory, { force: true, recursive: true });
+  }
+});
+
+test("candidate publisher retains rollback when promotion and restoration both fail", async () => {
+  const scratchDirectory = resolve(repositoryRoot, ".scratch/agent-process-lifecycle-skill");
+  const testDirectory = await mkdtemp(resolve(scratchDirectory, "candidate-contract-publish-restore-"));
+  const probe = [
+    "from pathlib import Path",
+    `import sys; sys.path.insert(0, ${JSON.stringify(import.meta.dirname)})`,
+    "import run_candidate_smoke",
+    `test_directory = Path(${JSON.stringify(testDirectory)})`,
+    "canonical = test_directory / 'model-visible-ticket-16'",
+    "staging = test_directory / 'staging'",
+    "canonical.mkdir()",
+    "marker = canonical / 'canonical-marker.bin'",
+    "marker.write_bytes(b'canonical\\x00marker')",
+    "staging.mkdir()",
+    "(staging / 'staged-marker.bin').write_bytes(b'staged\\x00marker')",
+    "def fail_promotion_and_restoration(source, destination):",
+    "    if source == staging:",
+    "        raise OSError('promotion failed')",
+    "    if source.name.startswith(f'{canonical.name}.rollback-') and destination == canonical:",
+    "        raise OSError('restoration failed')",
+    "    source.replace(destination)",
+    "run_candidate_smoke._replace = fail_promotion_and_restoration",
+    "try:",
+    "    run_candidate_smoke._publish(staging, canonical)",
+    "except run_candidate_smoke.HarnessError as error:",
+    "    message = str(error)",
+    "else:",
+    "    raise AssertionError('expected controlled double publication failure')",
+    "rollbacks = tuple(test_directory.glob('model-visible-ticket-16.rollback-*'))",
+    "assert len(rollbacks) == 1",
+    "rollback = rollbacks[0]",
+    "rollback_marker = rollback / 'canonical-marker.bin'",
+    "assert rollback_marker.read_bytes() == b'canonical\\x00marker'",
+    "assert not canonical.exists()",
+    "assert (staging / 'staged-marker.bin').read_bytes() == b'staged\\x00marker'",
+    "assert 'model evidence promotion failed' in message",
+    "assert 'rollback restoration failed' in message",
+    "assert rollback.name in message",
+    "assert str(test_directory) not in message",
+    "assert str(rollback) not in message",
+    "assert not (test_directory / 'model-visible-ticket-16.publish.lock').exists()",
+  ].join("\n");
+
+  try {
+    const result = spawnSync("py", ["-3.12", "-c", probe], { cwd: repositoryRoot, encoding: "utf8" });
+
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  } finally {
+    await rm(testDirectory, { force: true, recursive: true });
+  }
+});
+
 test("candidate smoke rejects destructive non-canonical output paths before deletion", async () => {
   const scratchDirectory = resolve(repositoryRoot, ".scratch/agent-process-lifecycle-skill");
   const output = await mkdtemp(resolve(scratchDirectory, "candidate-contract-output-"));

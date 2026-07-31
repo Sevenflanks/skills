@@ -69,6 +69,12 @@ def _output_path() -> Path:
 
 
 def _publish(staging: Path, output: Path) -> None:
+    lock = output.with_name(f"{output.name}.publish.lock")
+    try:
+        lock.mkdir()
+    except FileExistsError as error:
+        raise HarnessError("model evidence publication is already in progress") from error
+
     rollback = output.with_name(f"{output.name}.rollback-{uuid4().hex}")
     canonical_was_moved = False
     try:
@@ -78,11 +84,18 @@ def _publish(staging: Path, output: Path) -> None:
         _replace(staging, output)
     except OSError:
         if canonical_was_moved:
-            _replace(rollback, output)
+            try:
+                _replace(rollback, output)
+            except OSError:
+                raise HarnessError(
+                    f"model evidence promotion failed; rollback restoration failed; retained {rollback.name}"
+                ) from None
         raise
-    finally:
-        if rollback.exists() and output.exists():
+    else:
+        if canonical_was_moved:
             shutil.rmtree(rollback)
+    finally:
+        lock.rmdir()
 
 
 def _replace(source: Path, destination: Path) -> None:
