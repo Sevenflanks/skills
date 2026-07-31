@@ -74,6 +74,19 @@ class EvidenceTests(unittest.TestCase):
             with self.assertRaises(EvidenceValidationError):
                 validate_evidence(root, BENCHMARK_ROOT, load_specification(BENCHMARK_ROOT))
 
+    def test_evidence_when_unrelated_discovery_location_is_relative_ignores_global_entry(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            write_exploratory_evidence(root)
+            preflight_path = root / "logs" / "preflight.stdout.txt"
+            discovery = json.loads(preflight_path.read_text(encoding="utf-8"))
+            discovery.append({"name": "global-skill", "description": "outside fixture", "location": "relative/SKILL.md"})
+            _replace_preflight_stdout(root, json.dumps(discovery))
+
+            evidence = validate_evidence(root, BENCHMARK_ROOT, load_specification(BENCHMARK_ROOT))
+
+            self.assertTrue(evidence.is_complete)
+
     def test_evidence_when_preflight_stdout_is_not_the_selected_fixture_candidate_rejects(self) -> None:
         specification = load_specification(BENCHMARK_ROOT)
         candidate = specification.variants[1]
