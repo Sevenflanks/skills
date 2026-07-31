@@ -10,7 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 
-from .fixture import create_fixture
+from .fixture import create_fixture, fixture_environment
 from .models import AttemptStatus, Prompt, RunOptions, TrialRecord, Variant
 
 
@@ -71,7 +71,7 @@ def _run_attempt(plan: TrialPlan, cell: TrialCell, attempt: int) -> TrialRecord:
         fixture_identity = {"fixture_id": fixture.project_directory.name, "fixture_candidate_name": cell.variant.skill_name}
         started = time.monotonic()
         try:
-            completed = subprocess.run(trial_command, capture_output=True, text=True, check=False, timeout=options.timeout_seconds)
+            completed = subprocess.run(trial_command, capture_output=True, text=True, check=False, timeout=options.timeout_seconds, env=fixture_environment(fixture.project_directory))
         except subprocess.TimeoutExpired as error:
             stdout = _timeout_text(error.stdout)
             stderr = _timeout_text(error.stderr)
