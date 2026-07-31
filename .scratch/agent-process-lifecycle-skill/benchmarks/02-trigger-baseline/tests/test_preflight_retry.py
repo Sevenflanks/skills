@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -58,9 +59,27 @@ class PreflightRetryTests(unittest.TestCase):
         plan = _calibration_plan()
         shape = RunShape(plan.options.phase, plan.variants, plan.prompts, plan.options.runs_per_query, plan.options.workers)
         calls: list[Path] = []
+        blocked_overrides = ("OPENCODE_CONFIG", "OPENCODE_CONFIG_CONTENT", "OPENCODE_CONFIG_DIR", "OPENCODE_PERMISSION", "OPENCODE_DISABLE_PROJECT_CONFIG")
+        inherited_environment = {"XDG_CONFIG_HOME": "inherited-config", "XDG_DATA_HOME": "inherited-data", "XDG_CACHE_HOME": "inherited-cache", "XDG_STATE_HOME": "inherited-state", "ANTHROPIC_API_KEY": "test-provider-auth", "HOME": "inherited-home", "USERPROFILE": "inherited-userprofile", "OPENCODE_CONFIG": "hostile-config.json", "OPENCODE_CONFIG_CONTENT": "hostile-config-content", "OPENCODE_CONFIG_DIR": "hostile-config-directory", "OPENCODE_PERMISSION": "hostile-permission", "OPENCODE_DISABLE_PROJECT_CONFIG": "1", "OPENCODE_TEST_HOME": "hostile-test-home", "OPENCODE_DISABLE_EXTERNAL_SKILLS": "0"}
 
-        def discovery(command: list[str], **kwargs: str | Path | bool | int) -> CompletedProcess[str]:
+        def discovery(command: list[str], **kwargs: str | Path | bool | int | dict[str, str]) -> CompletedProcess[str]:
             cwd = Path(str(kwargs["cwd"]))
+            environment = kwargs.get("env")
+            if not isinstance(environment, dict):
+                self.fail("preflight subprocess call must receive a copied environment")
+            self.assertIsNot(environment, os.environ)
+            self.assertEqual(environment["XDG_CONFIG_HOME"], str(cwd.resolve()))
+            for override in blocked_overrides:
+                self.assertFalse(override in environment, f"{override} must be absent from the subprocess environment")
+            self.assertEqual(environment["OPENCODE_TEST_HOME"], str(cwd.resolve()))
+            self.assertEqual(environment["OPENCODE_DISABLE_EXTERNAL_SKILLS"], "1")
+            self.assertEqual(environment["PATH"], os.environ["PATH"])
+            self.assertEqual(environment["ANTHROPIC_API_KEY"], "test-provider-auth")
+            self.assertEqual(environment["XDG_DATA_HOME"], "inherited-data")
+            self.assertEqual(environment["XDG_CACHE_HOME"], "inherited-cache")
+            self.assertEqual(environment["XDG_STATE_HOME"], "inherited-state")
+            self.assertEqual(environment["HOME"], "inherited-home")
+            self.assertEqual(environment["USERPROFILE"], "inherited-userprofile")
             calls.append(cwd)
             if len(calls) == 1:
                 return CompletedProcess(command, 0, "[]", "first omission")
@@ -71,8 +90,9 @@ class PreflightRetryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(dir=BENCHMARK_ROOT) as temporary_directory:
             root = Path(temporary_directory) / "evidence"
             run_plan = replace(plan, options=replace(plan.options, output_directory=root))
-            with patch("trigger_benchmark.execution._observe_version", return_value=make_version_capture()), patch("trigger_benchmark.preflight.subprocess.run", side_effect=discovery), patch("trigger_benchmark.execution.run_trials", return_value=make_valid_records(shape)):
-                self.assertEqual(execute_run(run_plan), 0)
+            with patch.dict(os.environ, inherited_environment, clear=False):
+                with patch("trigger_benchmark.execution._observe_version", return_value=make_version_capture()), patch("trigger_benchmark.preflight.subprocess.run", side_effect=discovery), patch("trigger_benchmark.execution.run_trials", return_value=make_valid_records(shape)):
+                    self.assertEqual(execute_run(run_plan), 0)
             manifest = document(root / "manifest.json")
             entry = _preflight_entries(manifest)[0]
             attempts = objects(entry.get("attempts"), "preflight.attempts")
