@@ -4,6 +4,7 @@ import json
 import sys
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -13,12 +14,35 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import evaluate_routing_release_gate
 from evidence_fixtures import hash_file, make_manifest_template, make_plan, make_reference_record, make_valid_records, make_version_capture, write_evidence
-from trigger_benchmark.evidence_format import document, mapping
+from trigger_benchmark.evidence_format import document, mapping, string
+from trigger_benchmark.execution import VersionCapture, execute_run
 from trigger_benchmark.models import RunPhase, RunShape
 from trigger_benchmark.runner import main as run_benchmark
 
 
 class SelectedWorkerContractTests(unittest.TestCase):
+    def test_execute_run_when_version_stdout_contains_lf_persists_exact_utf8_bytes_and_manifest_hashes(self) -> None:
+        plan = make_plan(RunPhase.CALIBRATION)
+        shape = RunShape(plan.options.phase, plan.variants, plan.prompts, plan.options.runs_per_query, plan.options.workers)
+        stdout = "1.18.9\n"
+        expected_stdout = stdout.encode("utf-8")
+
+        with tempfile.TemporaryDirectory(dir=BENCHMARK_ROOT) as temporary_directory:
+            output = Path(temporary_directory) / "evidence"
+            run_plan = replace(plan, options=replace(plan.options, output_directory=output))
+            with patch("trigger_benchmark.execution._observe_version", return_value=VersionCapture(("opencode", "--version"), 0, stdout, "")), patch("trigger_benchmark.execution._run_preflight", return_value=[]), patch("trigger_benchmark.execution.run_trials", return_value=make_valid_records(shape)):
+                self.assertEqual(execute_run(run_plan), 0)
+
+            manifest = document(output / "manifest.json")
+            environment = mapping(manifest.get("observed_environment"), "observed_environment")
+            version = mapping(environment.get("opencode"), "observed_environment.opencode")
+            stdout_path = output / string(version.get("stdout_path"), "version.stdout_path")
+
+            with self.subTest("version stdout bytes"):
+                self.assertEqual(stdout_path.read_bytes(), expected_stdout)
+            with self.subTest("version stdout hashes"):
+                self.assertEqual(string(version.get("stdout_sha256"), "version.stdout_sha256"), hash_file(stdout_path))
+
     def test_documented_fixed_base_and_targeted_commands_pass_the_selected_worker_option(self) -> None:
         readme = (BENCHMARK_ROOT / "README.md").read_text(encoding="utf-8")
         command_blocks = tuple(block.partition("```")[0] for block in readme.split("```powershell")[1:])

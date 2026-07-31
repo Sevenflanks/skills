@@ -214,8 +214,8 @@ def _preflight_incomplete(plan: RunExecutionPlan) -> JsonObject:
 def _persist_streams(output_directory: Path, streams: RawStreams) -> tuple[str, str]:
     stdout_path = output_directory / "logs" / f"{streams.prefix}{streams.stdout_suffix}"
     stderr_path = output_directory / "logs" / f"{streams.prefix}.stderr.txt"
-    stdout_path.write_text(streams.stdout, encoding="utf-8")
-    stderr_path.write_text(streams.stderr, encoding="utf-8")
+    stdout_path.write_text(streams.stdout, encoding="utf-8", newline="\n")
+    stderr_path.write_text(streams.stderr, encoding="utf-8", newline="\n")
     return str(stdout_path.relative_to(output_directory)).replace("\\", "/"), str(stderr_path.relative_to(output_directory)).replace("\\", "/")
 
 
