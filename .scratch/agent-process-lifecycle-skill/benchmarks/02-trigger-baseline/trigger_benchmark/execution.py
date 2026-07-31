@@ -5,8 +5,7 @@ import json
 import platform
 import shutil
 import subprocess
-import tempfile
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -14,9 +13,8 @@ from .aggregate import aggregate_trials, markdown_report
 from .completeness import check_matrix_completeness
 from .evidence import MANIFEST_CONTRACT, MANIFEST_SCHEMA_VERSION, EvidenceValidationError, source_hashes_for, validate_evidence
 from .evidence_format import JsonArray, JsonObject, json_array, json_object
-from .fixture import create_fixture
 from .models import Prompt, RunOptions, RunPhase, Specification, Variant
-from .preflight import PreflightEvidence, verify_candidate_discovery
+from .preflight_execution import PreflightFailure, run_preflight
 from .reference import ManifestParity, expected_reference_phase, reference_document, require_exact_parity, require_static_parity
 from .release_gate import GateOutcome, evaluate_base
 from .trials import TrialPlan, run_trials, write_records
@@ -81,7 +79,17 @@ def execute_run(plan: RunExecutionPlan) -> int:
     _prepare_output_directory(options.output_directory)
     _persist_version(options.output_directory, version)
     manifest["reference_manifest"] = reference.document
-    manifest["preflight"] = _run_preflight(options, plan.variants, command)
+    preflight = _run_preflight(options, plan.variants, command)
+    match preflight:
+        case PreflightFailure(evidence=evidence, reason=reason):
+            manifest["preflight"] = evidence
+            manifest["protocol_abort"] = json_object({"stage": "preflight", "reason": reason})
+            manifest["matrix_completeness"] = _preflight_incomplete(plan)
+            (options.output_directory / "incomplete.json").write_text(json.dumps(manifest["matrix_completeness"], indent=2) + "\n", encoding="utf-8")
+            _write_final_manifest(options.output_directory, manifest)
+            return 2
+        case list() as evidence:
+            manifest["preflight"] = evidence
     records = run_trials(TrialPlan(options, plan.variants, plan.prompts, command))
     write_records(options.output_directory, records)
     completeness = check_matrix_completeness(records, plan.variants, plan.prompts, options.runs_per_query)
@@ -194,31 +202,13 @@ def _validate_reference_parity(plan: RunExecutionPlan, static_manifest: JsonObje
     return ReferenceValidation(json_object(reference_document(reference_manifest, expected_phase, plan.benchmark_root)), reference_parity)
 
 
-def _run_preflight(options: RunOptions, variants: tuple[Variant, ...], command: str) -> JsonArray:
-    evidence: JsonArray = []
-    for variant in variants:
-        with tempfile.TemporaryDirectory(dir=options.output_directory / "fixtures", ignore_cleanup_errors=True) as temporary_directory:
-            capture = verify_candidate_discovery(command, create_fixture(Path(temporary_directory), variant), variant)
-            stdout_path, stderr_path = _persist_streams(options.output_directory, RawStreams(f"preflight-{variant.id}", capture.stdout, capture.stderr, ".stdout.txt"))
-            item = replace(capture.evidence, stdout_path=stdout_path, stderr_path=stderr_path)
-            evidence.append(_preflight_document(item))
-    return evidence
+def _run_preflight(options: RunOptions, variants: tuple[Variant, ...], command: str) -> JsonArray | PreflightFailure:
+    return run_preflight(options, variants, command)
 
 
-def _preflight_document(evidence: PreflightEvidence) -> JsonObject:
-    return json_object({
-        "variant_id": evidence.variant_id,
-        "fixture_id": evidence.fixture_id,
-        "command": json_array(evidence.command),
-        "return_code": evidence.return_code,
-        "stdout_sha256": evidence.stdout_sha256,
-        "stderr_sha256": evidence.stderr_sha256,
-        "fixture_candidate_count": evidence.fixture_candidate_count,
-        "candidate_name": evidence.candidate_name,
-        "candidate_location": evidence.candidate_location,
-        "stdout_path": evidence.stdout_path,
-        "stderr_path": evidence.stderr_path,
-    })
+def _preflight_incomplete(plan: RunExecutionPlan) -> JsonObject:
+    completeness = check_matrix_completeness([], plan.variants, plan.prompts, plan.options.runs_per_query)
+    return json_object({"expected_cells": completeness.expected_cells, "missing_cells": json_array(completeness.missing_cells), "duplicate_valid_cells": json_array(completeness.duplicate_valid_cells)})
 
 
 def _persist_streams(output_directory: Path, streams: RawStreams) -> tuple[str, str]:

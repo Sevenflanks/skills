@@ -83,6 +83,8 @@ def _validate_evidence(evidence_root: Path, context: _ValidationContext, *, requ
     if _hash_mapping(manifest.get("source_hashes"), "source_hashes") != source_hashes_for(context.benchmark_root, context.specification):
         raise EvidenceValidationError("manifest source hashes do not match the executable benchmark")
     _validate_artifacts(root, _hash_mapping(manifest.get("artifact_hashes"), "artifact_hashes"))
+    if manifest.get("protocol_abort") is not None:
+        raise EvidenceValidationError("preflight protocol abort cannot become release-gate evidence")
     environment = _mapping(manifest.get("observed_environment"), "observed_environment")
     opencode = _mapping(environment.get("opencode"), "observed_environment.opencode")
     if _integer(opencode.get("return_code"), "observed_environment.opencode.return_code") != 0 or not _string(opencode.get("raw_output"), "observed_environment.opencode.raw_output").strip():
