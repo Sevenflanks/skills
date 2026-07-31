@@ -1,1 +1,2 @@
 skills/**/SKILL.md text eol=lf
+.scratch/agent-process-lifecycle-skill/benchmarks/02-trigger-baseline/results/** -text
