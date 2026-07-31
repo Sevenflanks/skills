@@ -2,13 +2,17 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Final
 
 from .models import Variant
 
 
 PERMISSION_POLICY: Final = {"*": "deny", "skill": "allow"}
+
+
+class FixtureIdentifierError(Exception):
+    """Raised when retained evidence names more than one fixture directory."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,6 +36,15 @@ def create_fixture(project_directory: Path, variant: Variant) -> Fixture:
 
 def fixture_skill_files(project_directory: Path) -> list[Path]:
     return sorted((project_directory / ".opencode" / "skills").glob("*/SKILL.md"))
+
+
+def validate_fixture_id(value: str) -> str:
+    """Accept only one cross-platform-safe basename for an evidence fixture."""
+    path = Path(value)
+    windows_path = PureWindowsPath(value)
+    if not value or value in {".", ".."} or "/" in value or "\\" in value or path.is_absolute() or path.name != value or path.anchor or windows_path.is_absolute() or windows_path.drive:
+        raise FixtureIdentifierError("fixture identifier must be one safe basename")
+    return value
 
 
 def _skill_document(variant: Variant) -> str:
