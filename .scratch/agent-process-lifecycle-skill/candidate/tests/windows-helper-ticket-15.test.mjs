@@ -128,6 +128,35 @@ async function createInstrumentedHelper(directory, marker, injection) {
   return instrumentedHelper;
 }
 
+async function createArtifactValidationFailureHelper(directory, validationInjection) {
+  const source = await readFile(helperPath, "utf8");
+  const inject = (currentSource, marker, injection) => {
+    const needle = `# TEST-INJECTION: ${marker}`;
+    assert.ok(currentSource.includes(needle), `missing Ticket 15 injection marker: ${marker}`);
+    const markerPattern = new RegExp(
+      `${needle.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")}(?=\\r?\\n)`,
+      "u",
+    );
+    return currentSource.replace(markerPattern, injection);
+  };
+  const artifactLeaf = ".run-record.json.0123456789abcdef0123456789abcdef.tmp";
+  const publicationFailure = `$directory = [IO.Path]::GetDirectoryName($recordPathForFinalize)
+$artifact = Join-Path $directory '${artifactLeaf}'
+Write-ProtectedJsonFile -Record @{ artifact = 'ticket-15-validation' } -Path $artifact
+$failure = [InvalidOperationException]::new("Ticket 15 injected Preserve publication failure at $recordPathForFinalize")
+$failure.Data['AgentProcessLifecycle.ArtifactPaths'] = @($artifact)
+throw $failure`;
+  const instrumentedSource = inject(
+    inject(source, "preserve-record-publication", publicationFailure),
+    "finalize-publication-artifact-validation",
+    validationInjection,
+  );
+  const instrumentedHelper = join(directory, "Invoke-AgentProcessLifecycle.validation-failure.ps1");
+  await writeFile(instrumentedHelper, instrumentedSource, "utf8");
+  await writeFile(join(directory, "JobHandleHolder.ps1"), await readFile(holderPath, "utf8"), "utf8");
+  return { artifactLeaf, instrumentedHelper };
+}
+
 async function launchFixture({
   requestedDisposition = "Preserve",
   requestedLaterOwner = "ticket-15-later-owner",
@@ -1058,6 +1087,93 @@ $result | ConvertTo-Json -Depth 12 -Compress
       }
     }
   });
+});
+
+test("Preserve artifact validation failures retain truthful live authority", async (t) => {
+  const scenarios = [
+    {
+      name: "unprotected replacement",
+      validationInjection: "$artifact = [string]$candidates[0]; [IO.File]::Delete($artifact); [IO.File]::WriteAllText($artifact, 'unprotected')",
+      validationReason: /The record ACL is not protected for the current user\./u,
+    },
+    {
+      name: "reparse replacement",
+      validationInjection: "$artifact = [string]$candidates[0]; $target = Join-Path ([IO.Path]::GetDirectoryName($artifact)) 'validation-reparse-target'; [IO.Directory]::CreateDirectory($target) | Out-Null; [IO.File]::Delete($artifact); New-Item -ItemType Junction -Path $artifact -Target $target | Out-Null",
+      validationReason: /Publication artifact is not a file/u,
+    },
+    {
+      name: "validation-time disappearance",
+      validationInjection: "[IO.File]::Delete([string]$candidates[0])",
+      validationReason: /Publication artifact is not a file/u,
+    },
+  ];
+
+  for (const scenario of scenarios) {
+    await t.test(scenario.name, async () => {
+      let fixture;
+      let artifactPath;
+      try {
+        fixture = await launchPreserveFixture();
+        const { launch, paths } = fixture;
+        const before = await readFile(paths.record, "utf8");
+        const { artifactLeaf, instrumentedHelper } = await createArtifactValidationFailureHelper(
+          paths.directory,
+          scenario.validationInjection,
+        );
+        artifactPath = join(paths.directory, artifactLeaf);
+        const finalize = join(paths.directory, "preserve-artifact-validation-failure.ps1");
+        await writeFile(
+          finalize,
+          `$result = & ${powerShellLiteral(instrumentedHelper)} -Action Finalize -RecordPath ${powerShellLiteral(paths.record)} -Disposition Preserve -LaterOwner 'ticket-15-later-owner'
+$result | ConvertTo-Json -Depth 12 -Compress
+`,
+          "utf8",
+        );
+
+        const failed = await runPowerShell(finalize);
+
+        assertLifecycleNonGuarantees(failed, `${scenario.name} reports only accepted lifecycle limits`);
+        assert.equal(failed.requested_disposition, "Preserve");
+        assert.equal(failed.lifecycle_result.status, "unresolved");
+        assert.equal(failed.lifecycle_result.operation, "preserve");
+        assert.equal(failed.lifecycle_result.failure_kind, "record-publication");
+        assert.deepEqual(failed.lifecycle_result.cleanup, {
+          attempted: false,
+          status: "not-attempted",
+          result: "workload-retained",
+        });
+        assert.match(failed.lifecycle_result.error, /Ticket 15 injected Preserve publication failure/u);
+        assert.match(failed.lifecycle_result.error, scenario.validationReason);
+        assert.equal(failed.lifecycle_result.error.includes(paths.directory), false, "error redacts fixture paths");
+        assert.equal(failed.lifecycle_result.error.includes(artifactPath), false, "error redacts artifact paths outside evidence");
+        assert.equal(failed.final_disposition.requested, "Preserve");
+        assert.equal(failed.final_disposition.status, "unresolved");
+        assert.equal(failed.evidence.authority_verified, true);
+        assert.equal(failed.evidence.handoff_published, false);
+        assert.equal(failed.evidence.publication_outcome, "unknown");
+        assert.deepEqual(failed.evidence.publication_artifacts, [artifactPath]);
+        assert.equal(failed.evidence.graceful_action_invocations, 0);
+        assert.equal(failed.evidence.termination_attempted, false);
+        assert.equal(failed.evidence.forced_termination_used, false);
+        assert.equal("stop_method" in failed, false);
+        assert.equal("owned_tree_empty" in failed.evidence, false);
+        assert.equal("root_process_absent" in failed.evidence, false);
+        assert.equal("job_holder_absent" in failed.evidence, false);
+        assert.equal("named_job_absent" in failed.evidence, false);
+        assert.equal(isAlive(launch.binding.root_process_id), true, "Preserve keeps the root live");
+        assert.equal(isAlive(launch.binding.holder_identity.process_id), true, "Preserve keeps the holder live");
+        assert.equal(await namedJobExists(launch.binding.job_name), true, "Preserve keeps the Job live");
+        assert.equal(await pathExists(paths.record), true, "Preserve keeps the record live");
+        assert.equal(await readFile(paths.record, "utf8"), before, "failed publication does not invent a handoff record");
+      } finally {
+        if (fixture) {
+          await rm(artifactPath, { force: true, maxRetries: 10, recursive: true, retryDelay: 50 });
+          await rm(join(fixture.paths.directory, "validation-reparse-target"), { force: true, maxRetries: 10, recursive: true, retryDelay: 50 });
+        }
+        await cleanupFixture(fixture);
+      }
+    });
+  }
 });
 
 test("later Stop refuses an unprotected exact-name publication artifact with unresolved evidence", async () => {

@@ -655,6 +655,7 @@ function Get-StrictRecordPublicationArtifacts {
     foreach ($item in @(Get-ChildItem -LiteralPath $recordDirectory -Force -File)) {
         if (Test-StrictRecordPublicationArtifactName -RecordLeaf $recordLeaf -Name $item.Name) { $candidates.Add($item.FullName) }
     }
+    # TEST-INJECTION: finalize-publication-artifact-validation
     foreach ($candidate in $candidates) {
         try {
             $artifacts.Add((Assert-StrictRecordPublicationArtifactPath -RecordPath $recordFullPath -ArtifactPath $candidate)) | Out-Null
@@ -2176,9 +2177,22 @@ function Invoke-Finalize {
                 Write-Record -Record $record -DestinationPath $recordPathForFinalize
             }
             catch {
-                $publicationArtifacts = @(Get-FinalizePublicationArtifacts -RecordPath $recordPathForFinalize -Exception $_.Exception)
+                $publicationException = $_.Exception
+                try {
+                    $publicationArtifacts = @(Get-FinalizePublicationArtifacts -RecordPath $recordPathForFinalize -Exception $publicationException)
+                }
+                catch {
+                    # 已驗證的 Preserve authority 不可落入 Stop 結果建構，以免虛構未執行的 cleanup 事實。
+                    $artifactValidationException = $_.Exception
+                    $publicationArtifacts = @(Get-FinalizeArtifactPathsFromException -Exception $artifactValidationException)
+                    $absolutePathPattern = '(?i)(?:[a-z]:[\\/]|[\\/]{2})[^:\r\n]*'
+                    $publicationErrorMessage = $publicationException.Message -replace $absolutePathPattern, '<path>'
+                    $validationErrorMessage = $artifactValidationException.Message -replace $absolutePathPattern, '<path>'
+                    $errorMessage = "$publicationErrorMessage Artifact validation: $validationErrorMessage"
+                    return New-FinalizePreservePublicationFailureResult -RecordPath $recordPathForFinalize -Record $record -PublicationOutcome 'unknown' -ArtifactPaths $publicationArtifacts -ErrorMessage $errorMessage
+                }
                 $publicationOutcome = Get-FinalizePreservePublicationOutcome -RecordPath $recordPathForFinalize -OriginalBytes $recordBytes -ExpectedLaterOwner $LaterOwner -ArtifactPaths $publicationArtifacts
-                return New-FinalizePreservePublicationFailureResult -RecordPath $recordPathForFinalize -Record $record -PublicationOutcome $publicationOutcome -ArtifactPaths $publicationArtifacts -ErrorMessage $_.Exception.Message
+                return New-FinalizePreservePublicationFailureResult -RecordPath $recordPathForFinalize -Record $record -PublicationOutcome $publicationOutcome -ArtifactPaths $publicationArtifacts -ErrorMessage $publicationException.Message
             }
 
             return [ordered]@{
