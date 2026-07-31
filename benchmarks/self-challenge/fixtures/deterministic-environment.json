@@ -1,0 +1,25 @@
+{
+  "schema_version": "self-challenge-environment.v1",
+  "model": "deterministic-fixture-adapter-v1",
+  "runtime": {
+    "name": "node",
+    "version": "20.18.0"
+  },
+  "skill_catalog": [
+    { "name": "code-intent-comments", "version": "0.1.0" },
+    { "name": "daily-work-log", "version": "0.1.4" },
+    { "name": "gh-body-file", "version": "0.1.1" },
+    { "name": "playwright-server-lifecycle", "version": "0.1.1" }
+  ],
+  "sampling_settings": {
+    "seed": 0,
+    "temperature": 0,
+    "top_p": 1
+  },
+  "tool_availability": [
+    { "name": "file-read", "available": true },
+    { "name": "file-write", "available": false },
+    { "name": "shell", "available": true },
+    { "name": "subagent", "available": true }
+  ]
+}

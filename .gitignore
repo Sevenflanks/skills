@@ -8,3 +8,5 @@ build/
 .env
 .env.*
 !.env.example
+/.benchmark-artifacts/
+/benchmarks/self-challenge/scenarios/true-held-out/
