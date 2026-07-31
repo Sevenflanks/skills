@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from pathlib import Path, PureWindowsPath
 from typing import Final
@@ -9,6 +10,7 @@ from .models import Variant
 
 
 PERMISSION_POLICY: Final = {"*": "deny", "skill": "allow"}
+_REMOVED_ENVIRONMENT_KEYS: Final = ("OPENCODE_CONFIG", "OPENCODE_CONFIG_CONTENT", "OPENCODE_CONFIG_DIR", "OPENCODE_PERMISSION", "OPENCODE_DISABLE_PROJECT_CONFIG")
 
 
 class FixtureIdentifierError(Exception):
@@ -32,6 +34,17 @@ def create_fixture(project_directory: Path, variant: Variant) -> Fixture:
     if files != [skill_file]:
         raise RuntimeError("fixture contains an unexpected candidate skill")
     return Fixture(project_directory, skill_file, PERMISSION_POLICY)
+
+
+def fixture_environment(project_directory: Path) -> dict[str, str]:
+    environment = dict(os.environ)
+    for key in _REMOVED_ENVIRONMENT_KEYS:
+        environment.pop(key, None)
+    fixture_home = str(project_directory.resolve())
+    environment["XDG_CONFIG_HOME"] = fixture_home
+    environment["OPENCODE_TEST_HOME"] = fixture_home
+    environment["OPENCODE_DISABLE_EXTERNAL_SKILLS"] = "1"
+    return environment
 
 
 def fixture_skill_files(project_directory: Path) -> list[Path]:
