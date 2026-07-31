@@ -7,7 +7,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TypeAlias
 
-from .fixture import Fixture, FixtureIdentifierError, validate_fixture_id
+from .fixture import Fixture, FixtureIdentifierError, fixture_environment, validate_fixture_id
 from .evidence_format import EvidenceValidationError, integer, objects, string, strings
 from .models import RunShape, Specification, Variant
 
@@ -85,7 +85,7 @@ class _RetainedCandidateEvidence:
 
 def verify_candidate_discovery(command: str, fixture: Fixture, variant: Variant) -> PreflightCapture:
     """Verify that pure-mode skill discovery exposes this fixture candidate exactly once."""
-    completed = subprocess.run([command, "debug", "skill", "--pure"], cwd=fixture.project_directory, capture_output=True, text=True, check=False, timeout=30)
+    completed = subprocess.run([command, "debug", "skill", "--pure"], cwd=fixture.project_directory, capture_output=True, text=True, check=False, timeout=30, env=fixture_environment(fixture.project_directory))
     expected = FixtureCandidate(variant.skill_name, variant.description, fixture.skill_file.resolve())
     evidence = PreflightEvidence(variant.id, validate_fixture_id(fixture.project_directory.name), (command, "debug", "skill", "--pure"), completed.returncode, _hash(completed.stdout), _hash(completed.stderr), 0, "", "")
     if completed.returncode != 0:
