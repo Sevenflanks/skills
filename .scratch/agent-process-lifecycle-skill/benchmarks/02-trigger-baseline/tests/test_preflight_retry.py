@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import sys
 import tempfile
@@ -13,15 +14,46 @@ BENCHMARK_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BENCHMARK_ROOT))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from evidence_fixtures import make_plan, make_valid_records, make_version_capture
+from evidence_fixtures import hash_file, make_plan, make_valid_records, make_version_capture
 from trigger_benchmark.evidence import EvidenceValidationError, validate_calibration_evidence, validate_evidence
 from trigger_benchmark.evidence_format import JsonObject, document, hash_mapping, integer, mapping, objects, string, strings
 from trigger_benchmark.execution import RunExecutionPlan, execute_run
 from trigger_benchmark.models import RunPhase, RunShape
-from trigger_benchmark.preflight import validate_preflight_evidence
+from trigger_benchmark.preflight import PreflightCapture, PreflightEvidence, validate_preflight_evidence
+from trigger_benchmark.preflight_execution import PreflightFailure, run_preflight
 
 
 class PreflightRetryTests(unittest.TestCase):
+    def test_run_preflight_when_streams_contain_lf_persists_exact_utf8_bytes_and_evidence_hashes(self) -> None:
+        plan = _calibration_plan()
+        variant = plan.variants[0]
+        stdout = "preflight stdout\n"
+        stderr = "preflight stderr\n"
+        capture = PreflightCapture(
+            PreflightEvidence(variant.id, "fixture", ("opencode", "debug", "skill", "--pure"), 0, hashlib.sha256(stdout.encode("utf-8")).hexdigest(), hashlib.sha256(stderr.encode("utf-8")).hexdigest(), 1, variant.skill_name, ""),
+            stdout,
+            stderr,
+        )
+
+        with tempfile.TemporaryDirectory(dir=BENCHMARK_ROOT) as temporary_directory:
+            output = Path(temporary_directory) / "evidence"
+            (output / "logs").mkdir(parents=True)
+            (output / "fixtures").mkdir()
+            options = replace(plan.options, output_directory=output)
+            with patch("trigger_benchmark.preflight_execution.verify_candidate_discovery", return_value=capture):
+                match run_preflight(options, (variant,), "opencode"):
+                    case list() as evidence:
+                        entry = mapping(evidence[0], "preflight")
+                    case PreflightFailure(reason=reason):
+                        self.fail(f"expected successful preflight evidence, received failure: {reason}")
+
+            for stream, expected in (("stdout", stdout), ("stderr", stderr)):
+                path = output / string(entry.get(f"{stream}_path"), f"preflight.{stream}_path")
+                with self.subTest(stream=stream, assertion="bytes"):
+                    self.assertEqual(path.read_bytes(), expected.encode("utf-8"))
+                with self.subTest(stream=stream, assertion="hash"):
+                    self.assertEqual(string(entry.get(f"{stream}_sha256"), f"preflight.{stream}_sha256"), hash_file(path))
+
     def test_preflight_when_first_omission_then_second_success_retains_verified_attempts(self) -> None:
         plan = _calibration_plan()
         shape = RunShape(plan.options.phase, plan.variants, plan.prompts, plan.options.runs_per_query, plan.options.workers)
