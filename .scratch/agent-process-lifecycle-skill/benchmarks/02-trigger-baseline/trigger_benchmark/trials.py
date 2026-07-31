@@ -89,8 +89,8 @@ def _persist_stream(output_directory: Path, stream: StreamOutput) -> TrialRecord
     prefix = f"{record.variant_id}__{record.prompt_id}__run-{record.logical_run}__attempt-{record.attempt}"
     stdout_path = output_directory / "logs" / f"{prefix}.stdout.ndjson"
     stderr_path = output_directory / "logs" / f"{prefix}.stderr.txt"
-    stdout_path.write_text(stream.stdout, encoding="utf-8")
-    stderr_path.write_text(stream.stderr, encoding="utf-8")
+    stdout_path.write_text(stream.stdout, encoding="utf-8", newline="\n")
+    stderr_path.write_text(stream.stderr, encoding="utf-8", newline="\n")
     return replace(record, stdout_path=str(stdout_path.relative_to(output_directory)).replace("\\", "/"), stderr_path=str(stderr_path.relative_to(output_directory)).replace("\\", "/"), stdout_sha256=_sha256(stdout_path), stderr_sha256=_sha256(stderr_path))
 
 

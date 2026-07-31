@@ -17,6 +17,27 @@ from trigger_benchmark.trials import TrialPlan, run_trials
 
 
 class TrialObservationTests(unittest.TestCase):
+    def test_run_trials_when_streams_contain_lf_persists_exact_utf8_bytes(self) -> None:
+        specification = load_specification(BENCHMARK_ROOT)
+        candidate = specification.variants[1]
+        prompt = next(item for item in specification.prompts if item.id == "ide-owned-service")
+        stdout = '{"type":"step_finish","part":{"type":"step-finish"}}\n'
+        stderr = "trial stderr\n"
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            output = Path(temporary_directory) / "evidence"
+            (output / "logs").mkdir(parents=True)
+            (output / "fixtures").mkdir()
+            options = RunOptions(RunPhase.EXPLORATORY, 1, 1, 1.0, 0, 1, output, "test-model", (), (), None)
+            plan = TrialPlan(options, (candidate,), (prompt,), "opencode")
+            with patch("trigger_benchmark.trials.subprocess.run", return_value=subprocess.CompletedProcess(("opencode", "run"), 0, stdout, stderr)):
+                record, = run_trials(plan)
+
+            with self.subTest("stdout bytes"):
+                self.assertEqual((output / record.stdout_path).read_bytes(), stdout.encode("utf-8"))
+            with self.subTest("stderr bytes"):
+                self.assertEqual((output / record.stderr_path).read_bytes(), stderr.encode("utf-8"))
+
     def test_timeout_when_candidate_and_non_skill_tool_appear_in_raw_stdout_preserves_observation(self) -> None:
         specification = load_specification(BENCHMARK_ROOT)
         candidate = specification.variants[1]
