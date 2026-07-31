@@ -73,6 +73,12 @@ def mapping(value: JsonValue | None, location: str) -> dict[str, JsonValue]:
     return value
 
 
+def objects(value: JsonValue | None, location: str) -> list[dict[str, JsonValue]]:
+    if not isinstance(value, list):
+        raise EvidenceValidationError(f"{location} must be a list of objects")
+    return [mapping(item, location) for item in value]
+
+
 def hash_mapping(value: JsonValue | None, location: str) -> dict[str, str]:
     return {key: string(item, location) for key, item in mapping(value, location).items()}
 
