@@ -107,7 +107,13 @@ def _fixture_candidates(stdout: str, fixture_skill_root: Path) -> list[FixtureCa
         if not isinstance(entry, dict):
             continue
         location = entry.get("location")
-        if isinstance(location, str) and _normalized_location(location).is_relative_to(fixture_root):
+        if not isinstance(location, str):
+            continue
+        try:
+            normalized_location = _normalized_location(location)
+        except PreflightValidationError:
+            continue
+        if normalized_location.is_relative_to(fixture_root):
             candidates.append(_candidate(entry))
     return candidates
 
