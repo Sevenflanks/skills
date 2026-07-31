@@ -35,7 +35,7 @@
   ".scratch/agent-process-lifecycle-skill/candidate/agent-process-lifecycle/references/windows-self-managed.md": "85a8f953331297c4494c55e082a7e173490f5c3ca2f155e6971cf3b9f686b201",
   ".scratch/agent-process-lifecycle-skill/candidate/agent-process-lifecycle/references/failure-and-handoff.md": "d9ab32a4a6850a4fc21ee9b37e282ae0c0e718efe833704942532331335de44d",
   ".scratch/agent-process-lifecycle-skill/candidate/agent-process-lifecycle/evals/evals.json": "06e6d69a2443ef9abcc6faba6f47d9d5e4a88df6ad22040f7b30f652976124e0",
-  ".scratch/agent-process-lifecycle-skill/candidate/tests/run_candidate_smoke.py": "d00ffb84ceefc705d754075ef678bbf1f135612cacadeb5404e1a9cd2bd88c7f",
+  ".scratch/agent-process-lifecycle-skill/candidate/tests/run_candidate_smoke.py": "c1523dab1a61851ffb33a10e4a30b5b63a35ccb30d76097003b98c142e9f09d8",
   ".scratch/agent-process-lifecycle-skill/candidate/tests/model_visible_execution.py": "0eb17495d6f7ffb3ed29f8f3bfe7ff2a89129de56214e508ac68a9fcf5b38d6f",
   ".scratch/agent-process-lifecycle-skill/candidate/tests/model_visible_contract.py": "0c097b6366b6330aa6ad2fbff525d3afb593557c84a162c1e62ad08209559ced",
   ".scratch/agent-process-lifecycle-skill/candidate/tests/model_visible_json.py": "64bfae3d6f4713e8fd55d7dc3ca021bb2eaee14a22f4c1db4b4045abc355a5de",
