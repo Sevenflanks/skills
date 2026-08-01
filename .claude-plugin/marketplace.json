@@ -47,23 +47,22 @@
       ]
     },
     {
-      "name": "playwright-server-lifecycle",
-      "source": "skills/playwright-server-lifecycle",
-      "description": "管理 Playwright / browser 本機 listener 與 temporary HTTP servers 的分類、process ownership tree、completed / passed 分離、失敗安全 cleanup、port release 與 callback。",
-      "version": "0.1.1",
+      "name": "agent-process-lifecycle",
+      "source": "skills/agent-process-lifecycle",
+      "description": "管理 Agent 啟動之本機 OS process 的 ownership、execution tier、readiness、Stop、Preserve、handoff 與 reconciliation；Windows 提供 self-managed helper，non-Windows 僅分類、handoff 或 launch 前 blocked。",
+      "version": "1.0.0",
       "keywords": [
-        "playwright",
-        "browser",
-        "dev-server",
+        "agent",
+        "process-lifecycle",
+        "ownership",
         "powershell",
         "windows",
         "opencode",
+        "readiness",
         "cleanup",
-        "listener",
-        "process-ownership",
-        "recovery",
-        "temporary-http-server",
-        "callback"
+        "preserve",
+        "handoff",
+        "reconciliation"
       ]
     }
   ]

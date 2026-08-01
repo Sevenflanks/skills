@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readFile, readdir } from "node:fs/promises";
+import { lstat, readFile, readdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import test from "node:test";
 
@@ -17,6 +17,39 @@ const gateRoot = resolve(benchmarkRoot, "results/ticket-17-release-gate-20260731
 const helperPath = resolve(candidateRoot, "windows-helper/Invoke-AgentProcessLifecycle.ps1");
 const holderPath = resolve(candidateRoot, "windows-helper/JobHandleHolder.ps1");
 const archivedCandidateCommit = "e5d26484b731424d47841440fb658c6a1bda5450";
+const publicationBaseCommit = "de659ccd4fd2535f39a7f9ed07e8e82ae5c075be";
+const publishedSkillRoot = resolve(repositoryRoot, "skills/agent-process-lifecycle");
+const oldPublishedSkillRoot = resolve(repositoryRoot, "skills/playwright-server-lifecycle");
+const publishedSkillPath = resolve(publishedSkillRoot, "SKILL.md");
+const publishedReadmePath = resolve(publishedSkillRoot, "README.md");
+const publishedArtifactPaths = {
+  "README.md": publishedReadmePath,
+  "evals/evals.json": resolve(publishedSkillRoot, "evals/evals.json"),
+  "references/failure-and-handoff.md": resolve(publishedSkillRoot, "references/failure-and-handoff.md"),
+  "references/windows-self-managed.md": resolve(publishedSkillRoot, "references/windows-self-managed.md"),
+  "scripts/Invoke-AgentProcessLifecycle.ps1": resolve(publishedSkillRoot, "scripts/Invoke-AgentProcessLifecycle.ps1"),
+  "scripts/JobHandleHolder.ps1": resolve(publishedSkillRoot, "scripts/JobHandleHolder.ps1"),
+};
+const candidateArtifactPaths = {
+  "README.md": candidateReadmePath,
+  "evals/evals.json": resolve(candidateRoot, "agent-process-lifecycle/evals/evals.json"),
+  "references/failure-and-handoff.md": resolve(candidateRoot, "agent-process-lifecycle/references/failure-and-handoff.md"),
+  "references/windows-self-managed.md": resolve(candidateRoot, "agent-process-lifecycle/references/windows-self-managed.md"),
+  "scripts/Invoke-AgentProcessLifecycle.ps1": helperPath,
+  "scripts/JobHandleHolder.ps1": holderPath,
+};
+const expectedPublishedArtifacts = [
+  "README.md",
+  "SKILL.md",
+  "evals/evals.json",
+  "references/failure-and-handoff.md",
+  "references/windows-self-managed.md",
+  "scripts/Invoke-AgentProcessLifecycle.ps1",
+  "scripts/JobHandleHolder.ps1",
+];
+const publishedDescription = "Use when lifecycle-decision routing is needed for an Agent-caused local OS process: a foreground local command may hang or outlive the initiating tool call, a lingering, zombie, or unclear-owner local process needs cleanup or reconciliation, or the task explicitly requests a lifecycle decision for an Agent-started or managed current-run binding. On Windows, select the first viable execution tier and handle readiness, Stop, Preserve, handoff, or reconciliation. On non-Windows, classify an Agent-caused local process only to hand off or block before launch; do not perform lifecycle execution. Do not use for a command that remains synchronous until normal exit, regardless of duration. Do not load this skill merely to classify, Preserve, observe, check status, or use a resource when the prompt already identifies a framework, IDE, Kubernetes, Docker, Windows Service, CI, or other external or runtime owner and states its complete lifecycle contract; follow that owner's contract directly.";
+const catalogSummary = "管理 Agent 啟動之本機 OS process 的 ownership、execution tier、readiness、Stop、Preserve、handoff 與 reconciliation；Windows 提供 self-managed helper，non-Windows 僅分類、handoff 或 launch 前 blocked。";
+const catalogTags = ["agent", "process-lifecycle", "ownership", "powershell", "windows", "opencode", "readiness", "cleanup", "preserve", "handoff", "reconciliation"];
 
 function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
@@ -41,7 +74,8 @@ function reconstructSingleLfLine(document, lineNumber) {
 
 function frontmatterValue(document, key) {
   const frontmatter = document.match(/^---\r?\n([\s\S]*?)\r?\n---/u)?.[1] ?? "";
-  return frontmatter.match(new RegExp(`^${key}: (.+?)\r?$`, "mu"))?.[1];
+  const line = key.includes(".") ? `\\s{2}${key.split(".").at(-1)}` : key;
+  return frontmatter.match(new RegExp(`^${line}: (.+?)\\r?$`, "mu"))?.[1];
 }
 
 function descriptionLine(description) {
@@ -56,8 +90,51 @@ async function hashFile(path) {
   return sha256(await readFile(path));
 }
 
+async function exists(path) {
+  try {
+    await lstat(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function listRelativeFiles(root, relativePath = "") {
+  const entries = await readdir(resolve(root, relativePath), { withFileTypes: true });
+  const files = [];
+  for (const entry of entries) {
+    const entryRelativePath = relativePath ? `${relativePath}/${entry.name}` : entry.name;
+    if (entry.isDirectory()) {
+      files.push(...await listRelativeFiles(root, entryRelativePath));
+    } else if (entry.isFile()) {
+      files.push(entryRelativePath);
+    } else {
+      assert.fail(`published inventory contains unsupported entry: ${entryRelativePath}`);
+    }
+  }
+  return files.sort();
+}
+
+function productionSkillFromCandidate(candidateDocument) {
+  return normalizeLineEndings(candidateDocument)
+    .replace("disable-model-invocation: true\n", "")
+    .replace("version: 1.0.0-candidate.10", "version: 1.0.0")
+    .replace("# Agent Process Lifecycle Candidate", "# Agent Process Lifecycle")
+    .replace("This is a scratch-only, manually invoked candidate for ticket 16. It is not a\npublished skill, production helper, alias, compatibility path, or release\ncandidate. Do not add it to a catalog, marketplace, published skill directory,\nor automatic model-invocation inventory.\n\n", "")
+    .replace("## Candidate Test Entry\n\nUse this entry only after a maintainer explicitly loads\n`agent-process-lifecycle` for a supplied lifecycle scenario. Apply the ordered\nflow below and return one concise, machine-readable lifecycle decision. A\nrestricted evaluation fixture may prohibit execution tools; in that fixture,\nreturn the selected lifecycle plan and its public facts rather than attempting\nan unavailable operation.\n\n", "## Lifecycle Decision Contract\n\nApply the ordered flow below to lifecycle decisions for Agent-caused local OS\nprocesses. Return concise machine-readable lifecycle facts where practical, and\nkeep the lifecycle result separate from the caller-owned downstream result.\n\n")
+    .replace(" A restricted model-visible fixture plans\nrather than performs lifecycle work, so `planned` is its valid final status.\n", "\n");
+}
+
 function archivedCandidateSkill() {
   return execFileSync("git", ["show", `${archivedCandidateCommit}:${candidateRelativePath}`], {
+    cwd: repositoryRoot,
+    encoding: "utf8",
+    env: { ...process.env, GIT_MASTER: "1" },
+  });
+}
+
+function publicationBaseCurrentSkill() {
+  return execFileSync("git", ["show", `${publicationBaseCommit}:skills/playwright-server-lifecycle/SKILL.md`], {
     cwd: repositoryRoot,
     encoding: "utf8",
     env: { ...process.env, GIT_MASTER: "1" },
@@ -187,7 +264,10 @@ test("Ticket 18 preflight validates Ticket 17, Windows acceptance, and structura
   for (const relativePath of gateBoundSources) {
     const expectedHash = finalDecision.source_hashes[relativePath];
     const sourcePath = routingSourcePath(relativePath);
-    assert.equal(await hashFile(sourcePath), expectedHash, relativePath);
+    const actualHash = relativePath === "variants/current/SKILL.md"
+      ? sha256(publicationBaseCurrentSkill())
+      : await hashFile(sourcePath);
+    assert.equal(actualHash, expectedHash, relativePath);
   }
   // This reconstructs only Git checkout line endings, not a semantic evidence exception.
   assert.equal(sha256(reconstructSingleLfLine(benchmarkSpec, 9)), finalDecision.source_hashes["trigger_benchmark/spec.py"]);
@@ -270,4 +350,69 @@ test("Ticket 18 preflight validates Ticket 17, Windows acceptance, and structura
   for (const artifact of expectedArtifacts) {
     assert.match(fileSection, new RegExp(`\\[${artifact.replaceAll("/", "\\/")}\\]\\(${artifact.replaceAll("/", "\\/")}\\)`, "u"));
   }
+});
+
+test("Ticket 18 publishes one complete agent-process-lifecycle inventory", async () => {
+  const [candidateDocument, productionDocument, catalog, marketplace, rootReadme, publishedFiles] = await Promise.all([
+    readFile(candidatePath, "utf8"),
+    readFile(publishedSkillPath, "utf8"),
+    readJson(resolve(repositoryRoot, "skills.json")),
+    readJson(resolve(repositoryRoot, ".claude-plugin/marketplace.json")),
+    readFile(resolve(repositoryRoot, "README.md"), "utf8"),
+    listRelativeFiles(publishedSkillRoot),
+  ]);
+
+  assert.equal(await exists(oldPublishedSkillRoot), false, "old published skill directory must be absent");
+  assert.deepEqual(publishedFiles, expectedPublishedArtifacts);
+  assert.deepEqual((await readdir(resolve(publishedSkillRoot, "references"))).sort(), ["failure-and-handoff.md", "windows-self-managed.md"]);
+  assert.deepEqual((await readdir(resolve(publishedSkillRoot, "scripts"))).sort(), ["Invoke-AgentProcessLifecycle.ps1", "JobHandleHolder.ps1"]);
+
+  for (const artifact of Object.keys(candidateArtifactPaths)) {
+    assert.equal(await hashFile(publishedArtifactPaths[artifact]), await hashFile(candidateArtifactPaths[artifact]), `${artifact} must be byte-identical to its candidate source`);
+  }
+  assert.equal(normalizeLineEndings(productionDocument), productionSkillFromCandidate(candidateDocument));
+  assert.equal(frontmatterValue(productionDocument, "name"), "agent-process-lifecycle");
+  assert.equal(frontmatterValue(productionDocument, "description"), publishedDescription);
+  assert.equal(frontmatterValue(productionDocument, "license"), "MIT");
+  assert.equal(frontmatterValue(productionDocument, "metadata.author"), "sevenflankse");
+  assert.equal(frontmatterValue(productionDocument, "metadata.version"), "1.0.0");
+  assert.doesNotMatch(productionDocument, /^disable-model-invocation:/mu);
+  assert.doesNotMatch(productionDocument, /\b(?:alias|stub|deprecated(?:\s+shell)?|compatibility\s+(?:shell|path)|dual publication)\b/iu);
+  for (const forbiddenText of ["scratch-only", "Candidate Test Entry", "restricted model-visible fixture", "candidate"]) {
+    assert.doesNotMatch(productionDocument, new RegExp(forbiddenText, "iu"));
+  }
+
+  const expectedCatalogEntry = {
+    name: "agent-process-lifecycle",
+    path: "skills/agent-process-lifecycle",
+    summary: catalogSummary,
+    version: "1.0.0",
+    license: "MIT",
+    author: "sevenflankse",
+    tags: catalogTags,
+    status: "stable",
+  };
+  const expectedMarketplaceEntry = {
+    name: "agent-process-lifecycle",
+    source: "skills/agent-process-lifecycle",
+    description: catalogSummary,
+    version: "1.0.0",
+    keywords: catalogTags,
+  };
+  assert.deepEqual(catalog.skills.filter(({ name }) => name === "agent-process-lifecycle"), [expectedCatalogEntry]);
+  assert.equal(catalog.skills.some(({ name, path }) => name === "playwright-server-lifecycle" || path === "skills/playwright-server-lifecycle"), false);
+  assert.deepEqual(marketplace.skills.filter(({ name }) => name === "agent-process-lifecycle"), [expectedMarketplaceEntry]);
+  assert.equal(marketplace.skills.some(({ name, source }) => name === "playwright-server-lifecycle" || source === "skills/playwright-server-lifecycle"), false);
+
+  assert.match(rootReadme, /^\| `agent-process-lifecycle` \| `1\.0\.0` \| stable \| 管理 Agent 啟動之本機 OS process 的 ownership、execution tier、readiness、Stop、Preserve、handoff 與 reconciliation；Windows 提供 self-managed helper，non-Windows 僅分類、handoff 或 launch 前 blocked。 \| \[`skills\/agent-process-lifecycle\/`\]\(skills\/agent-process-lifecycle\/\) \|$/mu);
+  assert.match(rootReadme, /^## agent-process-lifecycle$/mu);
+  assert.match(rootReadme, /不負責 Browser QA/u);
+  assert.match(rootReadme, /Windows.*第一個 viable tier/su);
+  assert.match(rootReadme, /non-Windows.*分類.*handoff.*launch 前 blocked/su);
+  assert.match(rootReadme, /Stop.*Preserve.*handoff/su);
+  assert.match(rootReadme, /└── agent-process-lifecycle\//u);
+  for (const artifact of expectedPublishedArtifacts) {
+    assert.match(rootReadme, new RegExp(`\\]\\(skills\\/agent-process-lifecycle\\/${artifact.replaceAll("/", "\\/")}\\)`, "u"));
+  }
+  assert.doesNotMatch(rootReadme, /playwright-server-lifecycle/u);
 });
