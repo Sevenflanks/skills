@@ -6,6 +6,8 @@
 
 **Status:** ready-for-agent
 
+**Decision, 允許組合驗證:** Ticket 16 validates the unchanged instruction body, references, and evals. Ticket 17's final passing gate validates the replacement description from PR #13 HEAD `de659cc`. Before publication, a deterministic preflight must prove that the description is the sole Ticket 16 manifest mismatch and that the old description can reconstruct the Ticket 16 hash. If any other manifest input differs, or the old description cannot reconstruct that hash, stop strictly. No paid/model/routing/runtime suite reruns are authorized.
+
 - [ ] 若 accepted Windows helper、migrated lifecycle evals、runtime acceptance evidence、model-visible behavior evidence 或 routing release gate 任一缺失或未通過，publication 會被阻擋。
 - [ ] 舊 skill 從 publication 移除，new inventory 恰好暴露一個 `agent-process-lifecycle` `1.0.0` entry，且沒有 alias、stub、deprecated shell 或 dual publication。
 - [ ] main instructions、README、eval metadata、兩份 references、production Windows helper artifacts、root catalog、root README 與 marketplace metadata 全部存在且互相一致。
