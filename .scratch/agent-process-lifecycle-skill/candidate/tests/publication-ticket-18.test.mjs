@@ -9,6 +9,7 @@ const repositoryRoot = resolve(import.meta.dirname, "../../../..");
 const scratchRoot = resolve(repositoryRoot, ".scratch/agent-process-lifecycle-skill");
 const candidateRoot = resolve(scratchRoot, "candidate");
 const candidatePath = resolve(candidateRoot, "agent-process-lifecycle/SKILL.md");
+const candidateReadmePath = resolve(candidateRoot, "agent-process-lifecycle/README.md");
 const candidateRelativePath = ".scratch/agent-process-lifecycle-skill/candidate/agent-process-lifecycle/SKILL.md";
 const modelEvidenceRoot = resolve(candidateRoot, "evidence/model-visible-ticket-16");
 const benchmarkRoot = resolve(scratchRoot, "benchmarks/02-trigger-baseline");
@@ -114,7 +115,7 @@ test("Ticket 18 composes Ticket 16 evidence only through the approved descriptio
 });
 
 test("Ticket 18 preflight validates Ticket 17, Windows acceptance, and structural-only validation", async () => {
-  const [finalDecision, baseAggregate, workerCalibration, baseManifest, variants, issue17, windowsReceipt, packageJson, validator, candidateDocument, spec, benchmarkSpec] = await Promise.all([
+  const [finalDecision, baseAggregate, workerCalibration, baseManifest, variants, issue17, windowsReceipt, packageJson, validator, candidateDocument, spec, benchmarkSpec, readme] = await Promise.all([
     readJson(resolve(gateRoot, "final-decision/decision.json")),
     readJson(resolve(gateRoot, "base/aggregate.json")),
     readJson(resolve(gateRoot, "worker-calibration.json")),
@@ -127,6 +128,7 @@ test("Ticket 18 preflight validates Ticket 17, Windows acceptance, and structura
     readFile(candidatePath, "utf8"),
     readFile(resolve(scratchRoot, "spec.md"), "utf8"),
     readFile(resolve(benchmarkRoot, "trigger_benchmark/spec.py"), "utf8"),
+    readFile(candidateReadmePath, "utf8"),
   ]);
 
   assert.equal(finalDecision.status, "passed");
@@ -227,4 +229,45 @@ test("Ticket 18 preflight validates Ticket 17, Windows acceptance, and structura
     assert.match(validator, new RegExp(structuralCheck.replace(".", "\\."), "u"));
   }
   assert.doesNotMatch(validator, /(opencode|powershell|model|routing|runtime|evidence|behavioral|spawn|exec)/iu);
+  for (const heading of [
+    "# agent-process-lifecycle",
+    "## 解決的問題",
+    "## 使用時機",
+    "## 不適用情境",
+    "## 平台與 execution tier",
+    "## Stop、Preserve 與 handoff",
+    "## Windows self-managed helper",
+    "## 檔案",
+    "## 驗證證據與限制",
+  ]) {
+    assert.match(readme, new RegExp(`^${heading}$`, "mu"));
+  }
+  assert.match(readme, /1\.0\.0/u);
+  assert.match(readme, /Windows-only execution/u);
+  assert.match(readme, /non-Windows.*分類.*handoff.*launch 前 blocked/su);
+  assert.match(readme, /第一個 viable tier/u);
+  assert.match(readme, /Launch.*Finalize/u);
+  assert.match(readme, /Stop.*Preserve/su);
+  assert.match(readme, /caller.*workload-specific readiness/su);
+  assert.match(readme, /不負責.*Browser QA/su);
+  assert.match(readme, /npm run validate.*structural/su);
+  assert.match(readme, /Ticket 16.*Ticket 17.*Windows.*重用.*不重跑/su);
+  assert.match(readme, /Windows self-managed.*Launch.*recoverable record atomic publication.*abrupt host crash.*non-guarantee/su);
+  assert.match(readme, /same-user malicious tamper.*non-guarantee/su);
+  assert.doesNotMatch(readme, /alternate-account|cross-platform execution|Linux|macOS/iu);
+
+  const expectedArtifacts = [
+    "README.md",
+    "SKILL.md",
+    "evals/evals.json",
+    "references/failure-and-handoff.md",
+    "references/windows-self-managed.md",
+    "scripts/Invoke-AgentProcessLifecycle.ps1",
+    "scripts/JobHandleHolder.ps1",
+  ];
+  const fileSection = readme.split("## 檔案\n")[1]?.split("\n## 驗證證據與限制")[0] ?? "";
+  assert.equal((fileSection.match(/\[[^\]]+\]\([^\)]+\)/gu) ?? []).length, expectedArtifacts.length);
+  for (const artifact of expectedArtifacts) {
+    assert.match(fileSection, new RegExp(`\\[${artifact.replaceAll("/", "\\/")}\\]\\(${artifact.replaceAll("/", "\\/")}\\)`, "u"));
+  }
 });
