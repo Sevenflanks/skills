@@ -36,3 +36,30 @@
 - Targeted：`required_targeted_prompt_ids=[]`，因此未執行 targeted trials。
 - Evidence：calibration 與 base manifests 驗證成功；environment parity matched；false-trigger safety passed；privacy scan 未發現 user-home paths、secrets 或 internal markers。
 - Publication：未授權 Ticket 18，candidate 保持未列出。
+
+## Remediation Execution Result
+
+- Decision：依維護者核准，收窄 exact model-facing description，明確排除會等到正常結束的 synchronous command，以及 task 只觀察、查狀態或使用已由 Kubernetes／external／runtime system 管理的 resource。
+- Gate：`ticket-17-release-gate-20260731T124308Z`
+- Observed OpenCode：`1.18.9`
+- Selected worker：`4`；calibration workers `1`、`2`、`4` 均 complete 且 parity matched。
+- Fixed base：96 valid trials，0 invalid attempts。Current positive `24/24`、negative `22/24`；candidate positive `24/24`、negative `9/24`。
+- 原 blocker：candidate `sync-long-command` 與 `kubernetes-runtime` 均由 `3/3` 降至 `1/3`。
+- Targeted authorization：`framework-complete-ownership`、`docker-runtime`、`ide-owned-service`。追加 exactly 7 trials 後，total 分別為 `8/10`、`2/10`、`9/10` false triggers。
+- Final outcome：`blocked`（exit code `1`）。`framework-complete-ownership` 與 `ide-owned-service` 仍超過 negative `3/10` threshold；不得重跑相同 wording 以尋求變異。
+- Evidence：calibration、base 與三組 targeted manifests 驗證成功；environment parity matched；false-trigger safety passed；privacy scan clean；fixture residue `0`。
+- Historical integrity：前次 gate `ticket-17-release-gate-20260731T101324Z` 維持 byte-for-byte unchanged。
+- Publication：Ticket 18 仍未授權，candidate 保持未列出。
+
+## Second Refinement Execution Result
+
+- Decision：依維護者再次核准，exact model-facing description 明確禁止僅為 classify、Preserve、observe、check status 或 use 已具完整 contract 的 framework、IDE、Kubernetes、Docker、Windows Service、CI 或其他 external／runtime owner 而載入 skill。
+- Gate：`ticket-17-release-gate-20260731T162044Z`
+- Observed OpenCode：`1.18.9`
+- Selected worker：`4`；calibration workers `1`、`2`、`4` 均 complete 且 parity matched。
+- Fixed base：96 valid trials，0 invalid attempts。Current positive `24/24`、negative `23/24`；candidate positive `24/24`、negative `0/24`。
+- Targeted：base evaluator 直接 pass，`required_targeted_prompt_ids=[]`，因此未建立 targeted evidence。
+- Final outcome：`passed`（exit code `0`）。Candidate positive aggregate `100%`，negative false-trigger rate `0%`，且不高於 current comparator。
+- Evidence：calibration 與 base manifests 驗證成功；environment parity matched；false-trigger safety passed；privacy scan clean；fixture residue `0`。
+- Historical integrity：前兩次 gate `ticket-17-release-gate-20260731T101324Z` 與 `ticket-17-release-gate-20260731T124308Z` 均保持 unchanged。
+- Publication：Ticket 17 routing gate 已通過，但 Ticket 18 仍需獨立 go/no-go；candidate 在取得該授權前保持未列出。
