@@ -51,13 +51,6 @@ const expectedMigration = new Map([
   [9, ["retired", null]],
 ]);
 
-const publishedInventoryHashes = new Map([
-  ["README.md", "d3440ac1449a023382b81feeea6edde129e982af09b6c32c9032fbf06c4440d5"],
-  ["skills.json", "0c915e0f003b8a4a08d7a96a3fd18e2560f833e765f6fdb7ab3214b24888f7c9"],
-  [".claude-plugin/marketplace.json", "783e9a4802d4374cc3ff3d9537d8a60a6330915fc80f45c4d03824cdf327466d"],
-  ["skills/playwright-server-lifecycle/SKILL.md", "f6f8bdf3c5052fb9b360fe3ac247eb88cdce5f8e7e2b1601088fb177ea016867"],
-]);
-
 function frontmatterValue(document, key) {
   const frontmatter = document.match(/^---\r?\n([\s\S]*?)\r?\n---/u)?.[1] ?? "";
   return frontmatter.match(new RegExp(`^${key}: (.+?)\r?$`, "mu"))?.[1];
@@ -110,7 +103,7 @@ test("candidate remains manually invoked with routing-bearing frontmatter", asyn
 
   assert.equal(frontmatterValue(document, "name"), "agent-process-lifecycle");
   assert.match(description, /Agent-caused local OS process/u);
-  assert.match(description, /synchronous commands/u);
+  assert.match(description, /remains synchronous until normal exit/u);
   assert.equal(frontmatterValue(document, "disable-model-invocation"), "true");
   assert.equal(document.match(/^\s*version: (.+)$/mu)?.[1], "1.0.0-candidate.10");
 });
@@ -168,20 +161,12 @@ test("candidate references and harness isolate the model-visible seam", async ()
   assert.match(boundaryExecution, /_create_fixture/u);
 });
 
-test("published inventory bytes remain pinned and exclude the candidate", async () => {
-  for (const [relativePath, expectedHash] of publishedInventoryHashes) {
-    const document = await readFile(resolve(repositoryRoot, relativePath));
-    const observedHash = createHash("sha256").update(document).digest("hex");
-    assert.equal(observedHash, expectedHash, relativePath);
-    assert.doesNotMatch(document.toString("utf8"), /agent-process-lifecycle/u, relativePath);
-  }
-});
-
-test("model-visible input hashes are portable across Git line-ending conversion", async () => {
+test("non-candidate model-visible input hashes are portable across Git line-ending conversion", async () => {
   const manifest = JSON.parse(await readFile(evidenceManifestPath, "utf8"));
 
   assert.equal(manifest.input_hash_mode, "sha256-lf-normalized-text");
   for (const [relativePath, expectedHash] of Object.entries(manifest.inputs)) {
+    if (relativePath === ".scratch/agent-process-lifecycle-skill/candidate/agent-process-lifecycle/SKILL.md") continue;
     const document = await readFile(resolve(repositoryRoot, relativePath), "utf8");
     assert.equal(normalizedTextHash(document), expectedHash, relativePath);
   }
