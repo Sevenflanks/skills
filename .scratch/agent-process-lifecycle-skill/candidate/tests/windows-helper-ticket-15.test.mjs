@@ -128,6 +128,18 @@ async function createInstrumentedHelper(directory, marker, injection) {
   return instrumentedHelper;
 }
 
+async function createNamedJobExistsFailureHelper(directory, errorCode) {
+  const source = await readFile(helperPath, "utf8");
+  const needle = "            IntPtr job = OpenJobObjectW(JobObjectQuery, false, name);";
+  assert.equal(source.split(needle).length - 1, 1, "NamedJobExists P/Invoke call must be replaced exactly once");
+  const replacement = `            Marshal.SetLastPInvokeError(${errorCode});
+            IntPtr job = IntPtr.Zero;`;
+  const instrumentedHelper = join(directory, "Invoke-AgentProcessLifecycle.named-job-access-denied.ps1");
+  await writeFile(instrumentedHelper, source.replace(needle, replacement), "utf8");
+  await writeFile(join(directory, "JobHandleHolder.ps1"), await readFile(holderPath, "utf8"), "utf8");
+  return instrumentedHelper;
+}
+
 async function createArtifactValidationFailureHelper(directory, validationInjection) {
   const source = await readFile(helperPath, "utf8");
   const inject = (currentSource, marker, injection) => {
@@ -608,24 +620,20 @@ $result | ConvertTo-Json -Depth 12 -Compress
   }
 });
 
-test("NamedJobExists treats an invalid namespace probe as unknown rather than absence", async (t) => {
-  await t.test("Launch cleanup reports unresolved when OpenJobObjectW cannot classify the named Job", async () => {
+test("NamedJobExists propagates ERROR_ACCESS_DENIED as unresolved rather than absence", async (t) => {
+  await t.test("Launch cleanup reports unresolved when OpenJobObjectW returns access denied", async () => {
     const directory = await mkdtemp("agent-process-lifecycle-ticket-15-named-job-launch-");
     const paths = {
-      launch: join(directory, "launch-named-job-release-confirmation.ps1"),
+      launch: join(directory, "launch-named-job-access-denied.ps1"),
       record: join(directory, "run-record.json"),
       stderr: join(directory, "workload.stderr.log"),
       stdout: join(directory, "workload.stdout.log"),
     };
     try {
-      const instrumentedHelper = await createInstrumentedHelper(
-        directory,
-        "launch-named-job-release-confirmation",
-        "$invalidJobName = [string]$JobName + '\\'; $null = [CandidateAgentProcessLifecycle.Native]::NamedJobExists($invalidJobName)",
-      );
+      const instrumentedHelper = await createNamedJobExistsFailureHelper(directory, 5);
       await writeFile(
         paths.launch,
-        `$result = & ${powerShellLiteral(instrumentedHelper)} -Action Launch -RecordPath ${powerShellLiteral(paths.record)} -Executable $PSHOME\\pwsh.exe -ArgumentList @('-NoLogo', '-NoProfile', '-NonInteractive', '-Command', 'Start-Sleep -Seconds 20') -WorkingDirectory ${powerShellLiteral(directory)} -StdoutPath ${powerShellLiteral(paths.stdout)} -StderrPath ${powerShellLiteral(paths.stderr)} -ReadinessIdentity 'ticket-15-named-job-release-confirmation' -ReadinessCheck { param($context) $false } -ReadinessDeadlineMilliseconds 250 -RequestedDisposition Stop
+        `$result = & ${powerShellLiteral(instrumentedHelper)} -Action Launch -RecordPath ${powerShellLiteral(paths.record)} -Executable $PSHOME\\pwsh.exe -ArgumentList @('-NoLogo', '-NoProfile', '-NonInteractive', '-Command', 'Start-Sleep -Seconds 20') -WorkingDirectory ${powerShellLiteral(directory)} -StdoutPath ${powerShellLiteral(paths.stdout)} -StderrPath ${powerShellLiteral(paths.stderr)} -ReadinessIdentity 'ticket-15-named-job-access-denied' -ReadinessCheck { param($context) $false } -ReadinessDeadlineMilliseconds 250 -RequestedDisposition Stop
 $result | ConvertTo-Json -Depth 12 -Compress
 `,
         "utf8",
@@ -635,28 +643,29 @@ $result | ConvertTo-Json -Depth 12 -Compress
 
       assert.equal(failed.lifecycle_result.status, "unresolved");
       assert.equal(failed.lifecycle_result.cleanup.status, "unresolved");
+      assert.equal(failed.lifecycle_result.cleanup.root_absent, true);
+      assert.equal(failed.lifecycle_result.cleanup.holder_absent, true);
       assert.equal(failed.lifecycle_result.cleanup.named_job_absent, null);
-      assert.ok(failed.lifecycle_result.cleanup.errors.some((error) => /OpenJobObjectW/u.test(error)));
+      assert.equal(failed.lifecycle_result.cleanup.record_absent, true);
+      assert.ok(failed.lifecycle_result.cleanup.errors.some((error) => /OpenJobObjectW\(existence check\).*Win32 error 5/u.test(error)));
+      assert.equal(await namedJobExists(failed.binding.job_name), false, "Launch cleanup removes the exact named Job despite an unprovable probe");
+      assert.equal(await pathExists(paths.record), false, "Launch cleanup removes the exact record despite an unprovable probe");
     } finally {
       await rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
       assert.equal(await pathExists(directory), false, "Launch NamedJobExists regression fixture leaves no residue");
     }
   });
 
-  await t.test("Finalize Stop retains reconciliation evidence when OpenJobObjectW cannot classify the released Job", async () => {
+  await t.test("Finalize Stop retains reconciliation evidence when OpenJobObjectW returns access denied", async () => {
     let fixture;
     try {
       fixture = await launchFixture({ requestedDisposition: "Stop" });
       const { paths } = fixture;
-      const instrumentedHelper = await createInstrumentedHelper(
-        paths.directory,
-        "finalize-job-release-confirmation",
-        "$invalidJobName = [string]$record['job_name'] + '\\'; $null = [CandidateAgentProcessLifecycle.Native]::NamedJobExists($invalidJobName)",
-      );
-      const finalize = join(paths.directory, "finalize-named-job-release-confirmation.ps1");
+      const instrumentedHelper = await createNamedJobExistsFailureHelper(paths.directory, 5);
+      const finalize = join(paths.directory, "finalize-named-job-access-denied.ps1");
       await writeFile(
         finalize,
-        `$result = & ${powerShellLiteral(instrumentedHelper)} -Action Finalize -RecordPath ${powerShellLiteral(paths.record)} -Disposition Stop -DownstreamResult @{ source = 'ticket-15-named-job-release-confirmation'; status = 'unchanged' }
+        `$result = & ${powerShellLiteral(instrumentedHelper)} -Action Finalize -RecordPath ${powerShellLiteral(paths.record)} -Disposition Stop -DownstreamResult @{ source = 'ticket-15-named-job-access-denied'; status = 'unchanged' }
 $result | ConvertTo-Json -Depth 12 -Compress
 `,
         "utf8",
@@ -668,9 +677,9 @@ $result | ConvertTo-Json -Depth 12 -Compress
       assert.equal(unresolved.lifecycle_result.operation, "finalize-post-authority-failure");
       assert.equal(unresolved.lifecycle_result.failure_kind, "post-authority-finalization");
       assert.equal(unresolved.lifecycle_result.cleanup.result, "job-release-unconfirmed");
-      assert.match(unresolved.lifecycle_result.error, /OpenJobObjectW/u);
+      assert.match(unresolved.lifecycle_result.error, /OpenJobObjectW\(existence check\).*Win32 error 5/u);
       assert.deepEqual(unresolved.downstream_result, {
-        source: "ticket-15-named-job-release-confirmation",
+        source: "ticket-15-named-job-access-denied",
         status: "unchanged",
       });
       assert.equal(unresolved.final_disposition.status, "unresolved");
