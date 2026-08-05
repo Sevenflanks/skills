@@ -412,7 +412,7 @@ const postAuthorityFailureScenarios = [
     ownedTreeEmpty: true,
     rootAbsent: true,
     holderAbsent: true,
-    namedJobAbsent: false,
+    namedJobAbsent: null,
   },
 ];
 

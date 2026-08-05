@@ -608,6 +608,90 @@ $result | ConvertTo-Json -Depth 12 -Compress
   }
 });
 
+test("NamedJobExists treats an invalid namespace probe as unknown rather than absence", async (t) => {
+  await t.test("Launch cleanup reports unresolved when OpenJobObjectW cannot classify the named Job", async () => {
+    const directory = await mkdtemp("agent-process-lifecycle-ticket-15-named-job-launch-");
+    const paths = {
+      launch: join(directory, "launch-named-job-release-confirmation.ps1"),
+      record: join(directory, "run-record.json"),
+      stderr: join(directory, "workload.stderr.log"),
+      stdout: join(directory, "workload.stdout.log"),
+    };
+    try {
+      const instrumentedHelper = await createInstrumentedHelper(
+        directory,
+        "launch-named-job-release-confirmation",
+        "$invalidJobName = [string]$JobName + '\\'; $null = [CandidateAgentProcessLifecycle.Native]::NamedJobExists($invalidJobName)",
+      );
+      await writeFile(
+        paths.launch,
+        `$result = & ${powerShellLiteral(instrumentedHelper)} -Action Launch -RecordPath ${powerShellLiteral(paths.record)} -Executable $PSHOME\\pwsh.exe -ArgumentList @('-NoLogo', '-NoProfile', '-NonInteractive', '-Command', 'Start-Sleep -Seconds 20') -WorkingDirectory ${powerShellLiteral(directory)} -StdoutPath ${powerShellLiteral(paths.stdout)} -StderrPath ${powerShellLiteral(paths.stderr)} -ReadinessIdentity 'ticket-15-named-job-release-confirmation' -ReadinessCheck { param($context) $false } -ReadinessDeadlineMilliseconds 250 -RequestedDisposition Stop
+$result | ConvertTo-Json -Depth 12 -Compress
+`,
+        "utf8",
+      );
+
+      const failed = await runPowerShell(paths.launch);
+
+      assert.equal(failed.lifecycle_result.status, "unresolved");
+      assert.equal(failed.lifecycle_result.cleanup.status, "unresolved");
+      assert.equal(failed.lifecycle_result.cleanup.named_job_absent, null);
+      assert.ok(failed.lifecycle_result.cleanup.errors.some((error) => /OpenJobObjectW/u.test(error)));
+    } finally {
+      await rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+      assert.equal(await pathExists(directory), false, "Launch NamedJobExists regression fixture leaves no residue");
+    }
+  });
+
+  await t.test("Finalize Stop retains reconciliation evidence when OpenJobObjectW cannot classify the released Job", async () => {
+    let fixture;
+    try {
+      fixture = await launchFixture({ requestedDisposition: "Stop" });
+      const { paths } = fixture;
+      const instrumentedHelper = await createInstrumentedHelper(
+        paths.directory,
+        "finalize-job-release-confirmation",
+        "$invalidJobName = [string]$record['job_name'] + '\\'; $null = [CandidateAgentProcessLifecycle.Native]::NamedJobExists($invalidJobName)",
+      );
+      const finalize = join(paths.directory, "finalize-named-job-release-confirmation.ps1");
+      await writeFile(
+        finalize,
+        `$result = & ${powerShellLiteral(instrumentedHelper)} -Action Finalize -RecordPath ${powerShellLiteral(paths.record)} -Disposition Stop -DownstreamResult @{ source = 'ticket-15-named-job-release-confirmation'; status = 'unchanged' }
+$result | ConvertTo-Json -Depth 12 -Compress
+`,
+        "utf8",
+      );
+
+      const unresolved = await runPowerShell(finalize);
+
+      assert.equal(unresolved.lifecycle_result.status, "unresolved");
+      assert.equal(unresolved.lifecycle_result.operation, "finalize-post-authority-failure");
+      assert.equal(unresolved.lifecycle_result.failure_kind, "post-authority-finalization");
+      assert.equal(unresolved.lifecycle_result.cleanup.result, "job-release-unconfirmed");
+      assert.match(unresolved.lifecycle_result.error, /OpenJobObjectW/u);
+      assert.deepEqual(unresolved.downstream_result, {
+        source: "ticket-15-named-job-release-confirmation",
+        status: "unchanged",
+      });
+      assert.equal(unresolved.final_disposition.status, "unresolved");
+      assert.equal(unresolved.evidence.reason_code, "job-release-unconfirmed");
+      assert.deepEqual(unresolved.evidence.missing_evidence, ["absent-named-job"]);
+      assert.equal(unresolved.evidence.named_job_absent, null);
+      assert.equal(unresolved.evidence.record_present, true);
+      assert.equal(unresolved.evidence.record_cleanup_attempted, false);
+      assert.equal(unresolved.evidence.record_cleanup_completed, false);
+      assert.equal(await pathExists(paths.record), true, "unconfirmed Job release retains the run record");
+    } finally {
+      if (fixture && isAlive(fixture.launch.binding.root_process_id)) {
+        await cleanupFixture(fixture);
+      } else if (fixture) {
+        await rm(fixture.paths.directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+        assert.equal(await pathExists(fixture.paths.directory), false, "Finalize NamedJobExists regression fixture leaves no residue");
+      }
+    }
+  });
+});
+
 test("a fresh later graceful Stop completes without forced termination", async () => {
   let fixture;
   try {
