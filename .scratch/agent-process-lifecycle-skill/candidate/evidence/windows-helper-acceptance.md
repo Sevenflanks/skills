@@ -186,3 +186,28 @@ Production matrix 的 `PASS` 只表示 current run 的 test evidence 已觀察�
 * Pre-evidence 完整 serialized suite：81/82、fail 1、`417239.4109ms`；唯一 failure 是 model manifest 尚未重建造成的 `run_candidate_smoke.py` input hash mismatch，其餘 candidate、fixture 與 Windows runtime tests 均通過。model evidence 會在本 addendum 固定後另行重建。
 
 以上只補強既有 Windows production surface 的 cleanup provenance 與 schema rejection，不增加跨平台、abrupt host crash 或 same-user malicious tamper 保證。
+
+## PR 11 review remediation addendum（2026-08-05）
+
+本節回應 [PR 11 inline review comment `3717512146`](https://github.com/Sevenflanks/skills/pull/11#discussion_r3717512146)，不改寫上方歷史驗收紀錄。修正前 PR 11 head 為 `608b579746f773dc0e9373adfd179dcd65522d05`；runtime 修正 commit 為 `cf1aa20`。
+
+`NamedJobExists` 現在只在 `OpenJobObjectW` 回報 `ERROR_FILE_NOT_FOUND (2)` 時將 named Job 判定為不存在。其他 Win32 error 會保留為查詢失敗：Launch cleanup 回傳 `unresolved`，Finalize Stop 回傳 `finalize-post-authority-failure`／`job-release-unconfirmed`，且未完成 probe 的 `named_job_absent` 為 `null`。這項修正不改變既有兩項 non-guarantees，也不擴張為 alternate-account、跨 session、abrupt host crash 或 same-user malicious tamper 保證。
+
+### TDD 與相容性結果
+
+* Focused RED：在 `608b579` 行為上執行 `node --test --test-name-pattern="NamedJobExists" .scratch/agent-process-lifecycle-skill/candidate/tests/windows-helper-ticket-15.test.mjs`；Launch cleanup 實際回傳 `failed` 而非預期的 `unresolved`，Finalize 實際回傳 `success` 而非預期的 `unresolved`，兩條 public-result regression 均精確暴露 false-absence 行為。
+* Focused GREEN：相同命令在修正後為 tests 3、pass 3、fail 0、`6699.212ms`。
+* Ticket 13／15 targeted compatibility：tests 8、pass 8、fail 0、`44566.8573ms`；包含四個 post-authority scenarios、fixture teardown scenario，以及兩條 `NamedJobExists` nested regressions。
+* 第一個 full corrective run 為 tests 65、pass 60、fail 5、`409857.5273ms`；五個 failure 均來自 Ticket 13 對較早 post-authority failure 的 `named_job_absent` expectation 被過度改成 `null`。修正後只在真正進入 release probe 前切換為 unknown。
+* 第二個 full corrective run 為 tests 65、pass 64、fail 1、`392144.3295ms`；唯一 failure 是 Ticket 13 `post-authority termination-failed` 的 identity-bound teardown 在 process 已退出後遇到 `QueryFullProcessImageNameW failed`。相同 scenario 立即重跑為 tests 1、pass 1、fail 0、`8846.3885ms`，未修改 production behavior 或弱化 assertion。
+
+### 最終 acceptance 結果
+
+* PowerShell parser：PASS，2/2；`Invoke-AgentProcessLifecycle.ps1` 與 `JobHandleHolder.ps1` 均無 parser errors。
+* Node syntax：PASS，6/6；Ticket 11 至 15 test modules 與 `protected-test-fixture.mjs` 均通過 `node --check`。
+* Serialized Windows Ticket 11 至 15 runtime：tests 65、pass 65、fail 0、cancelled 0、skipped 0、todo 0、`391432.6759ms`。
+* Protected fixture residue：PASS；`$env:USERPROFILE\.agent-process-lifecycle\Tests` 為 0 entries。
+* Volume-root residue：PASS；`C:\` 下符合 `agent-process-lifecycle-*`、`.omo` 或 `.sisyphus` 的 entries 為 0。
+* Skill catalog validation：`npm run validate` PASS，exit 0。
+* `Invoke-AgentProcessLifecycle.ps1` LF-normalized SHA-256：`b24ea67d08e765000e4b880b99cdc8ac92a54e62ead1c65537a3905ce9ddcc73`。
+* Repository 內 untracked `.omo/run-continuation/*.json` 始終排除於 source、tests、hash、evidence 與 Git index，未修改、刪除或 stage。
