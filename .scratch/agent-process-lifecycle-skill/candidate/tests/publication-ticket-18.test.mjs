@@ -16,8 +16,8 @@ const benchmarkRoot = resolve(scratchRoot, "benchmarks/02-trigger-baseline");
 const gateRoot = resolve(benchmarkRoot, "results/ticket-17-release-gate-20260731T162044Z");
 const helperPath = resolve(candidateRoot, "windows-helper/Invoke-AgentProcessLifecycle.ps1");
 const holderPath = resolve(candidateRoot, "windows-helper/JobHandleHolder.ps1");
-const archivedCandidateCommit = "c9c1ba47bbe6f94dde323a65d676bec1e0201da3";
-const publicationBaseCommit = "762e80165a6cc0d739144ff9d7cdab277564430f";
+const archivedCandidateCommit = "58dd87f0e889e119847fd549f3245f67901923a0";
+const publicationBaseCommit = "6a87f34b6b2df14b6f6940413acafc4ffb747593";
 const publishedSkillRoot = resolve(repositoryRoot, "skills/agent-process-lifecycle");
 const oldPublishedSkillRoot = resolve(repositoryRoot, "skills/playwright-server-lifecycle");
 const publishedSkillPath = resolve(publishedSkillRoot, "SKILL.md");
@@ -177,6 +177,7 @@ test("Ticket 18 composes Ticket 16 evidence only through the approved descriptio
     if (relativePath === candidateRelativePath) continue;
     assert.equal(normalizedTextHash(await readFile(resolve(repositoryRoot, relativePath), "utf8")), expectedHash, relativePath);
   }
+  assert.equal(manifest.inputs[".scratch/agent-process-lifecycle-skill/candidate/evidence/windows-helper-acceptance.md"], "e991856e96cbdad4448b449dfe8b596a4bb9cbab6e7b2b2f4117c12c8e34dd3f");
 
   const archivedDocument = archivedCandidateSkill();
   const archivedDescription = frontmatterValue(archivedDocument, "description");
@@ -308,6 +309,14 @@ test("Ticket 18 preflight validates Ticket 17, Windows acceptance, and structura
   assert.match(windowsReceipt, /Serialized Windows Ticket 11 至 15 runtime：tests 65、pass 65、fail 0/u);
   assert.match(windowsReceipt, /b24ea67d08e765000e4b880b99cdc8ac92a54e62ead1c65537a3905ce9ddcc73/u);
   assert.match(windowsReceipt, /untracked `.omo\/run-continuation\/\*\.json` 始終排除/u);
+  assert.match(windowsReceipt, /PR 11 access-denied coverage addendum（2026-08-05）/u);
+  assert.match(windowsReceipt, /GitHub review `4860484721`/u);
+  assert.match(windowsReceipt, /commit `10d173b`/u);
+  assert.match(windowsReceipt, /Marshal\.SetLastPInvokeError\(5\)/u);
+  assert.match(windowsReceipt, /Historical RED：.*tests 3、pass 0、fail 3、`8658\.4561ms`/u);
+  assert.match(windowsReceipt, /Current GREEN：.*tests 3、pass 3、fail 0、`9903\.1805ms`/u);
+  assert.match(windowsReceipt, /Serialized Windows Ticket 11 至 15 runtime：tests 65、pass 65、fail 0.*`481610\.4723ms`/u);
+  assert.match(windowsReceipt, /不宣稱執行 alternate-account 或真實 ACL identity-switch 測試/u);
   assert.match(windowsReceipt, /abrupt host.*crash/u);
   assert.match(windowsReceipt, /same-user.*tamper/u);
   assert.equal(normalizedTextHash(await readFile(helperPath, "utf8")), "b24ea67d08e765000e4b880b99cdc8ac92a54e62ead1c65537a3905ce9ddcc73");
