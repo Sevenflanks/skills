@@ -69,6 +69,7 @@ namespace CandidateAgentProcessLifecycle
         private const uint JobObjectQuery = 0x0004;
         private const uint JobObjectTerminate = 0x0008;
         private const int JobObjectBasicAccountingInformation = 1;
+        private const int ErrorFileNotFound = 2;
         private const uint WaitObject0 = 0;
         private static readonly IntPtr ProcThreadAttributeHandleList = new IntPtr(0x00020002);
 
@@ -240,7 +241,12 @@ namespace CandidateAgentProcessLifecycle
         public static bool NamedJobExists(string name)
         {
             IntPtr job = OpenJobObjectW(JobObjectQuery, false, name);
-            if (job == IntPtr.Zero) return false;
+            if (job == IntPtr.Zero)
+            {
+                int error = Marshal.GetLastWin32Error();
+                if (error == ErrorFileNotFound) return false;
+                throw new Win32Exception(error, "OpenJobObjectW(existence check) failed with Win32 error " + error);
+            }
             CloseHandle(job);
             return true;
         }
@@ -1245,6 +1251,7 @@ function Invoke-LaunchFailureCleanup {
     try {
         if ($JobHandle -ne [IntPtr]::Zero) { [CandidateAgentProcessLifecycle.Native]::Close($JobHandle) }
         if ($JobName) {
+            # TEST-INJECTION: launch-named-job-release-confirmation
             $namedJobAbsent = -not [CandidateAgentProcessLifecycle.Native]::NamedJobExists($JobName)
             if (-not $namedJobAbsent) { $errors.Add('The current-run named Job remained after Launch cleanup.') }
         }
@@ -1865,7 +1872,7 @@ function New-FinalizePostAuthorityFailureResult {
         [Parameter(Mandatory)][bool]$OwnedTreeEmpty,
         [Parameter(Mandatory)][bool]$RootAbsent,
         [Parameter(Mandatory)][bool]$HolderAbsent,
-        [Parameter(Mandatory)][bool]$NamedJobAbsent,
+        [Parameter(Mandatory)][AllowNull()][Nullable[bool]]$NamedJobAbsent,
         [Parameter(Mandatory)][bool]$RecordPresent,
         [Parameter(Mandatory)][bool]$RecordCleanupAttempted,
         [Parameter(Mandatory)][bool]$RecordCleanupCompleted
@@ -2299,6 +2306,7 @@ function Invoke-Finalize {
         $jobHandle = [IntPtr]::Zero
         $postAuthorityReasonCode = 'job-release-unconfirmed'
         $postAuthorityMissingEvidence = @('absent-named-job')
+        $namedJobAbsent = $null
         # TEST-INJECTION: finalize-job-release-confirmation
         $namedJobAbsent = -not [CandidateAgentProcessLifecycle.Native]::NamedJobExists([string]$record['job_name'])
         if (-not $namedJobAbsent) {

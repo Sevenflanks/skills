@@ -16,8 +16,8 @@ const benchmarkRoot = resolve(scratchRoot, "benchmarks/02-trigger-baseline");
 const gateRoot = resolve(benchmarkRoot, "results/ticket-17-release-gate-20260731T162044Z");
 const helperPath = resolve(candidateRoot, "windows-helper/Invoke-AgentProcessLifecycle.ps1");
 const holderPath = resolve(candidateRoot, "windows-helper/JobHandleHolder.ps1");
-const archivedCandidateCommit = "e5d26484b731424d47841440fb658c6a1bda5450";
-const publicationBaseCommit = "de659ccd4fd2535f39a7f9ed07e8e82ae5c075be";
+const archivedCandidateCommit = "c9c1ba47bbe6f94dde323a65d676bec1e0201da3";
+const publicationBaseCommit = "762e80165a6cc0d739144ff9d7cdab277564430f";
 const publishedSkillRoot = resolve(repositoryRoot, "skills/agent-process-lifecycle");
 const oldPublishedSkillRoot = resolve(repositoryRoot, "skills/playwright-server-lifecycle");
 const publishedSkillPath = resolve(publishedSkillRoot, "SKILL.md");
@@ -207,6 +207,7 @@ test("Ticket 18 preflight validates Ticket 17, Windows acceptance, and structura
     readFile(resolve(benchmarkRoot, "trigger_benchmark/spec.py"), "utf8"),
     readFile(candidateReadmePath, "utf8"),
   ]);
+  const normalizedReadme = normalizeLineEndings(readme);
 
   assert.equal(finalDecision.status, "passed");
   assert.equal(finalDecision.outcome, "pass");
@@ -299,9 +300,17 @@ test("Ticket 18 preflight validates Ticket 17, Windows acceptance, and structura
   assert.match(windowsReceipt, /Final review addendum（2026-07-31）/u);
   assert.match(windowsReceipt, /PowerShell parser：PASS；`Invoke-AgentProcessLifecycle\.ps1` 與 `JobHandleHolder\.ps1` 均無 parser errors/u);
   assert.match(windowsReceipt, /受影響 serialized suites：PASS，Ticket 12／14／15 共 44\/44、fail 0/u);
+  assert.match(windowsReceipt, /PR 11 review remediation addendum（2026-08-05）/u);
+  assert.match(windowsReceipt, /inline review comment `3717512146`/u);
+  assert.match(windowsReceipt, /runtime 修正 commit 為 `cf1aa20`/u);
+  assert.match(windowsReceipt, /Focused RED/u);
+  assert.match(windowsReceipt, /Focused GREEN：相同命令在修正後為 tests 3、pass 3、fail 0/u);
+  assert.match(windowsReceipt, /Serialized Windows Ticket 11 至 15 runtime：tests 65、pass 65、fail 0/u);
+  assert.match(windowsReceipt, /b24ea67d08e765000e4b880b99cdc8ac92a54e62ead1c65537a3905ce9ddcc73/u);
+  assert.match(windowsReceipt, /untracked `.omo\/run-continuation\/\*\.json` 始終排除/u);
   assert.match(windowsReceipt, /abrupt host.*crash/u);
   assert.match(windowsReceipt, /same-user.*tamper/u);
-  assert.equal(normalizedTextHash(await readFile(helperPath, "utf8")), "24e0005c68241f63e0881c0e99055480403523a6d02ddd412c7f9beee17372d0");
+  assert.equal(normalizedTextHash(await readFile(helperPath, "utf8")), "b24ea67d08e765000e4b880b99cdc8ac92a54e62ead1c65537a3905ce9ddcc73");
   assert.equal(normalizedTextHash(await readFile(holderPath, "utf8")), "bfbe26edea0f7450f87c05dd6b0e4300cfadee0532a2c39264a751b04c161924");
 
   assert.deepEqual(packageJson.scripts, { validate: "node scripts/validate-skills.mjs" });
@@ -320,21 +329,21 @@ test("Ticket 18 preflight validates Ticket 17, Windows acceptance, and structura
     "## 檔案",
     "## 驗證證據與限制",
   ]) {
-    assert.match(readme, new RegExp(`^${heading}$`, "mu"));
+    assert.match(normalizedReadme, new RegExp(`^${heading}$`, "mu"));
   }
-  assert.match(readme, /1\.0\.0/u);
-  assert.match(readme, /Windows-only execution/u);
-  assert.match(readme, /non-Windows.*分類.*handoff.*launch 前 blocked/su);
-  assert.match(readme, /第一個 viable tier/u);
-  assert.match(readme, /Launch.*Finalize/u);
-  assert.match(readme, /Stop.*Preserve/su);
-  assert.match(readme, /caller.*workload-specific readiness/su);
-  assert.match(readme, /不負責.*Browser QA/su);
-  assert.match(readme, /npm run validate.*structural/su);
-  assert.match(readme, /Ticket 16.*Ticket 17.*Windows.*重用.*不重跑/su);
-  assert.match(readme, /Windows self-managed.*Launch.*recoverable record atomic publication.*abrupt host crash.*non-guarantee/su);
-  assert.match(readme, /same-user malicious tamper.*non-guarantee/su);
-  assert.doesNotMatch(readme, /alternate-account|cross-platform execution|Linux|macOS/iu);
+  assert.match(normalizedReadme, /1\.0\.0/u);
+  assert.match(normalizedReadme, /Windows-only execution/u);
+  assert.match(normalizedReadme, /non-Windows.*分類.*handoff.*launch 前 blocked/su);
+  assert.match(normalizedReadme, /第一個 viable tier/u);
+  assert.match(normalizedReadme, /Launch.*Finalize/u);
+  assert.match(normalizedReadme, /Stop.*Preserve/su);
+  assert.match(normalizedReadme, /caller.*workload-specific readiness/su);
+  assert.match(normalizedReadme, /不負責.*Browser QA/su);
+  assert.match(normalizedReadme, /npm run validate.*structural/su);
+  assert.match(normalizedReadme, /Ticket 16.*Ticket 17.*Windows.*重用.*不重跑/su);
+  assert.match(normalizedReadme, /Windows self-managed.*Launch.*recoverable record atomic publication.*abrupt host crash.*non-guarantee/su);
+  assert.match(normalizedReadme, /same-user malicious tamper.*non-guarantee/su);
+  assert.doesNotMatch(normalizedReadme, /alternate-account|cross-platform execution|Linux|macOS/iu);
 
   const expectedArtifacts = [
     "README.md",
@@ -345,7 +354,7 @@ test("Ticket 18 preflight validates Ticket 17, Windows acceptance, and structura
     "scripts/Invoke-AgentProcessLifecycle.ps1",
     "scripts/JobHandleHolder.ps1",
   ];
-  const fileSection = readme.split("## 檔案\n")[1]?.split("\n## 驗證證據與限制")[0] ?? "";
+  const fileSection = normalizedReadme.split("## 檔案\n")[1]?.split("\n## 驗證證據與限制")[0] ?? "";
   assert.equal((fileSection.match(/\[[^\]]+\]\([^\)]+\)/gu) ?? []).length, expectedArtifacts.length);
   for (const artifact of expectedArtifacts) {
     assert.match(fileSection, new RegExp(`\\[${artifact.replaceAll("/", "\\/")}\\]\\(${artifact.replaceAll("/", "\\/")}\\)`, "u"));
@@ -361,6 +370,7 @@ test("Ticket 18 publishes one complete agent-process-lifecycle inventory", async
     readFile(resolve(repositoryRoot, "README.md"), "utf8"),
     listRelativeFiles(publishedSkillRoot),
   ]);
+  const normalizedRootReadme = normalizeLineEndings(rootReadme);
 
   assert.equal(await exists(oldPublishedSkillRoot), false, "old published skill directory must be absent");
   assert.deepEqual(publishedFiles, expectedPublishedArtifacts);
@@ -404,15 +414,15 @@ test("Ticket 18 publishes one complete agent-process-lifecycle inventory", async
   assert.deepEqual(marketplace.skills.filter(({ name }) => name === "agent-process-lifecycle"), [expectedMarketplaceEntry]);
   assert.equal(marketplace.skills.some(({ name, source }) => name === "playwright-server-lifecycle" || source === "skills/playwright-server-lifecycle"), false);
 
-  assert.match(rootReadme, /^\| `agent-process-lifecycle` \| `1\.0\.0` \| stable \| 管理 Agent 啟動之本機 OS process 的 ownership、execution tier、readiness、Stop、Preserve、handoff 與 reconciliation；Windows 提供 self-managed helper，non-Windows 僅分類、handoff 或 launch 前 blocked。 \| \[`skills\/agent-process-lifecycle\/`\]\(skills\/agent-process-lifecycle\/\) \|$/mu);
-  assert.match(rootReadme, /^## agent-process-lifecycle$/mu);
-  assert.match(rootReadme, /不負責 Browser QA/u);
-  assert.match(rootReadme, /Windows.*第一個 viable tier/su);
-  assert.match(rootReadme, /non-Windows.*分類.*handoff.*launch 前 blocked/su);
-  assert.match(rootReadme, /Stop.*Preserve.*handoff/su);
-  assert.match(rootReadme, /└── agent-process-lifecycle\//u);
+  assert.match(normalizedRootReadme, /^\| `agent-process-lifecycle` \| `1\.0\.0` \| stable \| 管理 Agent 啟動之本機 OS process 的 ownership、execution tier、readiness、Stop、Preserve、handoff 與 reconciliation；Windows 提供 self-managed helper，non-Windows 僅分類、handoff 或 launch 前 blocked。 \| \[`skills\/agent-process-lifecycle\/`\]\(skills\/agent-process-lifecycle\/\) \|$/mu);
+  assert.match(normalizedRootReadme, /^## agent-process-lifecycle$/mu);
+  assert.match(normalizedRootReadme, /不負責 Browser QA/u);
+  assert.match(normalizedRootReadme, /Windows.*第一個 viable tier/su);
+  assert.match(normalizedRootReadme, /non-Windows.*分類.*handoff.*launch 前 blocked/su);
+  assert.match(normalizedRootReadme, /Stop.*Preserve.*handoff/su);
+  assert.match(normalizedRootReadme, /└── agent-process-lifecycle\//u);
   for (const artifact of expectedPublishedArtifacts) {
-    assert.match(rootReadme, new RegExp(`\\]\\(skills\\/agent-process-lifecycle\\/${artifact.replaceAll("/", "\\/")}\\)`, "u"));
+    assert.match(normalizedRootReadme, new RegExp(`\\]\\(skills\\/agent-process-lifecycle\\/${artifact.replaceAll("/", "\\/")}\\)`, "u"));
   }
-  assert.doesNotMatch(rootReadme, /playwright-server-lifecycle/u);
+  assert.doesNotMatch(normalizedRootReadme, /playwright-server-lifecycle/u);
 });
