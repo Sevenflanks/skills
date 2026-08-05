@@ -40,7 +40,7 @@
   ".scratch/agent-process-lifecycle-skill/candidate/tests/model_visible_contract.py": "0c097b6366b6330aa6ad2fbff525d3afb593557c84a162c1e62ad08209559ced",
   ".scratch/agent-process-lifecycle-skill/candidate/tests/model_visible_json.py": "64bfae3d6f4713e8fd55d7dc3ca021bb2eaee14a22f4c1db4b4045abc355a5de",
   ".scratch/agent-process-lifecycle-skill/candidate/evidence/routing-smoke-20260729-r7/summary.json": "d9f6ff89ef0edae2ef3bf39b70de60f412a159ba309f89d74ec71be396a08be9",
-  ".scratch/agent-process-lifecycle-skill/candidate/evidence/windows-helper-acceptance.md": "7f7091f532027f65b26992cdbc9834237c9c4a1779a0f3d1f5b44d295ae7529e"
+  ".scratch/agent-process-lifecycle-skill/candidate/evidence/windows-helper-acceptance.md": "e991856e96cbdad4448b449dfe8b596a4bb9cbab6e7b2b2f4117c12c8e34dd3f"
 },
   "archived_evidence_policy": "Archived routing and Windows runtime evidence were hashed only; neither was rerun or recalculated.",
   "baseline_run": false,

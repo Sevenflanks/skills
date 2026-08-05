@@ -211,3 +211,27 @@ Production matrix 的 `PASS` 只表示 current run 的 test evidence 已觀察�
 * Skill catalog validation：`npm run validate` PASS，exit 0。
 * `Invoke-AgentProcessLifecycle.ps1` LF-normalized SHA-256：`b24ea67d08e765000e4b880b99cdc8ac92a54e62ead1c65537a3905ce9ddcc73`。
 * Repository 內 untracked `.omo/run-continuation/*.json` 始終排除於 source、tests、hash、evidence 與 Git index，未修改、刪除或 stage。
+
+## PR 11 access-denied coverage addendum（2026-08-05）
+
+本節補足 GitHub review `4860484721` 的明示要求：「其他錯誤應拋出或傳遞為 unresolved，並補上 access-denied 負向測試。」前一節的 invalid-namespace case 已證明一般 non-2 分支，但不是 explicit `ERROR_ACCESS_DENIED (5)` coverage；commit `10d173b` 以同樣兩條 public-result paths 原位替換該 proxy，不增加 runtime case count。
+
+test-only helper copy 只把 `NamedJobExists` 內唯一的 `IntPtr job = OpenJobObjectW(JobObjectQuery, false, name);` 替換為 `Marshal.SetLastPInvokeError(5)` 與 zero handle，接著執行未修改的 production classification block。它不在 wrapper 前直接拋出例外、不修改 `OpenNamedJob`、不新增 production seam，也不改變 candidate 或 published helper bytes。
+
+### Explicit error 5 TDD
+
+* Historical RED：在 temporary detached worktree 中，將目前 Ticket 15 test 配上 `608b579746f773dc0e9373adfd179dcd65522d05` 的 pre-fix helper。Focused command 為 tests 3、pass 0、fail 3、`8658.4561ms`；Launch 實際回傳 `failed` 而非 `unresolved`，Finalize 實際回傳 `success` 而非 `unresolved`。temp worktree 的 tracked files 已還原，worktree path 與 Git registration 均移除。
+* Current GREEN：相同 focused command 為 tests 3、pass 3、fail 0、`9903.1805ms`。Launch 與 Finalize public evidence 均包含 `OpenJobObjectW(existence check)` 與 `Win32 error 5`，且 `named_job_absent` 為 `null`。
+* Launch regression 另確認 root、holder、exact named Job 與 record 仍完成 scoped cleanup；查詢失敗不會阻止其他可證明 cleanup，也不會把 probe unknown 誤報為 absence。
+
+### 第二次 acceptance 結果
+
+* PowerShell parser：PASS，2/2。
+* Node syntax：PASS，6/6。
+* Serialized Windows Ticket 11 至 15 runtime：tests 65、pass 65、fail 0、cancelled 0、skipped 0、todo 0、`481610.4723ms`。
+* Protected fixture residue：PASS；fixture root 為 0 entries。
+* Volume-root residue：PASS；`C:\` 下符合 `agent-process-lifecycle-*`、`.omo` 或 `.sisyphus` 的 entries 為 0。
+* Skill catalog validation：`npm run validate` PASS，exit 0。
+* Production `Invoke-AgentProcessLifecycle.ps1` 未變；LF-normalized SHA-256 仍為 `b24ea67d08e765000e4b880b99cdc8ac92a54e62ead1c65537a3905ce9ddcc73`。
+* 此 coverage 是 deterministic P/Invoke error classification，不宣稱執行 alternate-account 或真實 ACL identity-switch 測試。
+* Repository 內 `.omo/` continuation metadata 仍未修改、刪除、複製、stage、hash 或納入 evidence。
