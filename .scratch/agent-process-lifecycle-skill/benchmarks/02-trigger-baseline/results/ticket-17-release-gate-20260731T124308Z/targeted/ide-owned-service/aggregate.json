@@ -1,0 +1,35 @@
+{
+  "variants": {
+    "candidate": {
+      "positive": {
+        "requested_logical_runs": 0,
+        "valid_trials": 0,
+        "triggered_trials": 0,
+        "invalid_attempts": 0,
+        "trigger_rate": null,
+        "false_trigger_rate": null
+      },
+      "negative": {
+        "requested_logical_runs": 7,
+        "valid_trials": 7,
+        "triggered_trials": 7,
+        "invalid_attempts": 0,
+        "trigger_rate": null,
+        "false_trigger_rate": 1.0
+      }
+    }
+  },
+  "prompts": {
+    "candidate": {
+      "ide-owned-service": {
+        "requested_logical_runs": 7,
+        "valid_trials": 7,
+        "triggered_trials": 7,
+        "invalid_attempts": 0,
+        "trigger_rate": null,
+        "false_trigger_rate": 1.0
+      }
+    }
+  },
+  "pairwise_rate_deltas": {}
+}

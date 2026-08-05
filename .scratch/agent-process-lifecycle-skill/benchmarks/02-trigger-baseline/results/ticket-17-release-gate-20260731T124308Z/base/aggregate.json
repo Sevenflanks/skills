@@ -1,0 +1,308 @@
+{
+  "variants": {
+    "current": {
+      "positive": {
+        "requested_logical_runs": 24,
+        "valid_trials": 24,
+        "triggered_trials": 24,
+        "invalid_attempts": 0,
+        "trigger_rate": 1.0,
+        "false_trigger_rate": null
+      },
+      "negative": {
+        "requested_logical_runs": 24,
+        "valid_trials": 24,
+        "triggered_trials": 22,
+        "invalid_attempts": 0,
+        "trigger_rate": null,
+        "false_trigger_rate": 0.9166666666666666
+      }
+    },
+    "candidate": {
+      "positive": {
+        "requested_logical_runs": 24,
+        "valid_trials": 24,
+        "triggered_trials": 24,
+        "invalid_attempts": 0,
+        "trigger_rate": 1.0,
+        "false_trigger_rate": null
+      },
+      "negative": {
+        "requested_logical_runs": 24,
+        "valid_trials": 24,
+        "triggered_trials": 9,
+        "invalid_attempts": 0,
+        "trigger_rate": null,
+        "false_trigger_rate": 0.375
+      }
+    }
+  },
+  "prompts": {
+    "current": {
+      "listener-local-server": {
+        "requested_logical_runs": 3,
+        "valid_trials": 3,
+        "triggered_trials": 3,
+        "invalid_attempts": 0,
+        "trigger_rate": 1.0,
+        "false_trigger_rate": null
+      },
+      "gui-local-app": {
+        "requested_logical_runs": 3,
+        "valid_trials": 3,
+        "triggered_trials": 3,
+        "invalid_attempts": 0,
+        "trigger_rate": 1.0,
+        "false_trigger_rate": null
+      },
+      "watcher-without-port": {
+        "requested_logical_runs": 3,
+        "valid_trials": 3,
+        "triggered_trials": 3,
+        "invalid_attempts": 0,
+        "trigger_rate": 1.0,
+        "false_trigger_rate": null
+      },
+      "finite-detached-job": {
+        "requested_logical_runs": 3,
+        "valid_trials": 3,
+        "triggered_trials": 3,
+        "invalid_attempts": 0,
+        "trigger_rate": 1.0,
+        "false_trigger_rate": null
+      },
+      "timeout-residual-process": {
+        "requested_logical_runs": 3,
+        "valid_trials": 3,
+        "triggered_trials": 3,
+        "invalid_attempts": 0,
+        "trigger_rate": 1.0,
+        "false_trigger_rate": null
+      },
+      "keep-running-handoff": {
+        "requested_logical_runs": 3,
+        "valid_trials": 3,
+        "triggered_trials": 3,
+        "invalid_attempts": 0,
+        "trigger_rate": 1.0,
+        "false_trigger_rate": null
+      },
+      "orphan-wrapper": {
+        "requested_logical_runs": 3,
+        "valid_trials": 3,
+        "triggered_trials": 3,
+        "invalid_attempts": 0,
+        "trigger_rate": 1.0,
+        "false_trigger_rate": null
+      },
+      "readiness-failure": {
+        "requested_logical_runs": 3,
+        "valid_trials": 3,
+        "triggered_trials": 3,
+        "invalid_attempts": 0,
+        "trigger_rate": 1.0,
+        "false_trigger_rate": null
+      },
+      "sync-long-command": {
+        "requested_logical_runs": 3,
+        "valid_trials": 3,
+        "triggered_trials": 3,
+        "invalid_attempts": 0,
+        "trigger_rate": null,
+        "false_trigger_rate": 1.0
+      },
+      "observe-external-service": {
+        "requested_logical_runs": 3,
+        "valid_trials": 3,
+        "triggered_trials": 2,
+        "invalid_attempts": 0,
+        "trigger_rate": null,
+        "false_trigger_rate": 0.6666666666666666
+      },
+      "framework-complete-ownership": {
+        "requested_logical_runs": 3,
+        "valid_trials": 3,
+        "triggered_trials": 3,
+        "invalid_attempts": 0,
+        "trigger_rate": null,
+        "false_trigger_rate": 1.0
+      },
+      "docker-runtime": {
+        "requested_logical_runs": 3,
+        "valid_trials": 3,
+        "triggered_trials": 3,
+        "invalid_attempts": 0,
+        "trigger_rate": null,
+        "false_trigger_rate": 1.0
+      },
+      "kubernetes-runtime": {
+        "requested_logical_runs": 3,
+        "valid_trials": 3,
+        "triggered_trials": 3,
+        "invalid_attempts": 0,
+        "trigger_rate": null,
+        "false_trigger_rate": 1.0
+      },
+      "windows-service-runtime": {
+        "requested_logical_runs": 3,
+        "valid_trials": 3,
+        "triggered_trials": 3,
+        "invalid_attempts": 0,
+        "trigger_rate": null,
+        "false_trigger_rate": 1.0
+      },
+      "remote-ci": {
+        "requested_logical_runs": 3,
+        "valid_trials": 3,
+        "triggered_trials": 2,
+        "invalid_attempts": 0,
+        "trigger_rate": null,
+        "false_trigger_rate": 0.6666666666666666
+      },
+      "ide-owned-service": {
+        "requested_logical_runs": 3,
+        "valid_trials": 3,
+        "triggered_trials": 3,
+        "invalid_attempts": 0,
+        "trigger_rate": null,
+        "false_trigger_rate": 1.0
+      }
+    },
+    "candidate": {
+      "listener-local-server": {
+        "requested_logical_runs": 3,
+        "valid_trials": 3,
+        "triggered_trials": 3,
+        "invalid_attempts": 0,
+        "trigger_rate": 1.0,
+        "false_trigger_rate": null
+      },
+      "gui-local-app": {
+        "requested_logical_runs": 3,
+        "valid_trials": 3,
+        "triggered_trials": 3,
+        "invalid_attempts": 0,
+        "trigger_rate": 1.0,
+        "false_trigger_rate": null
+      },
+      "watcher-without-port": {
+        "requested_logical_runs": 3,
+        "valid_trials": 3,
+        "triggered_trials": 3,
+        "invalid_attempts": 0,
+        "trigger_rate": 1.0,
+        "false_trigger_rate": null
+      },
+      "finite-detached-job": {
+        "requested_logical_runs": 3,
+        "valid_trials": 3,
+        "triggered_trials": 3,
+        "invalid_attempts": 0,
+        "trigger_rate": 1.0,
+        "false_trigger_rate": null
+      },
+      "timeout-residual-process": {
+        "requested_logical_runs": 3,
+        "valid_trials": 3,
+        "triggered_trials": 3,
+        "invalid_attempts": 0,
+        "trigger_rate": 1.0,
+        "false_trigger_rate": null
+      },
+      "keep-running-handoff": {
+        "requested_logical_runs": 3,
+        "valid_trials": 3,
+        "triggered_trials": 3,
+        "invalid_attempts": 0,
+        "trigger_rate": 1.0,
+        "false_trigger_rate": null
+      },
+      "orphan-wrapper": {
+        "requested_logical_runs": 3,
+        "valid_trials": 3,
+        "triggered_trials": 3,
+        "invalid_attempts": 0,
+        "trigger_rate": 1.0,
+        "false_trigger_rate": null
+      },
+      "readiness-failure": {
+        "requested_logical_runs": 3,
+        "valid_trials": 3,
+        "triggered_trials": 3,
+        "invalid_attempts": 0,
+        "trigger_rate": 1.0,
+        "false_trigger_rate": null
+      },
+      "sync-long-command": {
+        "requested_logical_runs": 3,
+        "valid_trials": 3,
+        "triggered_trials": 1,
+        "invalid_attempts": 0,
+        "trigger_rate": null,
+        "false_trigger_rate": 0.3333333333333333
+      },
+      "observe-external-service": {
+        "requested_logical_runs": 3,
+        "valid_trials": 3,
+        "triggered_trials": 0,
+        "invalid_attempts": 0,
+        "trigger_rate": null,
+        "false_trigger_rate": 0.0
+      },
+      "framework-complete-ownership": {
+        "requested_logical_runs": 3,
+        "valid_trials": 3,
+        "triggered_trials": 2,
+        "invalid_attempts": 0,
+        "trigger_rate": null,
+        "false_trigger_rate": 0.6666666666666666
+      },
+      "docker-runtime": {
+        "requested_logical_runs": 3,
+        "valid_trials": 3,
+        "triggered_trials": 2,
+        "invalid_attempts": 0,
+        "trigger_rate": null,
+        "false_trigger_rate": 0.6666666666666666
+      },
+      "kubernetes-runtime": {
+        "requested_logical_runs": 3,
+        "valid_trials": 3,
+        "triggered_trials": 1,
+        "invalid_attempts": 0,
+        "trigger_rate": null,
+        "false_trigger_rate": 0.3333333333333333
+      },
+      "windows-service-runtime": {
+        "requested_logical_runs": 3,
+        "valid_trials": 3,
+        "triggered_trials": 0,
+        "invalid_attempts": 0,
+        "trigger_rate": null,
+        "false_trigger_rate": 0.0
+      },
+      "remote-ci": {
+        "requested_logical_runs": 3,
+        "valid_trials": 3,
+        "triggered_trials": 1,
+        "invalid_attempts": 0,
+        "trigger_rate": null,
+        "false_trigger_rate": 0.3333333333333333
+      },
+      "ide-owned-service": {
+        "requested_logical_runs": 3,
+        "valid_trials": 3,
+        "triggered_trials": 2,
+        "invalid_attempts": 0,
+        "trigger_rate": null,
+        "false_trigger_rate": 0.6666666666666666
+      }
+    }
+  },
+  "pairwise_rate_deltas": {
+    "current__to__candidate": {
+      "positive_trigger_rate_delta": 0.0,
+      "negative_false_trigger_rate_delta": -0.5416666666666666
+    }
+  }
+}

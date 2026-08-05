@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "stage": "calibration",
+  "status": "passed",
+  "outcome": "pass",
+  "exit_code": 0,
+  "selection_rule": "highest_complete_parity_workers",
+  "entries": [
+    {
+      "workers": 1,
+      "complete": true,
+      "parity": "match",
+      "run_path": "calibration-w1",
+      "manifest_sha256": "fadca8ca77acc92ac7a0ffbaf44b21f665aba8450cc17d74ad1f461bac8a1ce3",
+      "reason_codes": []
+    },
+    {
+      "workers": 2,
+      "complete": true,
+      "parity": "match",
+      "run_path": "calibration-w2",
+      "manifest_sha256": "69f1cc5d2ed7bc5b46258d71b6651ec1cfacf35585a7e77dcb4a6c8935b33237",
+      "reason_codes": []
+    },
+    {
+      "workers": 4,
+      "complete": true,
+      "parity": "match",
+      "run_path": "calibration-w4",
+      "manifest_sha256": "44d89c610ed239e4be7cc43f86878655ec7b9f1c5ca7a3d9415f95d6ccaa0dd9",
+      "reason_codes": []
+    }
+  ],
+  "selected": {
+    "workers": 4,
+    "complete": true,
+    "parity": "match",
+    "run_path": "calibration-w4",
+    "manifest_sha256": "44d89c610ed239e4be7cc43f86878655ec7b9f1c5ca7a3d9415f95d6ccaa0dd9",
+    "reason_codes": []
+  },
+  "reason_codes": []
+}
