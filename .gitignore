@@ -3,6 +3,9 @@ Thumbs.db
 *.tmp
 *.log
 node_modules/
+__pycache__/
+*.py[cod]
+.scratch/agent-process-lifecycle-skill/benchmarks/02-trigger-baseline/results/full-gpt56sol-run-1/
 dist/
 build/
 .env
