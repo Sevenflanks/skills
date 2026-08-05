@@ -45,3 +45,18 @@
 - Ticket 17 routing gate未重跑：benchmark/evaluator sources、trigger inputs、variants、current/candidate `SKILL.md`、exact model-facing description 與已發布 routing artifacts 的 bound commit blobs均未改變；既有 fixed base 仍為 96 valid／0 invalid、candidate +24／-0、parity matched、safety passed、exit code 0。
 - PR 14 本身只執行 deterministic publication preflight、parser、byte parity 與 structural validation，未重跑 Windows、Ticket 16 或 Ticket 17 paid/model suites。
 - Repository 內 `.omo/` continuation metadata 未修改、刪除、stage、hash 或納入 evidence。既有 abrupt-host-crash 與 same-user malicious tamper non-guarantees 均未改變。
+
+## Access-denied coverage remediation receipt（2026-08-05）
+
+本節補足 GitHub review `4860484721` 明示要求的 `access-denied` 負向測試；不改寫前兩份 publication／review remediation 歷史收據。
+
+- PR 11 explicit coverage commit：`10d173b`；Windows/Ticket16 evidence commit：`23a8e49`。Ticket-only instrumented helper copy以 `Marshal.SetLastPInvokeError(5)` 與 zero handle進入未修改的 production `NamedJobExists` classification block；未新增 production seam。
+- Historical pre-fix focused run：tests 3、pass 0、fail 3、`8658.4561ms`；current focused run：tests 3、pass 3、fail 0、`9903.1805ms`。Launch 與 Finalize public evidence 均包含 `Win32 error 5` 且 `named_job_absent = null`。
+- 第二次 Windows Ticket 11 至 15 acceptance：tests 65、pass 65、fail 0、`481610.4723ms`；parser 2/2、Node syntax 6/6、protected fixture residue、volume-root residue與 `npm run validate` 均 PASS。
+- Candidate／published helper bytes未變；LF-normalized helper SHA-256 仍為 `b24ea67d08e765000e4b880b99cdc8ac92a54e62ead1c65537a3905ce9ddcc73`。
+- 第一個本輪 Ticket16 canonical attempt 因 `finite-detached-timeout-stop.lifecycle_actions` 單一 model assertion失敗而在 publication staging前 fail-closed；既有 canonical 17/17 evidence與 lock/staging state均未受影響。維護者另行明確授權一次額外完整 rerun，該 run通過 17/17並原子發布；新 receipt hash為 `e991856e96cbdad4448b449dfe8b596a4bb9cbab6e7b2b2f4117c12c8e34dd3f`，routing hash仍為 `d9f6ff89ef0edae2ef3bf39b70de60f412a159ba309f89d74ec71be396a08be9`。
+- PR 12 rebased head：`58dd87f0e889e119847fd549f3245f67901923a0`；12 commits range-diff全部 `=`，validate PASS。
+- PR 13 rebased head：`6a87f34b6b2df14b6f6940413acafc4ffb747593`；4 commits range-diff全部 `=`，Ticket17 的38個 bound commit blobs byte-identical，validate PASS，因此未重跑96-trial routing gate。
+- PR 14 rebase後既有8 commits range-diff全部 `=`；access-denied publication preflight commit為 `90ec231`。Candidate＋publication contracts tests 16、pass 16、fail 0、`176.6319ms`；PowerShell parser 4/4、candidate/published parity 2/2與 `npm run validate` 均 PASS。
+- Published helper與 holder相對前一 PR 14 head的 blobs未改變；本輪 PR 14只更新 deterministic preflight與本收據。
+- `.omo/` continuation metadata未修改、刪除、複製、stage、hash或納入 evidence；既有 non-guarantees未改變，也不宣稱 alternate-account或真實 ACL identity-switch coverage。
