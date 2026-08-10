@@ -147,6 +147,27 @@ class HistoricalEvidenceMigrationTests(unittest.TestCase):
             self.assertEqual(raw_before, _raw_hashes(evidence))
             self.assertTrue((evidence / "logs/current__prompt__run-1__attempt-1.stdout.ndjson").is_file())
 
+    def test_migration_when_declared_stream_traverses_outside_logs_rejects_before_mutating(self) -> None:
+        with tempfile.TemporaryDirectory(dir=BENCHMARK_ROOT) as temporary_directory:
+            benchmark_root = Path(temporary_directory)
+            evidence = benchmark_root / "results/evidence"
+            _write_legacy_evidence(evidence)
+            outside_file = evidence.parent / "outside-file"
+            outside_file.write_bytes(b"outside evidence")
+            manifest = _document(evidence / "manifest.json")
+            environment = manifest["observed_environment"]["opencode"]
+            environment["stdout_path"] = "logs/../../outside-file"
+            environment["stdout_sha256"] = _hash(outside_file)
+            _write_document(evidence / "manifest.json", manifest, b"\n")
+            evidence_before = _evidence_bytes(evidence)
+            outside_before = outside_file.read_bytes()
+
+            with self.assertRaises(MigrationError):
+                plan_migration(benchmark_root)
+
+            self.assertEqual(evidence_before, _evidence_bytes(evidence))
+            self.assertEqual(outside_before, outside_file.read_bytes())
+
 
 def _write_legacy_evidence(root: Path, *, reference: Path | None = None, duplicate_trial: bool = False) -> dict[str, str]:
     logs = root / "logs"
@@ -196,6 +217,10 @@ def _raw_hashes(root: Path) -> dict[str, str]:
 
 def _raw_bytes(root: Path) -> dict[str, bytes]:
     return {path.relative_to(root).as_posix(): path.read_bytes() for path in sorted((root / "logs").iterdir())}
+
+
+def _evidence_bytes(root: Path) -> dict[str, bytes]:
+    return {path.relative_to(root).as_posix(): path.read_bytes() for path in sorted(root.rglob("*")) if path.is_file()}
 
 
 def _compact_raw_bytes(legacy: dict[str, bytes]) -> dict[str, bytes]:

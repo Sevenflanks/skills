@@ -139,9 +139,12 @@ def _rewrite_evidence(root: Path, manifest: dict[str, JsonValue]) -> tuple[dict[
 def _rewrite_stream(root: Path, document: dict[str, JsonValue], paths: StreamPaths, changes: dict[str, str]) -> None:
     for field, destination in (("stdout_path", paths.stdout), ("stderr_path", paths.stderr)):
         source = _string(document.get(field), field)
-        source_path = root / source
+        components = source.split("/")
+        if components[0] != "logs" or ".." in components:
+            raise MigrationError(f"declared stream does not match {source}")
+        source_path = (root / Path(*components)).resolve()
         expected = _string(document.get(field.replace("path", "sha256")), field.replace("path", "sha256"))
-        if not source.startswith("logs/") or not source_path.is_file() or _sha256(source_path) != expected:
+        if not source_path.is_relative_to((root / "logs").resolve()) or not source_path.is_file() or _sha256(source_path) != expected:
             raise MigrationError(f"declared stream does not match {source}")
         previous = changes.setdefault(source, destination)
         if previous != destination:
