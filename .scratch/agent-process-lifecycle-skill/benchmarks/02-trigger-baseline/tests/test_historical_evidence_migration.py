@@ -10,6 +10,7 @@ from pathlib import Path
 BENCHMARK_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BENCHMARK_ROOT))
 
+from trigger_benchmark.artifact_paths import preflight_paths, trial_paths, version_paths
 from trigger_benchmark.historical_evidence_migration import MigrationError, apply_migration, plan_migration
 
 
@@ -42,6 +43,68 @@ class HistoricalEvidenceMigrationTests(unittest.TestCase):
             self.assertEqual(record["stdout_path"], "logs/t-fixture-1.out")
             self.assertIn("logs/t-fixture-1.out", manifest["artifact_hashes"])
             self.assertNotIn("logs/current__prompt__run-1__attempt-1.stdout.ndjson", manifest["artifact_hashes"])
+
+    def test_migration_when_gate_documents_reference_legacy_manifests_rehashes_every_cascade_and_preserves_contracts(self) -> None:
+        with tempfile.TemporaryDirectory(dir=BENCHMARK_ROOT) as temporary_directory:
+            benchmark_root = Path(temporary_directory)
+            results = benchmark_root / "results"
+            calibration = results / "calibration"
+            base = results / "base"
+            _write_legacy_evidence(calibration)
+            _write_legacy_evidence(base, reference=calibration)
+            calibration_raw = _raw_bytes(calibration)
+            base_raw = _raw_bytes(base)
+            base_trials = base / "trials.ndjson"
+            base_trials.write_bytes(base_trials.read_bytes().replace(b"\n", b"\r\n"))
+            base_manifest = _document(base / "manifest.json")
+            base_manifest["artifact_hashes"]["trials.ndjson"] = _hash(base_trials)
+            _write_document(base / "manifest.json", base_manifest, b"\r\n")
+            original_calibration_hash = _hash(calibration / "manifest.json")
+            original_base_hash = _hash(base / "manifest.json")
+            worker_calibration = results / "worker-calibration.json"
+            calibration_entry = {"workers": 1, "complete": True, "parity": "match", "run_path": "calibration", "manifest_sha256": original_calibration_hash, "reason_codes": []}
+            _write_document(worker_calibration, {"schema_version": 1, "stage": "calibration", "status": "passed", "outcome": "pass", "exit_code": 0, "selection_rule": "highest_complete_parity_workers", "entries": [calibration_entry], "selected": calibration_entry, "reason_codes": []}, b"\r\n")
+            decision_path = results / "base-decision" / "decision.json"
+            decision_path.parent.mkdir()
+            _write_document(decision_path, {"schema_version": 1, "stage": "base", "status": "passed", "outcome": "pass", "exit_code": 0, "artifact_hashes": {"base/manifest.json": original_base_hash}}, b"\r\n")
+            report_path = decision_path.with_name("report.md")
+            report_path.write_bytes(b"# stale report\r\n")
+
+            receipt = apply_migration(plan_migration(benchmark_root))
+
+            expected_calibration_hash = _hash(calibration / "manifest.json")
+            expected_base_hash = _hash(base / "manifest.json")
+            self.assertNotEqual(original_calibration_hash, expected_calibration_hash)
+            self.assertNotEqual(original_base_hash, expected_base_hash)
+            self.assertEqual(_raw_bytes(calibration), _compact_raw_bytes(calibration_raw))
+            self.assertEqual(_raw_bytes(base), _compact_raw_bytes(base_raw))
+            expected_raw_hashes = {
+                f"{root.relative_to(benchmark_root).as_posix()}/{relative}": _sha256(content)
+                for root, raw in ((calibration, calibration_raw), (base, base_raw))
+                for relative, content in _compact_raw_bytes(raw).items()
+            }
+            self.assertEqual(receipt.raw_sha256_before, expected_raw_hashes)
+            self.assertEqual(receipt.raw_sha256_after, expected_raw_hashes)
+            self.assertEqual(_document(base / "manifest.json")["reference_manifest"]["sha256"], expected_calibration_hash)
+            migrated_calibration = _document(worker_calibration)
+            self.assertEqual(migrated_calibration["entries"][0]["manifest_sha256"], expected_calibration_hash)
+            self.assertEqual(migrated_calibration["selected"]["manifest_sha256"], expected_calibration_hash)
+            decision = _document(decision_path)
+            self.assertEqual(decision["artifact_hashes"]["base/manifest.json"], expected_base_hash)
+            expected_report = "\r\n".join(["# Routing Release Gate", "", *[f"- {key}: `{json.dumps(value, sort_keys=True)}`" for key, value in decision.items()]]) + "\r\n"
+            self.assertEqual(report_path.read_bytes(), expected_report.encode("utf-8"))
+            self.assertNotIn(b"\r\n", (calibration / "manifest.json").read_bytes())
+            _assert_crlf(self, (base / "manifest.json").read_bytes())
+            _assert_crlf(self, base_trials.read_bytes())
+            _assert_crlf(self, worker_calibration.read_bytes())
+            _assert_crlf(self, decision_path.read_bytes())
+            _assert_crlf(self, report_path.read_bytes())
+
+            replanned = plan_migration(benchmark_root)
+
+            self.assertEqual(replanned.moves, ())
+            self.assertEqual(replanned.writes, ())
+            self.assertEqual(apply_migration(replanned).documents, 0)
 
     def test_migration_when_compact_evidence_is_replanned_is_a_noop(self) -> None:
         with tempfile.TemporaryDirectory(dir=BENCHMARK_ROOT) as temporary_directory:
@@ -128,7 +191,29 @@ def _record(fixture_id: str, streams: dict[str, bytes]) -> dict[str, object]:
 
 
 def _raw_hashes(root: Path) -> dict[str, str]:
-    return {path.relative_to(root).as_posix(): _hash(path) for path in sorted((root / "logs").iterdir())}
+    return {relative: _sha256(content) for relative, content in _raw_bytes(root).items()}
+
+
+def _raw_bytes(root: Path) -> dict[str, bytes]:
+    return {path.relative_to(root).as_posix(): path.read_bytes() for path in sorted((root / "logs").iterdir())}
+
+
+def _compact_raw_bytes(legacy: dict[str, bytes]) -> dict[str, bytes]:
+    version = version_paths()
+    preflight = preflight_paths("current", 1)
+    trial = trial_paths("fixture-1")
+    return {
+        version.stdout: legacy["logs/environment-opencode-version.stdout.txt"],
+        version.stderr: legacy["logs/environment-opencode-version.stderr.txt"],
+        preflight.stdout: legacy["logs/preflight-current-fixture-preflight-attempt-1.stdout.txt"],
+        preflight.stderr: legacy["logs/preflight-current-fixture-preflight-attempt-1.stderr.txt"],
+        trial.stdout: legacy["logs/current__prompt__run-1__attempt-1.stdout.ndjson"],
+        trial.stderr: legacy["logs/current__prompt__run-1__attempt-1.stderr.txt"],
+    }
+
+
+def _write_document(path: Path, document: dict[str, object], newline: bytes) -> None:
+    path.write_bytes((json.dumps(document, indent=2) + "\n").replace("\n", newline.decode("utf-8")).encode("utf-8"))
 
 
 def _records(root: Path) -> list[dict[str, object]]:
