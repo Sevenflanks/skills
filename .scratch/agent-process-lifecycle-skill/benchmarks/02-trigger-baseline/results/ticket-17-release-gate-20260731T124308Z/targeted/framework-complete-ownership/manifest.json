@@ -89,8 +89,8 @@
       "fixture_candidate_count": 1,
       "candidate_name": "agent-process-lifecycle",
       "candidate_location": "C:\\develop\\w\\r\\.scratch\\agent-process-lifecycle-skill\\benchmarks\\02-trigger-baseline\\results\\ticket-17-release-gate-20260731T124308Z\\targeted\\framework-complete-ownership\\fixtures\\tmpey7gt8wq\\.opencode\\skills\\agent-process-lifecycle\\SKILL.md",
-      "stdout_path": "logs/preflight-candidate-tmpey7gt8wq-attempt-1.stdout.txt",
-      "stderr_path": "logs/preflight-candidate-tmpey7gt8wq-attempt-1.stderr.txt",
+      "stdout_path": "logs/p-candidate-1.out",
+      "stderr_path": "logs/p-candidate-1.err",
       "successful_attempt": 1,
       "attempts": [
         {
@@ -108,8 +108,8 @@
           "fixture_candidate_count": 1,
           "candidate_name": "agent-process-lifecycle",
           "candidate_location": "C:\\develop\\w\\r\\.scratch\\agent-process-lifecycle-skill\\benchmarks\\02-trigger-baseline\\results\\ticket-17-release-gate-20260731T124308Z\\targeted\\framework-complete-ownership\\fixtures\\tmpey7gt8wq\\.opencode\\skills\\agent-process-lifecycle\\SKILL.md",
-          "stdout_path": "logs/preflight-candidate-tmpey7gt8wq-attempt-1.stdout.txt",
-          "stderr_path": "logs/preflight-candidate-tmpey7gt8wq-attempt-1.stderr.txt",
+          "stdout_path": "logs/p-candidate-1.out",
+          "stderr_path": "logs/p-candidate-1.err",
           "attempt": 1,
           "outcome": "success"
         }
@@ -118,7 +118,7 @@
   ],
   "reference_manifest": {
     "path": "results/ticket-17-release-gate-20260731T124308Z/base/manifest.json",
-    "sha256": "4f0005929d8e7ff9c50da3cc3606b71383751b7e72879eea35de02fbec61d85f",
+    "sha256": "a192cb5d8ed043328c91c5274cb4ae8df9ace79a582619a9bb6f3f3eaf2ca6ed",
     "expected_phase": "fixed-base"
   },
   "environment_parity": {
@@ -134,8 +134,8 @@
       ],
       "return_code": 0,
       "raw_output": "1.18.9\n",
-      "stdout_path": "logs/environment-opencode-version.stdout.txt",
-      "stderr_path": "logs/environment-opencode-version.stderr.txt",
+      "stdout_path": "logs/v.out",
+      "stderr_path": "logs/v.err",
       "stdout_sha256": "13d998dc1d8d8589fdf6090020f5e59ec9875126beda74ef6e81f6e9c638697c",
       "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     },
@@ -150,24 +150,24 @@
   "artifact_hashes": {
     "aggregate.json": "bb7077f6f54bf12ac49bffc4f58e2cf297bcdc8f54e3d9409e554b1686a06404",
     "aggregate.md": "7dd7fbb9a5744f1d34b4d51b5e3494a9396ba914c45f3382cbb3b24f2f8a0581",
-    "trials.ndjson": "7d5dc7017eb7f0e888bc58ecacff5772de93ed977cc194705cad4dd4a451c506",
-    "logs/candidate__framework-complete-ownership__run-1__attempt-1.stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "logs/candidate__framework-complete-ownership__run-1__attempt-1.stdout.ndjson": "789aa2f4488398ab1fead7436a964c386273648a67d265dbbc34549820a68586",
-    "logs/candidate__framework-complete-ownership__run-2__attempt-1.stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "logs/candidate__framework-complete-ownership__run-2__attempt-1.stdout.ndjson": "c0db4d8b0d0bfdc577ac4f3d8d444eb71ba6b3b57c4b84fcf453b9e748432fa7",
-    "logs/candidate__framework-complete-ownership__run-3__attempt-1.stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "logs/candidate__framework-complete-ownership__run-3__attempt-1.stdout.ndjson": "2fb5daf0e93091f196f58830a5fa1f64116b1bd0d11eabe75974afe608dfd2ea",
-    "logs/candidate__framework-complete-ownership__run-4__attempt-1.stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "logs/candidate__framework-complete-ownership__run-4__attempt-1.stdout.ndjson": "da90c1b2d7610ea250adcc854cb78c3c8c85922e4e03bb1d4bf2839b793c54f3",
-    "logs/candidate__framework-complete-ownership__run-5__attempt-1.stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "logs/candidate__framework-complete-ownership__run-5__attempt-1.stdout.ndjson": "cc668c379368df61503b19e5ee41ad382bded490860f903e2c9ea31e2a28065d",
-    "logs/candidate__framework-complete-ownership__run-6__attempt-1.stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "logs/candidate__framework-complete-ownership__run-6__attempt-1.stdout.ndjson": "e29b7b69f28fa80bfd9411b902ccffbf4fb47954a8404f129a7785bcd475bbcb",
-    "logs/candidate__framework-complete-ownership__run-7__attempt-1.stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "logs/candidate__framework-complete-ownership__run-7__attempt-1.stdout.ndjson": "732f4beb1c0fd1e981f2812d57c0b1d674890b215cf75ae7991909545689cee6",
-    "logs/environment-opencode-version.stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "logs/environment-opencode-version.stdout.txt": "13d998dc1d8d8589fdf6090020f5e59ec9875126beda74ef6e81f6e9c638697c",
-    "logs/preflight-candidate-tmpey7gt8wq-attempt-1.stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "logs/preflight-candidate-tmpey7gt8wq-attempt-1.stdout.txt": "f23dff7cc5c1fdde263594e7753afe0d2ddcc531161162cfab9fe02d4392853a"
+    "trials.ndjson": "1a37d5e841e6e2bacc4c16a8b691fa566031c041ea67889073f4039d590f2e8e",
+    "logs/t-tmp6pk1ef6a.err": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "logs/t-tmp6pk1ef6a.out": "789aa2f4488398ab1fead7436a964c386273648a67d265dbbc34549820a68586",
+    "logs/t-tmp17zco1ip.err": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "logs/t-tmp17zco1ip.out": "c0db4d8b0d0bfdc577ac4f3d8d444eb71ba6b3b57c4b84fcf453b9e748432fa7",
+    "logs/t-tmphcx3hitn.err": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "logs/t-tmphcx3hitn.out": "2fb5daf0e93091f196f58830a5fa1f64116b1bd0d11eabe75974afe608dfd2ea",
+    "logs/t-tmpi4gmimob.err": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "logs/t-tmpi4gmimob.out": "da90c1b2d7610ea250adcc854cb78c3c8c85922e4e03bb1d4bf2839b793c54f3",
+    "logs/t-tmp7oacghp9.err": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "logs/t-tmp7oacghp9.out": "cc668c379368df61503b19e5ee41ad382bded490860f903e2c9ea31e2a28065d",
+    "logs/t-tmpbc7088b1.err": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "logs/t-tmpbc7088b1.out": "e29b7b69f28fa80bfd9411b902ccffbf4fb47954a8404f129a7785bcd475bbcb",
+    "logs/t-tmpxuzx96k5.err": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "logs/t-tmpxuzx96k5.out": "732f4beb1c0fd1e981f2812d57c0b1d674890b215cf75ae7991909545689cee6",
+    "logs/v.err": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "logs/v.out": "13d998dc1d8d8589fdf6090020f5e59ec9875126beda74ef6e81f6e9c638697c",
+    "logs/p-candidate-1.err": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "logs/p-candidate-1.out": "f23dff7cc5c1fdde263594e7753afe0d2ddcc531161162cfab9fe02d4392853a"
   }
 }

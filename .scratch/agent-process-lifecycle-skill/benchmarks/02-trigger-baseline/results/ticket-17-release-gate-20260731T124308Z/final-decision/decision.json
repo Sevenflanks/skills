@@ -124,10 +124,10 @@
     "variants/candidate/SKILL.md": "a8c121baef08599cfdc4e751b69788823260c71c179da571435c680c4d6b0add"
   },
   "artifact_hashes": {
-    "base/manifest.json": "4f0005929d8e7ff9c50da3cc3606b71383751b7e72879eea35de02fbec61d85f",
+    "base/manifest.json": "a192cb5d8ed043328c91c5274cb4ae8df9ace79a582619a9bb6f3f3eaf2ca6ed",
     "base/aggregate.json": "99cfe959e07dfe54d76ea44418c0d566c18a224e780435a92704e18fb4e71929",
-    "targeted/docker-runtime/manifest.json": "f1a891a3fb321f3420e9d70fc904d413292252bbc77e25997c70388e6ed640eb",
-    "targeted/framework-complete-ownership/manifest.json": "ce1d371d19e3393f9f73dad60aa3164932251f7ea876802b21f62b806c29e97f",
-    "targeted/ide-owned-service/manifest.json": "c956b410dc5176e7d7b598b34514bd8a9c44acd791b7549b9f4388c0ceee608a"
+    "targeted/docker-runtime/manifest.json": "903ab0886aa5eaaa47e04f78112f769834fc90f8c7901377d9e9a1eb941c1e8b",
+    "targeted/framework-complete-ownership/manifest.json": "3d04eb722e8a46db6c415cb7c529cc1c8db8dc48e9dd4d33ca4a0e90e5ca3e50",
+    "targeted/ide-owned-service/manifest.json": "2e1b40c660d0f015c3266e93ac5e594ba7de1cd408a7f78fa48be4749ec50d4f"
   }
 }

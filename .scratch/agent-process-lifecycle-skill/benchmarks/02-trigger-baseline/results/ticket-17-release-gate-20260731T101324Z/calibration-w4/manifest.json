@@ -91,8 +91,8 @@
       "fixture_candidate_count": 1,
       "candidate_name": "playwright-server-lifecycle",
       "candidate_location": "C:\\develop\\projects\\skills-apl-routing-gate\\.scratch\\agent-process-lifecycle-skill\\benchmarks\\02-trigger-baseline\\results\\ticket-17-release-gate-20260731T101324Z\\calibration-w4\\fixtures\\tmppqyl6nm6\\.opencode\\skills\\playwright-server-lifecycle\\SKILL.md",
-      "stdout_path": "logs/preflight-current-tmppqyl6nm6-attempt-1.stdout.txt",
-      "stderr_path": "logs/preflight-current-tmppqyl6nm6-attempt-1.stderr.txt",
+      "stdout_path": "logs/p-current-1.out",
+      "stderr_path": "logs/p-current-1.err",
       "successful_attempt": 1,
       "attempts": [
         {
@@ -110,8 +110,8 @@
           "fixture_candidate_count": 1,
           "candidate_name": "playwright-server-lifecycle",
           "candidate_location": "C:\\develop\\projects\\skills-apl-routing-gate\\.scratch\\agent-process-lifecycle-skill\\benchmarks\\02-trigger-baseline\\results\\ticket-17-release-gate-20260731T101324Z\\calibration-w4\\fixtures\\tmppqyl6nm6\\.opencode\\skills\\playwright-server-lifecycle\\SKILL.md",
-          "stdout_path": "logs/preflight-current-tmppqyl6nm6-attempt-1.stdout.txt",
-          "stderr_path": "logs/preflight-current-tmppqyl6nm6-attempt-1.stderr.txt",
+          "stdout_path": "logs/p-current-1.out",
+          "stderr_path": "logs/p-current-1.err",
           "attempt": 1,
           "outcome": "success"
         }
@@ -132,8 +132,8 @@
       "fixture_candidate_count": 1,
       "candidate_name": "agent-process-lifecycle",
       "candidate_location": "C:\\develop\\projects\\skills-apl-routing-gate\\.scratch\\agent-process-lifecycle-skill\\benchmarks\\02-trigger-baseline\\results\\ticket-17-release-gate-20260731T101324Z\\calibration-w4\\fixtures\\tmpeflajc0j\\.opencode\\skills\\agent-process-lifecycle\\SKILL.md",
-      "stdout_path": "logs/preflight-candidate-tmpeflajc0j-attempt-1.stdout.txt",
-      "stderr_path": "logs/preflight-candidate-tmpeflajc0j-attempt-1.stderr.txt",
+      "stdout_path": "logs/p-candidate-1.out",
+      "stderr_path": "logs/p-candidate-1.err",
       "successful_attempt": 1,
       "attempts": [
         {
@@ -151,8 +151,8 @@
           "fixture_candidate_count": 1,
           "candidate_name": "agent-process-lifecycle",
           "candidate_location": "C:\\develop\\projects\\skills-apl-routing-gate\\.scratch\\agent-process-lifecycle-skill\\benchmarks\\02-trigger-baseline\\results\\ticket-17-release-gate-20260731T101324Z\\calibration-w4\\fixtures\\tmpeflajc0j\\.opencode\\skills\\agent-process-lifecycle\\SKILL.md",
-          "stdout_path": "logs/preflight-candidate-tmpeflajc0j-attempt-1.stdout.txt",
-          "stderr_path": "logs/preflight-candidate-tmpeflajc0j-attempt-1.stderr.txt",
+          "stdout_path": "logs/p-candidate-1.out",
+          "stderr_path": "logs/p-candidate-1.err",
           "attempt": 1,
           "outcome": "success"
         }
@@ -173,8 +173,8 @@
       ],
       "return_code": 0,
       "raw_output": "1.18.9\n",
-      "stdout_path": "logs/environment-opencode-version.stdout.txt",
-      "stderr_path": "logs/environment-opencode-version.stderr.txt",
+      "stdout_path": "logs/v.out",
+      "stderr_path": "logs/v.err",
       "stdout_sha256": "13d998dc1d8d8589fdf6090020f5e59ec9875126beda74ef6e81f6e9c638697c",
       "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     },
@@ -189,20 +189,20 @@
   "artifact_hashes": {
     "aggregate.json": "b90f5a9d52bc19d30133f02a2ec0e567594813688845134a919ee9097c9b871b",
     "aggregate.md": "1ef4497fa80a2b4fbfabad15e1a11e230ef83e118a88f09d69df7cffcb7d5ed1",
-    "trials.ndjson": "13d1c90d2479ee0690f2a19d99086d6b7390ee6c869b8fea73aae87401b9586e",
-    "logs/candidate__listener-local-server__run-1__attempt-1.stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "logs/candidate__listener-local-server__run-1__attempt-1.stdout.ndjson": "5e3c54eeed0b1066d1c3ea4f6807473b3cb79c8e505c8eef4b780578b5bc3980",
-    "logs/candidate__sync-long-command__run-1__attempt-1.stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "logs/candidate__sync-long-command__run-1__attempt-1.stdout.ndjson": "a735af8dd67edd17ef196ff6f4e2a944c606984a2af1875cb5cbbb6967c395f8",
-    "logs/current__listener-local-server__run-1__attempt-1.stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "logs/current__listener-local-server__run-1__attempt-1.stdout.ndjson": "517a5dc8ad37fd748da9615c057e82ab4656864b00f642d5c1b25e0fe50f3988",
-    "logs/current__sync-long-command__run-1__attempt-1.stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "logs/current__sync-long-command__run-1__attempt-1.stdout.ndjson": "9d797ec27dc7a431fe160780ad96d7cc4aa72f31529608cd7499d66dbb28b558",
-    "logs/environment-opencode-version.stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "logs/environment-opencode-version.stdout.txt": "13d998dc1d8d8589fdf6090020f5e59ec9875126beda74ef6e81f6e9c638697c",
-    "logs/preflight-candidate-tmpeflajc0j-attempt-1.stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "logs/preflight-candidate-tmpeflajc0j-attempt-1.stdout.txt": "39fb4e6e839afe5eca7dbbecd3d0b6b1bed5c5efe334acce904ea6afbcc7425d",
-    "logs/preflight-current-tmppqyl6nm6-attempt-1.stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "logs/preflight-current-tmppqyl6nm6-attempt-1.stdout.txt": "f4567f75daa0d0d700a9afcdd340c4851cbabb523922da72029ecf01fd41ee12"
+    "trials.ndjson": "84d60b739b7f5e96181cada3b3fbc3f85eff6c3344a521aef1d650cba03f80b9",
+    "logs/t-tmpj6m897r_.err": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "logs/t-tmpj6m897r_.out": "5e3c54eeed0b1066d1c3ea4f6807473b3cb79c8e505c8eef4b780578b5bc3980",
+    "logs/t-tmp_acjxpt9.err": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "logs/t-tmp_acjxpt9.out": "a735af8dd67edd17ef196ff6f4e2a944c606984a2af1875cb5cbbb6967c395f8",
+    "logs/t-tmpitxcs6is.err": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "logs/t-tmpitxcs6is.out": "517a5dc8ad37fd748da9615c057e82ab4656864b00f642d5c1b25e0fe50f3988",
+    "logs/t-tmpzx0wt9nu.err": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "logs/t-tmpzx0wt9nu.out": "9d797ec27dc7a431fe160780ad96d7cc4aa72f31529608cd7499d66dbb28b558",
+    "logs/v.err": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "logs/v.out": "13d998dc1d8d8589fdf6090020f5e59ec9875126beda74ef6e81f6e9c638697c",
+    "logs/p-candidate-1.err": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "logs/p-candidate-1.out": "39fb4e6e839afe5eca7dbbecd3d0b6b1bed5c5efe334acce904ea6afbcc7425d",
+    "logs/p-current-1.err": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "logs/p-current-1.out": "f4567f75daa0d0d700a9afcdd340c4851cbabb523922da72029ecf01fd41ee12"
   }
 }

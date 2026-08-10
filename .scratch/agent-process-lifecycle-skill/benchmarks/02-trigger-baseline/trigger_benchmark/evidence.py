@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+from .artifact_paths import trial_paths, version_paths
 from .completeness import check_matrix_completeness
 from .evidence_format import EvidenceIncompleteError, EvidenceValidationError, JsonValue, document as _document, document_text as _document_text, hash_mapping as _hash_mapping, integer as _integer, mapping as _mapping, number as _number, optional_integer as _optional_integer, phase as _phase, sha256 as _sha256, string as _string, strings as _strings
 from .events import classify_ndjson
@@ -140,6 +141,9 @@ def _validate_artifacts(root: Path, hashes: dict[str, str]) -> None:
 def _validate_environment_streams(root: Path, opencode: dict[str, JsonValue]) -> None:
     stdout = _evidence_path(root, _string(opencode.get("stdout_path"), "version.stdout_path"))
     stderr = _evidence_path(root, _string(opencode.get("stderr_path"), "version.stderr_path"))
+    paths = version_paths()
+    if str(stdout.relative_to(root)).replace("\\", "/") != paths.stdout or str(stderr.relative_to(root)).replace("\\", "/") != paths.stderr:
+        raise EvidenceValidationError("version raw streams do not use compact names")
     if _sha256(stdout) != _string(opencode.get("stdout_sha256"), "version.stdout_sha256") or _sha256(stderr) != _string(opencode.get("stderr_sha256"), "version.stderr_sha256"):
         raise EvidenceValidationError("version raw stream hash does not match manifest")
     if stdout.read_text(encoding="utf-8") + stderr.read_text(encoding="utf-8") != _string(opencode.get("raw_output"), "version.raw_output"):
@@ -221,6 +225,9 @@ def _validate_records(root: Path, records: tuple[TrialRecord, ...], shape: RunSh
 
 
 def _validate_raw_record(root: Path, record: TrialRecord, candidate_name: str) -> None:
+    paths = trial_paths(record.fixture_id)
+    if record.stdout_path != paths.stdout or record.stderr_path != paths.stderr:
+        raise EvidenceValidationError("trial raw streams do not use compact names")
     stdout_path = _evidence_path(root, record.stdout_path)
     stderr_path = _evidence_path(root, record.stderr_path)
     if _sha256(stdout_path) != record.stdout_sha256 or _sha256(stderr_path) != record.stderr_sha256:

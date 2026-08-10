@@ -130,10 +130,10 @@ class ReferenceManifestContractTests(unittest.TestCase):
                 },
             )
             opencode = mapping(mapping(manifest.get("observed_environment"), "observed_environment").get("opencode"), "observed_environment.opencode")
-            self.assertEqual(opencode["stdout_path"], "logs/environment-opencode-version.stdout.txt")
-            self.assertEqual(opencode["stderr_path"], "logs/environment-opencode-version.stderr.txt")
-            self.assertEqual(opencode["stdout_sha256"], hash_file(output_directory / "logs" / "environment-opencode-version.stdout.txt"))
-            self.assertEqual(opencode["stderr_sha256"], hash_file(output_directory / "logs" / "environment-opencode-version.stderr.txt"))
+            self.assertEqual(opencode["stdout_path"], "logs/v.out")
+            self.assertEqual(opencode["stderr_path"], "logs/v.err")
+            self.assertEqual(opencode["stdout_sha256"], hash_file(output_directory / "logs/v.out"))
+            self.assertEqual(opencode["stderr_sha256"], hash_file(output_directory / "logs/v.err"))
 
     def test_evidence_when_gated_phase_has_no_reference_record_rejects(self) -> None:
         plan = make_plan(RunPhase.FIXED_BASE)

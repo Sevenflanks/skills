@@ -4,6 +4,7 @@ import tempfile
 from dataclasses import dataclass, replace
 from pathlib import Path
 
+from .artifact_paths import preflight_paths
 from .evidence_format import JsonArray, JsonObject, json_array, json_object
 from .fixture import create_fixture
 from .models import RunOptions, Variant
@@ -23,7 +24,7 @@ def run_preflight(options: RunOptions, variants: tuple[Variant, ...], command: s
         with tempfile.TemporaryDirectory(dir=options.output_directory / "fixtures", ignore_cleanup_errors=True) as temporary_directory:
             fixture = create_fixture(Path(temporary_directory), variant)
             first = verify_candidate_discovery(command, fixture, variant)
-            first_item = _persist_capture(options.output_directory, variant, first, 1)
+            first_item = _persist_capture(options.output_directory, variant.id, first, 1)
             if first.failure is None:
                 evidence.append(_preflight_document(first_item, (first_item,), 1))
                 continue
@@ -31,7 +32,7 @@ def run_preflight(options: RunOptions, variants: tuple[Variant, ...], command: s
                 evidence.append(_failed_preflight_document((first_item,)))
                 return PreflightFailure(evidence, str(first.failure))
             second = verify_candidate_discovery(command, fixture, variant)
-            second_item = _persist_capture(options.output_directory, variant, second, 2)
+            second_item = _persist_capture(options.output_directory, variant.id, second, 2)
             attempts = first_item, second_item
             if second.failure is not None:
                 evidence.append(_failed_preflight_document(attempts))
@@ -40,10 +41,10 @@ def run_preflight(options: RunOptions, variants: tuple[Variant, ...], command: s
     return evidence
 
 
-def _persist_capture(output_directory: Path, variant: Variant, capture: PreflightCapture, attempt: int) -> PreflightCapture:
-    prefix = f"preflight-{variant.id}-{capture.evidence.fixture_id}-attempt-{attempt}"
-    stdout_path = output_directory / "logs" / f"{prefix}.stdout.txt"
-    stderr_path = output_directory / "logs" / f"{prefix}.stderr.txt"
+def _persist_capture(output_directory: Path, variant_id: str, capture: PreflightCapture, attempt: int) -> PreflightCapture:
+    paths = preflight_paths(variant_id, attempt)
+    stdout_path = output_directory / paths.stdout
+    stderr_path = output_directory / paths.stderr
     stdout_path.write_text(capture.stdout, encoding="utf-8", newline="\n")
     stderr_path.write_text(capture.stderr, encoding="utf-8", newline="\n")
     evidence = replace(capture.evidence, stdout_path=str(stdout_path.relative_to(output_directory)).replace("\\", "/"), stderr_path=str(stderr_path.relative_to(output_directory)).replace("\\", "/"))

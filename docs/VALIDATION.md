@@ -14,6 +14,12 @@ npm run validate
 node scripts/validate-skills.mjs
 ```
 
+如需單獨檢查 tracked path 預算，可執行：
+
+```powershell
+node scripts/check-tracked-path-budget.mjs
+```
+
 ## 檢查項目
 
 驗證腳本會檢查：
@@ -36,7 +42,8 @@ node scripts/validate-skills.mjs
 - 若存在 `evals/evals.json`，它必須是合法 JSON。
 - evals 的 `skill_name` 必須與 skill 名稱一致。
 - evals 的 `evals` 欄位必須是陣列。
+- `git ls-files -z` 取得的每個 repository-relative tracked path 長度必須不超過 `185` 個字元；成功時會輸出觀察到的最大長度與路徑。
 
 ## CI
 
-`.github/workflows/validate.yml` 會在 push 到 `main` 與 pull request 時執行 `npm run validate`。
+`.github/workflows/validate.yml` 會在 push 到 `main` 與 pull request 時於 Ubuntu 執行 `npm run validate`。同一 workflow 也會在 Windows runner 將 source checkout 實際 clone 到 `$env:RUNNER_TEMP`，並以 command-scoped `core.longpaths=false` 驗證 clone 可完成、工作樹乾淨且 HEAD 與來源一致；暫存 clone 一律在 `finally` 清理。

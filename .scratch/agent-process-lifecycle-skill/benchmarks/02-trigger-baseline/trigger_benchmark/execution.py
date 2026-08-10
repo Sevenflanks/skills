@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from .aggregate import aggregate_trials, markdown_report
+from .artifact_paths import version_paths
 from .completeness import check_matrix_completeness
 from .evidence import MANIFEST_CONTRACT, MANIFEST_SCHEMA_VERSION, EvidenceValidationError, source_hashes_for, validate_evidence
 from .evidence_format import JsonArray, JsonObject, json_array, json_object
@@ -39,14 +40,6 @@ class RunExecutionPlan:
     specification: Specification
     variants: tuple[Variant, ...]
     prompts: tuple[Prompt, ...]
-
-
-@dataclass(frozen=True, slots=True)
-class RawStreams:
-    prefix: str
-    stdout: str
-    stderr: str
-    stdout_suffix: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -125,14 +118,15 @@ def _observe_version(command: str) -> VersionCapture:
 
 def _observed_environment(capture: VersionCapture) -> ObservedEnvironment:
     raw_output = capture.stdout + capture.stderr
+    paths = version_paths()
     return ObservedEnvironment(
         json_object({
             "opencode": json_object({
                 "command": json_array(capture.command),
                 "return_code": capture.return_code,
                 "raw_output": raw_output,
-                "stdout_path": "logs/environment-opencode-version.stdout.txt",
-                "stderr_path": "logs/environment-opencode-version.stderr.txt",
+                "stdout_path": paths.stdout,
+                "stderr_path": paths.stderr,
                 "stdout_sha256": hashlib.sha256(capture.stdout.encode()).hexdigest(),
                 "stderr_sha256": hashlib.sha256(capture.stderr.encode()).hexdigest(),
             }),
@@ -144,7 +138,9 @@ def _observed_environment(capture: VersionCapture) -> ObservedEnvironment:
 
 
 def _persist_version(output_directory: Path, capture: VersionCapture) -> None:
-    _persist_streams(output_directory, RawStreams("environment-opencode-version", capture.stdout, capture.stderr, ".stdout.txt"))
+    paths = version_paths()
+    (output_directory / paths.stdout).write_text(capture.stdout, encoding="utf-8", newline="\n")
+    (output_directory / paths.stderr).write_text(capture.stderr, encoding="utf-8", newline="\n")
 
 
 def _build_static_manifest(plan: RunExecutionPlan) -> JsonObject:
@@ -209,14 +205,6 @@ def _run_preflight(options: RunOptions, variants: tuple[Variant, ...], command: 
 def _preflight_incomplete(plan: RunExecutionPlan) -> JsonObject:
     completeness = check_matrix_completeness([], plan.variants, plan.prompts, plan.options.runs_per_query)
     return json_object({"expected_cells": completeness.expected_cells, "missing_cells": json_array(completeness.missing_cells), "duplicate_valid_cells": json_array(completeness.duplicate_valid_cells)})
-
-
-def _persist_streams(output_directory: Path, streams: RawStreams) -> tuple[str, str]:
-    stdout_path = output_directory / "logs" / f"{streams.prefix}{streams.stdout_suffix}"
-    stderr_path = output_directory / "logs" / f"{streams.prefix}.stderr.txt"
-    stdout_path.write_text(streams.stdout, encoding="utf-8", newline="\n")
-    stderr_path.write_text(streams.stderr, encoding="utf-8", newline="\n")
-    return str(stdout_path.relative_to(output_directory)).replace("\\", "/"), str(stderr_path.relative_to(output_directory)).replace("\\", "/")
 
 
 def _write_final_manifest(output_directory: Path, manifest: JsonObject) -> None:

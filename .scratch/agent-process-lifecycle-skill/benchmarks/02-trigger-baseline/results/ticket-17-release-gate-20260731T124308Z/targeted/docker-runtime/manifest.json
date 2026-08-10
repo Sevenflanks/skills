@@ -89,8 +89,8 @@
       "fixture_candidate_count": 1,
       "candidate_name": "agent-process-lifecycle",
       "candidate_location": "C:\\develop\\w\\r\\.scratch\\agent-process-lifecycle-skill\\benchmarks\\02-trigger-baseline\\results\\ticket-17-release-gate-20260731T124308Z\\targeted\\docker-runtime\\fixtures\\tmpjiq58kaz\\.opencode\\skills\\agent-process-lifecycle\\SKILL.md",
-      "stdout_path": "logs/preflight-candidate-tmpjiq58kaz-attempt-1.stdout.txt",
-      "stderr_path": "logs/preflight-candidate-tmpjiq58kaz-attempt-1.stderr.txt",
+      "stdout_path": "logs/p-candidate-1.out",
+      "stderr_path": "logs/p-candidate-1.err",
       "successful_attempt": 1,
       "attempts": [
         {
@@ -108,8 +108,8 @@
           "fixture_candidate_count": 1,
           "candidate_name": "agent-process-lifecycle",
           "candidate_location": "C:\\develop\\w\\r\\.scratch\\agent-process-lifecycle-skill\\benchmarks\\02-trigger-baseline\\results\\ticket-17-release-gate-20260731T124308Z\\targeted\\docker-runtime\\fixtures\\tmpjiq58kaz\\.opencode\\skills\\agent-process-lifecycle\\SKILL.md",
-          "stdout_path": "logs/preflight-candidate-tmpjiq58kaz-attempt-1.stdout.txt",
-          "stderr_path": "logs/preflight-candidate-tmpjiq58kaz-attempt-1.stderr.txt",
+          "stdout_path": "logs/p-candidate-1.out",
+          "stderr_path": "logs/p-candidate-1.err",
           "attempt": 1,
           "outcome": "success"
         }
@@ -118,7 +118,7 @@
   ],
   "reference_manifest": {
     "path": "results/ticket-17-release-gate-20260731T124308Z/base/manifest.json",
-    "sha256": "4f0005929d8e7ff9c50da3cc3606b71383751b7e72879eea35de02fbec61d85f",
+    "sha256": "a192cb5d8ed043328c91c5274cb4ae8df9ace79a582619a9bb6f3f3eaf2ca6ed",
     "expected_phase": "fixed-base"
   },
   "environment_parity": {
@@ -134,8 +134,8 @@
       ],
       "return_code": 0,
       "raw_output": "1.18.9\n",
-      "stdout_path": "logs/environment-opencode-version.stdout.txt",
-      "stderr_path": "logs/environment-opencode-version.stderr.txt",
+      "stdout_path": "logs/v.out",
+      "stderr_path": "logs/v.err",
       "stdout_sha256": "13d998dc1d8d8589fdf6090020f5e59ec9875126beda74ef6e81f6e9c638697c",
       "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     },
@@ -150,24 +150,24 @@
   "artifact_hashes": {
     "aggregate.json": "51b3a9b931e043a137c1686ba255940693e987574134f1dd9a310f82357fce8f",
     "aggregate.md": "3df298bb8dfd5eee61516e2b35a2ae2540c47588114de2a4bf5499f46bae9710",
-    "trials.ndjson": "349afd01bd9f9930bdf79aa193c5f08e161aa7a3636b0625936313e6fab46f3c",
-    "logs/candidate__docker-runtime__run-1__attempt-1.stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "logs/candidate__docker-runtime__run-1__attempt-1.stdout.ndjson": "e40bf8bf65f1a1cae686670571ace85dcbfc636852dd2ee55db137d41b6efdfa",
-    "logs/candidate__docker-runtime__run-2__attempt-1.stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "logs/candidate__docker-runtime__run-2__attempt-1.stdout.ndjson": "06bba2ad11f5301f3dcac5406cc2a7b3b0122bd4aa30188296c3846a8a4c4855",
-    "logs/candidate__docker-runtime__run-3__attempt-1.stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "logs/candidate__docker-runtime__run-3__attempt-1.stdout.ndjson": "bd8f9d10ee8f97f4135861c3b87eb807dd1d20b19d20e5dc0a0ae0e11d48d1e3",
-    "logs/candidate__docker-runtime__run-4__attempt-1.stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "logs/candidate__docker-runtime__run-4__attempt-1.stdout.ndjson": "03c3bf1a2dbf0ef3bd5a89ced1d150e710d5c796cee42a443bf5cf4aa74582b6",
-    "logs/candidate__docker-runtime__run-5__attempt-1.stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "logs/candidate__docker-runtime__run-5__attempt-1.stdout.ndjson": "a02d9415d5fb2dd84354a2b21b9360cdef809c1bf10b905d46c82da937677c07",
-    "logs/candidate__docker-runtime__run-6__attempt-1.stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "logs/candidate__docker-runtime__run-6__attempt-1.stdout.ndjson": "ab23e93aed54a569767b43f941ec9e8bf913bda7d58af3936bb0306d93000303",
-    "logs/candidate__docker-runtime__run-7__attempt-1.stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "logs/candidate__docker-runtime__run-7__attempt-1.stdout.ndjson": "8840d0192949bb9b50f21a391d11b5b6d06e0f9a7b53ad9caa6cdb9b8ccd5c21",
-    "logs/environment-opencode-version.stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "logs/environment-opencode-version.stdout.txt": "13d998dc1d8d8589fdf6090020f5e59ec9875126beda74ef6e81f6e9c638697c",
-    "logs/preflight-candidate-tmpjiq58kaz-attempt-1.stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "logs/preflight-candidate-tmpjiq58kaz-attempt-1.stdout.txt": "d3a184da1f3bec68f23f3a3966b75dbb7db6463242f8ac5ccab10a6ac3c62717"
+    "trials.ndjson": "706ca6a1e3a0f42afa377c4e3fa283d2e40e2fa785d9d08c30aa52050c716cd7",
+    "logs/t-tmpr54aa1oy.err": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "logs/t-tmpr54aa1oy.out": "e40bf8bf65f1a1cae686670571ace85dcbfc636852dd2ee55db137d41b6efdfa",
+    "logs/t-tmpfhokrs_j.err": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "logs/t-tmpfhokrs_j.out": "06bba2ad11f5301f3dcac5406cc2a7b3b0122bd4aa30188296c3846a8a4c4855",
+    "logs/t-tmpwt6yg6rv.err": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "logs/t-tmpwt6yg6rv.out": "bd8f9d10ee8f97f4135861c3b87eb807dd1d20b19d20e5dc0a0ae0e11d48d1e3",
+    "logs/t-tmp394agttz.err": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "logs/t-tmp394agttz.out": "03c3bf1a2dbf0ef3bd5a89ced1d150e710d5c796cee42a443bf5cf4aa74582b6",
+    "logs/t-tmp0ggm1n96.err": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "logs/t-tmp0ggm1n96.out": "a02d9415d5fb2dd84354a2b21b9360cdef809c1bf10b905d46c82da937677c07",
+    "logs/t-tmp0ha_34k5.err": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "logs/t-tmp0ha_34k5.out": "ab23e93aed54a569767b43f941ec9e8bf913bda7d58af3936bb0306d93000303",
+    "logs/t-tmpaobfua5z.err": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "logs/t-tmpaobfua5z.out": "8840d0192949bb9b50f21a391d11b5b6d06e0f9a7b53ad9caa6cdb9b8ccd5c21",
+    "logs/v.err": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "logs/v.out": "13d998dc1d8d8589fdf6090020f5e59ec9875126beda74ef6e81f6e9c638697c",
+    "logs/p-candidate-1.err": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "logs/p-candidate-1.out": "d3a184da1f3bec68f23f3a3966b75dbb7db6463242f8ac5ccab10a6ac3c62717"
   }
 }
