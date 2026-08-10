@@ -14,6 +14,12 @@ npm run validate
 node scripts/validate-skills.mjs
 ```
 
+如需單獨檢查 tracked path 預算，可執行：
+
+```powershell
+node scripts/check-tracked-path-budget.mjs
+```
+
 ## 檢查項目
 
 驗證腳本會檢查：
@@ -36,6 +42,7 @@ node scripts/validate-skills.mjs
 - 若存在 `evals/evals.json`，它必須是合法 JSON。
 - evals 的 `skill_name` 必須與 skill 名稱一致。
 - evals 的 `evals` 欄位必須是陣列。
+- `git ls-files -z` 取得的每個 repository-relative tracked path 長度必須不超過 `185` 個字元；成功時會輸出觀察到的最大長度與路徑。
 
 ## CI
 
