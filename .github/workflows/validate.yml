@@ -27,6 +27,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Run Windows git checkout ownership regression
+        shell: pwsh
+        run: ./test/windows-git-checkout.test.ps1
+
       - name: Verify checkout without Windows long paths
         shell: pwsh
         run: .\scripts\Test-WindowsGitCheckout.ps1 -SourcePath $env:GITHUB_WORKSPACE
