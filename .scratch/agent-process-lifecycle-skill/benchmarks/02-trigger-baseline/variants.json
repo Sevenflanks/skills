@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "published_skill_path": "../../../../skills/playwright-server-lifecycle/SKILL.md",
+  "current_metadata": {
+    "name": "playwright-server-lifecycle",
+    "description": "Use when Playwright or browser automation needs a local listener, temporary HTTP server, static viewer, dev or preview server, or Windows/PowerShell/OpenCode work shows hangs, zombies, unclear process ownership, cleanup failures, or missing callbacks."
+  },
+  "generalized_description": "Use when an agent-started or inherited local OS process may outlive its initiating tool call and lacks a verified complete lifecycle owner, including listeners, GUIs, watchers, detached finite jobs, and residual wrappers; classify external, framework-, IDE-, or runtime-managed resources and hand them off rather than managing their PIDs.",
+  "variants": [
+    {"id": "current", "skill_name": "playwright-server-lifecycle", "description_source": "current_metadata"},
+    {"id": "generalized-current-name", "skill_name": "playwright-server-lifecycle", "description_source": "generalized_description"},
+    {"id": "generalized-neutral-name", "skill_name": "agent-process-lifecycle", "description_source": "generalized_description"}
+  ]
+}

@@ -1,0 +1,199 @@
+{
+  "evidence_type": "ticket-10-candidate-smoke",
+  "candidate": {
+    "path": ".scratch/agent-process-lifecycle-skill/candidate/agent-process-lifecycle/SKILL.md",
+    "sha256": "90beb9e57551f4f1fc9d7d476ce570346b29149fbaabc617ef1b2a5cb80f87e4",
+    "model_invocation": "disabled",
+    "published_inventory": "absent"
+  },
+  "manual_checks": [
+    {
+      "id": "excluded-synchronous-command",
+      "valid": true,
+      "candidate_loaded": true,
+      "response_sha256": "f68886caff3c51f098691abf0e0a58193adf87523194865c97c03fd14a520d4e",
+      "required_result_fields_present": true,
+      "raw_stream_retained": false
+    },
+    {
+      "id": "helper-unavailable-pre-launch-block",
+      "valid": true,
+      "candidate_loaded": true,
+      "response_sha256": "9b36dafbaa00ab4b208fdba3bdb7928f4ee93d2022b7347e5c2928a5b7931412",
+      "required_result_fields_present": true,
+      "raw_stream_retained": false
+    },
+    {
+      "id": "non-windows-unidentified-owner",
+      "valid": true,
+      "candidate_loaded": true,
+      "response_sha256": "a355469af0af34fedf6d37b36d0f827ca1a03d111f39397784aae572fffc16d6",
+      "required_result_fields_present": true,
+      "raw_stream_retained": false
+    },
+    {
+      "id": "non-windows-identified-owner",
+      "valid": true,
+      "candidate_loaded": true,
+      "response_sha256": "7ba7bc5bf5a92e9c754d900c956886872ab3022609f12a8b7b5f54baf538191d",
+      "required_result_fields_present": true,
+      "raw_stream_retained": false
+    }
+  ],
+  "routing_fixture": {
+    "purpose": "isolated metadata-routing smoke only; it is not the manually invoked candidate",
+    "candidate_description_sha256": "8e55e56510b82cdb8b741f75f0ceaedd3ca6c926b2ad74092862a20c853d744f",
+    "permissions": {
+      "*": "deny",
+      "skill": "allow"
+    },
+    "runs_per_prompt": 1,
+    "raw_streams_retained": false,
+    "checks": [
+      {
+        "id": "listener-local-server",
+        "label": "positive",
+        "valid": true,
+        "triggered": true,
+        "attempts": 1,
+        "response_sha256": "3ed0492595ff55b705aa70d3f2029ca5db7d6d60bb45663467f05fef89dfbe9d",
+        "raw_stream_retained": false
+      },
+      {
+        "id": "gui-local-app",
+        "label": "positive",
+        "valid": true,
+        "triggered": true,
+        "attempts": 1,
+        "response_sha256": "ad221b86f5331ced25a0ec88cacaebc6871ccbda362e9bdf6794be344d1e4091",
+        "raw_stream_retained": false
+      },
+      {
+        "id": "watcher-without-port",
+        "label": "positive",
+        "valid": true,
+        "triggered": true,
+        "attempts": 1,
+        "response_sha256": "4d770c38243eb0e77b5e00805eb819f11b19e2b317b88fcccfa67b4e47152133",
+        "raw_stream_retained": false
+      },
+      {
+        "id": "finite-detached-job",
+        "label": "positive",
+        "valid": true,
+        "triggered": true,
+        "attempts": 1,
+        "response_sha256": "3a57f1fcf8e4ea3d044eb319e8bf41733a391da9d512b5fbdc21916fdd0473d8",
+        "raw_stream_retained": false
+      },
+      {
+        "id": "timeout-residual-process",
+        "label": "positive",
+        "valid": true,
+        "triggered": true,
+        "attempts": 1,
+        "response_sha256": "a3d83e4b133168b3e3488cd8d65f1ed51b02c863fec05bd5950aac1198021bdf",
+        "raw_stream_retained": false
+      },
+      {
+        "id": "keep-running-handoff",
+        "label": "positive",
+        "valid": true,
+        "triggered": true,
+        "attempts": 1,
+        "response_sha256": "cd7cd9495825f22aa834454986bd89f6a812c7e717e6c33d2c27ad3f6db072c7",
+        "raw_stream_retained": false
+      },
+      {
+        "id": "orphan-wrapper",
+        "label": "positive",
+        "valid": true,
+        "triggered": true,
+        "attempts": 1,
+        "response_sha256": "61b39ff81a6b76213326153a0a11430808c4e432b521d6d5b2c0d28d1809abaa",
+        "raw_stream_retained": false
+      },
+      {
+        "id": "readiness-failure",
+        "label": "positive",
+        "valid": true,
+        "triggered": true,
+        "attempts": 1,
+        "response_sha256": "dc588297c2c23e5abcf9f33adaf364d9222688ad59df0ac78a3d6cdbac88d690",
+        "raw_stream_retained": false
+      },
+      {
+        "id": "sync-long-command",
+        "label": "negative",
+        "valid": true,
+        "triggered": true,
+        "attempts": 1,
+        "response_sha256": "55d9d1ef8b133916e387db4fb45814079fb16f0a7493387d8445b2e2adaa3c30",
+        "raw_stream_retained": false
+      },
+      {
+        "id": "observe-external-service",
+        "label": "negative",
+        "valid": true,
+        "triggered": false,
+        "attempts": 1,
+        "response_sha256": "8fce26604a8bee60779e87a72df5e42da3031d1d780f3a9da06ff9404f9bffb3",
+        "raw_stream_retained": false
+      },
+      {
+        "id": "framework-complete-ownership",
+        "label": "negative",
+        "valid": true,
+        "triggered": true,
+        "attempts": 1,
+        "response_sha256": "a5ec6b13ff0f1b41338d96bc6172f984577c65109e6d55f660cb42fd15bd7498",
+        "raw_stream_retained": false
+      },
+      {
+        "id": "docker-runtime",
+        "label": "negative",
+        "valid": true,
+        "triggered": false,
+        "attempts": 1,
+        "response_sha256": "f879d7d6c30147fb1480b3d44fc6d0cb7ac6eb2b7aa108185c1d21f73211b430",
+        "raw_stream_retained": false
+      },
+      {
+        "id": "kubernetes-runtime",
+        "label": "negative",
+        "valid": true,
+        "triggered": true,
+        "attempts": 1,
+        "response_sha256": "283dfe05423cc128583fd32a603dda0722d61b5495cfa07cdf42701ea72c241a",
+        "raw_stream_retained": false
+      },
+      {
+        "id": "windows-service-runtime",
+        "label": "negative",
+        "valid": true,
+        "triggered": true,
+        "attempts": 1,
+        "response_sha256": "20e200f476d97094cd6ce61226452baef7af15f463e81e67b10766ecf9cbfcac",
+        "raw_stream_retained": false
+      },
+      {
+        "id": "remote-ci",
+        "label": "negative",
+        "valid": true,
+        "triggered": true,
+        "attempts": 1,
+        "response_sha256": "924f2de9cde398ed1b734208bfaea77e06558f22c30f1bf5d6c893ec49c5a3df",
+        "raw_stream_retained": false
+      },
+      {
+        "id": "ide-owned-service",
+        "label": "negative",
+        "valid": true,
+        "triggered": true,
+        "attempts": 1,
+        "response_sha256": "107687ed3835482d96e1733ae63c5aff875d0930927fa249e9f37f1816822f4d",
+        "raw_stream_retained": false
+      }
+    ]
+  }
+}

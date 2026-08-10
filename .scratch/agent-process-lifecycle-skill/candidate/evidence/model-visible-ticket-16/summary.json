@@ -1,0 +1,28 @@
+{
+  "evidence_type": "ticket-16-model-visible",
+  "model": "openai/gpt-5.6-sol",
+  "case_count": 17,
+  "passed_case_count": 17,
+  "failed_case_count": 0,
+  "case_ids": [
+  "excluded-synchronous-command",
+  "event-invalidation-after-owner-change",
+  "managed-owner-opaque-binding",
+  "external-launcher-current-run",
+  "runtime-owner-handoff",
+  "windows-no-viable-tier-blocked",
+  "windows-listener-self-managed-stop",
+  "generic-gui-self-managed-stop",
+  "watcher-self-managed-preserve",
+  "preserve-publication-cleanup-unresolved",
+  "finite-detached-natural-completion",
+  "finite-detached-timeout-stop",
+  "tier-failure-reconciliation",
+  "identity-mismatch-unresolved",
+  "downstream-failure-separation",
+  "non-windows-unidentified-owner",
+  "non-windows-identified-owner"
+],
+  "archived_evidence_rerun": false,
+  "archived_evidence_recalculated": false
+}
