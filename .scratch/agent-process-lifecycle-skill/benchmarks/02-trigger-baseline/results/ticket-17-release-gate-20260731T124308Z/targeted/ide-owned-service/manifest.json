@@ -89,8 +89,8 @@
       "fixture_candidate_count": 1,
       "candidate_name": "agent-process-lifecycle",
       "candidate_location": "C:\\develop\\w\\r\\.scratch\\agent-process-lifecycle-skill\\benchmarks\\02-trigger-baseline\\results\\ticket-17-release-gate-20260731T124308Z\\targeted\\ide-owned-service\\fixtures\\tmpchlbk6f6\\.opencode\\skills\\agent-process-lifecycle\\SKILL.md",
-      "stdout_path": "logs/preflight-candidate-tmpchlbk6f6-attempt-1.stdout.txt",
-      "stderr_path": "logs/preflight-candidate-tmpchlbk6f6-attempt-1.stderr.txt",
+      "stdout_path": "logs/p-candidate-1.out",
+      "stderr_path": "logs/p-candidate-1.err",
       "successful_attempt": 1,
       "attempts": [
         {
@@ -108,8 +108,8 @@
           "fixture_candidate_count": 1,
           "candidate_name": "agent-process-lifecycle",
           "candidate_location": "C:\\develop\\w\\r\\.scratch\\agent-process-lifecycle-skill\\benchmarks\\02-trigger-baseline\\results\\ticket-17-release-gate-20260731T124308Z\\targeted\\ide-owned-service\\fixtures\\tmpchlbk6f6\\.opencode\\skills\\agent-process-lifecycle\\SKILL.md",
-          "stdout_path": "logs/preflight-candidate-tmpchlbk6f6-attempt-1.stdout.txt",
-          "stderr_path": "logs/preflight-candidate-tmpchlbk6f6-attempt-1.stderr.txt",
+          "stdout_path": "logs/p-candidate-1.out",
+          "stderr_path": "logs/p-candidate-1.err",
           "attempt": 1,
           "outcome": "success"
         }
@@ -118,7 +118,7 @@
   ],
   "reference_manifest": {
     "path": "results/ticket-17-release-gate-20260731T124308Z/base/manifest.json",
-    "sha256": "4f0005929d8e7ff9c50da3cc3606b71383751b7e72879eea35de02fbec61d85f",
+    "sha256": "a192cb5d8ed043328c91c5274cb4ae8df9ace79a582619a9bb6f3f3eaf2ca6ed",
     "expected_phase": "fixed-base"
   },
   "environment_parity": {
@@ -134,8 +134,8 @@
       ],
       "return_code": 0,
       "raw_output": "1.18.9\n",
-      "stdout_path": "logs/environment-opencode-version.stdout.txt",
-      "stderr_path": "logs/environment-opencode-version.stderr.txt",
+      "stdout_path": "logs/v.out",
+      "stderr_path": "logs/v.err",
       "stdout_sha256": "13d998dc1d8d8589fdf6090020f5e59ec9875126beda74ef6e81f6e9c638697c",
       "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     },
@@ -150,24 +150,24 @@
   "artifact_hashes": {
     "aggregate.json": "287b0de7f684a363d3256f7badf1ea1018324991b5a1e4d9b038b062385aebfc",
     "aggregate.md": "950edf469cd2ec118545b72da2395dd5f6f34a20df7061ac3a94fa896e602140",
-    "trials.ndjson": "db92dab8eb39cb792172d3eda19518fbf05666f117c0f182202dcb7e7342a3d3",
-    "logs/candidate__ide-owned-service__run-1__attempt-1.stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "logs/candidate__ide-owned-service__run-1__attempt-1.stdout.ndjson": "dcbad8aae65dc5b61183794037d5be42a31678a3ae8c1a2ecbad6f86d99f1ad1",
-    "logs/candidate__ide-owned-service__run-2__attempt-1.stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "logs/candidate__ide-owned-service__run-2__attempt-1.stdout.ndjson": "02d39966fd2a3af296a15b244889d9414aa30f503287a5ac4dc06be84582c1b4",
-    "logs/candidate__ide-owned-service__run-3__attempt-1.stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "logs/candidate__ide-owned-service__run-3__attempt-1.stdout.ndjson": "5fd98ba37e88c106df65de3bfac762acc40cac22ba6d994a8ce1a5d823d219a4",
-    "logs/candidate__ide-owned-service__run-4__attempt-1.stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "logs/candidate__ide-owned-service__run-4__attempt-1.stdout.ndjson": "4aaf0f6f77729b1fdd702c4898b90a89f8c071df7dbc697393e0fe9f17f6d9e2",
-    "logs/candidate__ide-owned-service__run-5__attempt-1.stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "logs/candidate__ide-owned-service__run-5__attempt-1.stdout.ndjson": "ab244c396b08ceed2bb1a6051fb5907309f1e9f9742a3e72374b10aa4ded3375",
-    "logs/candidate__ide-owned-service__run-6__attempt-1.stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "logs/candidate__ide-owned-service__run-6__attempt-1.stdout.ndjson": "899b4467b452c688b00c2b500e483bb23b92cd71eff7d846918881093fa2dd04",
-    "logs/candidate__ide-owned-service__run-7__attempt-1.stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "logs/candidate__ide-owned-service__run-7__attempt-1.stdout.ndjson": "5c29ffa76ad84bc8401ae26da80aa84c603500ca901cc81b8d8184759855dfd0",
-    "logs/environment-opencode-version.stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "logs/environment-opencode-version.stdout.txt": "13d998dc1d8d8589fdf6090020f5e59ec9875126beda74ef6e81f6e9c638697c",
-    "logs/preflight-candidate-tmpchlbk6f6-attempt-1.stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "logs/preflight-candidate-tmpchlbk6f6-attempt-1.stdout.txt": "9f42b0b5202a511e16661af9a4cc3aec93c66a7a37686e647089ed1b1c562bec"
+    "trials.ndjson": "3f2151ef67292301c4b62b9105ecf2c0fb3bff74529e209582c3342d2b244c8e",
+    "logs/t-tmpjkemqggs.err": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "logs/t-tmpjkemqggs.out": "dcbad8aae65dc5b61183794037d5be42a31678a3ae8c1a2ecbad6f86d99f1ad1",
+    "logs/t-tmpaefumf67.err": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "logs/t-tmpaefumf67.out": "02d39966fd2a3af296a15b244889d9414aa30f503287a5ac4dc06be84582c1b4",
+    "logs/t-tmpn54fiwa7.err": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "logs/t-tmpn54fiwa7.out": "5fd98ba37e88c106df65de3bfac762acc40cac22ba6d994a8ce1a5d823d219a4",
+    "logs/t-tmpw4apaymg.err": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "logs/t-tmpw4apaymg.out": "4aaf0f6f77729b1fdd702c4898b90a89f8c071df7dbc697393e0fe9f17f6d9e2",
+    "logs/t-tmplxigydm7.err": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "logs/t-tmplxigydm7.out": "ab244c396b08ceed2bb1a6051fb5907309f1e9f9742a3e72374b10aa4ded3375",
+    "logs/t-tmp0v27yeuk.err": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "logs/t-tmp0v27yeuk.out": "899b4467b452c688b00c2b500e483bb23b92cd71eff7d846918881093fa2dd04",
+    "logs/t-tmp7x4l719u.err": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "logs/t-tmp7x4l719u.out": "5c29ffa76ad84bc8401ae26da80aa84c603500ca901cc81b8d8184759855dfd0",
+    "logs/v.err": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "logs/v.out": "13d998dc1d8d8589fdf6090020f5e59ec9875126beda74ef6e81f6e9c638697c",
+    "logs/p-candidate-1.err": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "logs/p-candidate-1.out": "9f42b0b5202a511e16661af9a4cc3aec93c66a7a37686e647089ed1b1c562bec"
   }
 }

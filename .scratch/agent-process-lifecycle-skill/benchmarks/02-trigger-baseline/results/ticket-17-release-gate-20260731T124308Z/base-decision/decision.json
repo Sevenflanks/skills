@@ -88,7 +88,7 @@
     "variants/candidate/SKILL.md": "a8c121baef08599cfdc4e751b69788823260c71c179da571435c680c4d6b0add"
   },
   "artifact_hashes": {
-    "base/manifest.json": "4f0005929d8e7ff9c50da3cc3606b71383751b7e72879eea35de02fbec61d85f",
+    "base/manifest.json": "a192cb5d8ed043328c91c5274cb4ae8df9ace79a582619a9bb6f3f3eaf2ca6ed",
     "base/aggregate.json": "99cfe959e07dfe54d76ea44418c0d566c18a224e780435a92704e18fb4e71929"
   }
 }
