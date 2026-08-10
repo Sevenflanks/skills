@@ -12,7 +12,7 @@ BENCHMARK_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BENCHMARK_ROOT))
 
 from trigger_benchmark.artifact_paths import preflight_paths, trial_paths, version_paths
-from trigger_benchmark.historical_evidence_migration import MigrationError, apply_migration, plan_migration
+from trigger_benchmark.historical_evidence_migration import MigrationError, MigrationPlan, MigrationReceipt, _Write, apply_migration, plan_migration
 
 
 class HistoricalEvidenceMigrationTests(unittest.TestCase):
@@ -250,6 +250,59 @@ class HistoricalEvidenceMigrationTests(unittest.TestCase):
             with patch.object(Path, "is_symlink", autospec=True, side_effect=lambda path: path == declared_stdout or original_is_symlink(path)):
                 with self.assertRaises(MigrationError):
                     plan_migration(benchmark_root)
+
+            self.assertEqual(evidence_before, _evidence_bytes(evidence))
+
+    def test_migration_when_declared_stream_ancestor_is_symlink_rejects_before_mutating(self) -> None:
+        with tempfile.TemporaryDirectory(dir=BENCHMARK_ROOT) as temporary_directory:
+            benchmark_root = Path(temporary_directory)
+            evidence = benchmark_root / "results/evidence"
+            _write_legacy_evidence(evidence)
+            declared_ancestor = evidence / "logs"
+            evidence_before = _evidence_bytes(evidence)
+            original_is_symlink = Path.is_symlink
+
+            with patch.object(Path, "is_symlink", autospec=True, side_effect=lambda path: path == declared_ancestor or original_is_symlink(path)):
+                with self.assertRaises(MigrationError):
+                    plan_migration(benchmark_root)
+
+            self.assertEqual(evidence_before, _evidence_bytes(evidence))
+
+    def test_migration_when_planned_move_destination_is_dangling_symlink_rejects_without_mutating(self) -> None:
+        with tempfile.TemporaryDirectory(dir=BENCHMARK_ROOT) as temporary_directory:
+            benchmark_root = Path(temporary_directory)
+            evidence = benchmark_root / "results/evidence"
+            _write_legacy_evidence(evidence)
+            plan = plan_migration(benchmark_root)
+            dangling_destination = evidence / version_paths().stdout
+            evidence_before = _evidence_bytes(evidence)
+            original_is_symlink = Path.is_symlink
+
+            with patch.object(Path, "is_symlink", autospec=True, side_effect=lambda path: path == dangling_destination or original_is_symlink(path)):
+                with self.assertRaises(MigrationError):
+                    apply_migration(plan)
+
+            self.assertEqual(evidence_before, _evidence_bytes(evidence))
+
+    def test_migration_when_expected_absent_write_target_is_dangling_symlink_rejects_without_mutating(self) -> None:
+        with tempfile.TemporaryDirectory(dir=BENCHMARK_ROOT) as temporary_directory:
+            benchmark_root = Path(temporary_directory)
+            evidence = benchmark_root / "results/evidence"
+            evidence.mkdir(parents=True)
+            (evidence / "sentinel").write_bytes(b"unchanged")
+            dangling_target = evidence / "planned-write"
+            plan = MigrationPlan(
+                benchmark_root,
+                (),
+                (_Write(dangling_target, b"planned write", None),),
+                MigrationReceipt(0, 1, 0, {}, {}),
+            )
+            evidence_before = _evidence_bytes(evidence)
+            original_is_symlink = Path.is_symlink
+
+            with patch.object(Path, "is_symlink", autospec=True, side_effect=lambda path: path == dangling_target or original_is_symlink(path)):
+                with self.assertRaises(MigrationError):
+                    apply_migration(plan)
 
             self.assertEqual(evidence_before, _evidence_bytes(evidence))
 

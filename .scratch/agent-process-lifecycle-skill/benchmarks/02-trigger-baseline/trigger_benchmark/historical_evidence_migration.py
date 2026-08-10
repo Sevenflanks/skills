@@ -153,9 +153,11 @@ def _rewrite_stream(root: Path, document: dict[str, JsonValue], paths: StreamPat
             or declared.parts[0] != "logs"
         ):
             raise MigrationError(f"declared stream does not match {source}")
-        declared_source_path = root / Path(*declared.parts)
-        if declared_source_path.is_symlink():
-            raise MigrationError(f"declared stream does not match {source}")
+        declared_source_path = root
+        for component in declared.parts:
+            declared_source_path /= component
+            if declared_source_path.is_symlink():
+                raise MigrationError(f"declared stream does not match {source}")
         source_path = declared_source_path.resolve()
         expected = _string(document.get(field.replace("path", "sha256")), field.replace("path", "sha256"))
         if not source_path.is_relative_to((root / "logs").resolve()) or not source_path.is_file() or _sha256(source_path) != expected:
@@ -192,9 +194,13 @@ def _validate_moves(moves: list[_Move] | tuple[_Move, ...]) -> None:
     for move in moves:
         if move.source.is_symlink() or not move.source.is_file() or _sha256(move.source) != move.sha256:
             raise MigrationError(f"raw source changed: {move.source}")
-        if move.destination in destinations or (move.destination.exists() and move.destination not in sources):
+        if move.destination in destinations or (_path_is_occupied(move.destination) and move.destination not in sources):
             raise MigrationError(f"raw destination collision: {move.destination}")
         destinations.add(move.destination)
+
+
+def _path_is_occupied(path: Path) -> bool:
+    return path.is_symlink() or path.exists()
 
 
 def _rewrite_manifests(benchmark_root: Path, documents: dict[Path, dict[str, JsonValue]], changes: dict[Path, dict[str, str]], trials: dict[Path, bytes], newlines: dict[Path, bytes]) -> None:
@@ -272,7 +278,7 @@ def _planned_write(path: Path, content: bytes) -> _Write | None:
 def _validate_writes(writes: tuple[_Write, ...]) -> None:
     for write in writes:
         if write.expected_prior is None:
-            if write.path.exists():
+            if _path_is_occupied(write.path):
                 raise MigrationError(f"write target changed: {write.path}")
             continue
         if write.path.is_symlink() or not write.path.is_file() or write.path.read_bytes() != write.expected_prior:
