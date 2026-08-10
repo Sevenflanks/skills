@@ -11,7 +11,7 @@
 | `code-intent-comments` | `0.1.0` | stable | 引導 agent 以白話繁中撰寫高價值程式註解，補足 class 責任、核心邏輯、CR、相容性與高風險脈絡。 | [`skills/code-intent-comments/`](skills/code-intent-comments/) |
 | `daily-work-log` | `0.1.4` | stable | 從 OpenCode session、跨 branch git commit 與 GitHub PR / issue 關聯蒐集證據，整理成每日工作日誌。 | [`skills/daily-work-log/`](skills/daily-work-log/) |
 | `gh-body-file` | `0.1.1` | stable | 在 Windows、PowerShell、OpenCode shell 環境中，安全使用 GitHub CLI 支援 `--body-file` 的指令。 | [`skills/gh-body-file/`](skills/gh-body-file/) |
-| `playwright-server-lifecycle` | `0.1.1` | stable | 管理 Playwright / browser 本機 listener 的分類、process ownership tree、completed / passed 分離、失敗安全 cleanup、port release 與 callback。 | [`skills/playwright-server-lifecycle/`](skills/playwright-server-lifecycle/) |
+| `agent-process-lifecycle` | `1.0.0` | stable | 管理 Agent 啟動之本機 OS process 的 ownership、execution tier、readiness、Stop、Preserve、handoff 與 reconciliation；Windows 提供 self-managed helper，non-Windows 僅分類、handoff 或 launch 前 blocked。 | [`skills/agent-process-lifecycle/`](skills/agent-process-lifecycle/) |
 
 完整 catalog 可見 [`skills.json`](skills.json)。若需要 Claude plugin-style metadata，可見 [`.claude-plugin/marketplace.json`](.claude-plugin/marketplace.json)。新增、調整或移除 skill 時，請同步更新 catalog 並執行驗證。
 
@@ -59,17 +59,17 @@
 
 使用前仍應先確認目標 `gh` 子指令確實支援 `--body-file`；若不支援，就不要套用此 workaround。
 
-## playwright-server-lifecycle
+## agent-process-lifecycle
 
-`playwright-server-lifecycle` 會引導 agent 在使用 Playwright、browser automation、截圖或 UI smoke test 前，將任何本機 listener 視為需要 lifecycle 管理的資源，包含 temporary HTTP server、static viewer、dev server 與 preview server。它先分類目標，self-contained static HTML 優先用 `file://`，需要 listener 時才以 detached process 啟動，並記錄 launcher、wrapper、listener、port 與 logs 的 process ownership tree。
+`agent-process-lifecycle` 管理 Agent 啟動且可能跨越 initiating tool call 的本機 OS process 之 ownership、execution tier、readiness、Stop、Preserve、handoff 與 reconciliation。它不是 generic process manager，也不負責 Browser QA、downstream workload 或整體 task 成功判定。
 
-適用於容易卡住 agent session 的情境，例如：
+同步等到正常 exit 的 command 不適用。若 framework、IDE、Kubernetes、Docker、Windows Service、CI 或其他 external／runtime owner 已明確且具有完整 lifecycle contract，skill 不接管既有資源；需要釐清 owner 時才以分類與 handoff 回應。
 
-- `pnpm dev`、`npm run dev`、`nuxt dev`、`vite` 或 `next dev`
-- temporary HTTP server，例如 `python -m http.server`
-- static viewer、preview server、Tomcat 或其他本機 listener
+Windows 依序選擇第一個 viable tier：verified managed lifecycle、verified external launcher、Windows self-managed helper，最後才是 blocked 或 handoff。各 tier 不競速；較低 tier 前必須先完成 Stop、Preserve、handoff 或 unresolved reconciliation。caller 提供 workload-specific readiness signal 與 deadline，不能以 spawn、liveness、fixed sleep 或 port occupied 取代 readiness。
 
-Browser 報告會分開呈現 `completed` 與 `passed`，並區分 blocking 與 non-blocking errors。無論任何步驟是否失敗，`finally` 都會透過同一個 identity-bound process handle 完成驗證與終止，避免 PID reuse 競態；若使用者明確要求 keep-running，則保留 listener 並交付後續 cleanup 證據。兩條路徑都會保留 callback 與無法安全回收時的 evidence。
+Launch 前先選擇 `Stop` 或 `Preserve`。`Stop` 必須有 live identity-bound ownership proof；`Preserve` 必須指定 later owner 並交付 fresh binding、record、stdio、readiness 與日後的 Stop 方法。`Preserve` 是 responsibility handoff，不是 cleanup 完成。
+
+`1.0.0` 僅在 Windows 執行 lifecycle。non-Windows 僅做 bounded 分類：可辨識 owner 時 handoff，否則在 launch 前 blocked；不做 OS inspection、lifecycle shell call、launch 或 termination。
 
 ## 倉庫結構
 
@@ -92,11 +92,17 @@ skills/
 │   ├── SKILL.md
 │   └── evals/
 │       └── evals.json
-└── playwright-server-lifecycle/
+└── agent-process-lifecycle/
     ├── README.md
     ├── SKILL.md
-    └── evals/
-        └── evals.json
+    ├── evals/
+    │   └── evals.json
+    ├── references/
+    │   ├── failure-and-handoff.md
+    │   └── windows-self-managed.md
+    └── scripts/
+        ├── Invoke-AgentProcessLifecycle.ps1
+        └── JobHandleHolder.ps1
 ```
 
 - `code-intent-comments` 說明文件：[`skills/code-intent-comments/README.md`](skills/code-intent-comments/README.md)
@@ -109,9 +115,13 @@ skills/
 - `gh-body-file` 說明文件：[`skills/gh-body-file/README.md`](skills/gh-body-file/README.md)
 - `gh-body-file` 定義檔：[`skills/gh-body-file/SKILL.md`](skills/gh-body-file/SKILL.md)
 - `gh-body-file` 評估案例：[`skills/gh-body-file/evals/evals.json`](skills/gh-body-file/evals/evals.json)
-- `playwright-server-lifecycle` 說明文件：[`skills/playwright-server-lifecycle/README.md`](skills/playwright-server-lifecycle/README.md)
-- `playwright-server-lifecycle` 定義檔：[`skills/playwright-server-lifecycle/SKILL.md`](skills/playwright-server-lifecycle/SKILL.md)
-- `playwright-server-lifecycle` 評估案例：[`skills/playwright-server-lifecycle/evals/evals.json`](skills/playwright-server-lifecycle/evals/evals.json)
+- `agent-process-lifecycle` 說明文件：[`skills/agent-process-lifecycle/README.md`](skills/agent-process-lifecycle/README.md)
+- `agent-process-lifecycle` 定義檔：[`skills/agent-process-lifecycle/SKILL.md`](skills/agent-process-lifecycle/SKILL.md)
+- `agent-process-lifecycle` 評估案例：[`skills/agent-process-lifecycle/evals/evals.json`](skills/agent-process-lifecycle/evals/evals.json)
+- `agent-process-lifecycle` failure 與 handoff reference：[`skills/agent-process-lifecycle/references/failure-and-handoff.md`](skills/agent-process-lifecycle/references/failure-and-handoff.md)
+- `agent-process-lifecycle` Windows self-managed reference：[`skills/agent-process-lifecycle/references/windows-self-managed.md`](skills/agent-process-lifecycle/references/windows-self-managed.md)
+- `agent-process-lifecycle` Windows helper：[`skills/agent-process-lifecycle/scripts/Invoke-AgentProcessLifecycle.ps1`](skills/agent-process-lifecycle/scripts/Invoke-AgentProcessLifecycle.ps1)
+- `agent-process-lifecycle` Job handle holder：[`skills/agent-process-lifecycle/scripts/JobHandleHolder.ps1`](skills/agent-process-lifecycle/scripts/JobHandleHolder.ps1)
 
 ## 安裝方式
 
