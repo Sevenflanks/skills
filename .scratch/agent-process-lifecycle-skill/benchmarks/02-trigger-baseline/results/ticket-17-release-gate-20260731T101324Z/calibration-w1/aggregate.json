@@ -1,0 +1,84 @@
+{
+  "variants": {
+    "current": {
+      "positive": {
+        "requested_logical_runs": 1,
+        "valid_trials": 1,
+        "triggered_trials": 1,
+        "invalid_attempts": 0,
+        "trigger_rate": 1.0,
+        "false_trigger_rate": null
+      },
+      "negative": {
+        "requested_logical_runs": 1,
+        "valid_trials": 1,
+        "triggered_trials": 1,
+        "invalid_attempts": 0,
+        "trigger_rate": null,
+        "false_trigger_rate": 1.0
+      }
+    },
+    "candidate": {
+      "positive": {
+        "requested_logical_runs": 1,
+        "valid_trials": 1,
+        "triggered_trials": 1,
+        "invalid_attempts": 0,
+        "trigger_rate": 1.0,
+        "false_trigger_rate": null
+      },
+      "negative": {
+        "requested_logical_runs": 1,
+        "valid_trials": 1,
+        "triggered_trials": 1,
+        "invalid_attempts": 0,
+        "trigger_rate": null,
+        "false_trigger_rate": 1.0
+      }
+    }
+  },
+  "prompts": {
+    "current": {
+      "listener-local-server": {
+        "requested_logical_runs": 1,
+        "valid_trials": 1,
+        "triggered_trials": 1,
+        "invalid_attempts": 0,
+        "trigger_rate": 1.0,
+        "false_trigger_rate": null
+      },
+      "sync-long-command": {
+        "requested_logical_runs": 1,
+        "valid_trials": 1,
+        "triggered_trials": 1,
+        "invalid_attempts": 0,
+        "trigger_rate": null,
+        "false_trigger_rate": 1.0
+      }
+    },
+    "candidate": {
+      "listener-local-server": {
+        "requested_logical_runs": 1,
+        "valid_trials": 1,
+        "triggered_trials": 1,
+        "invalid_attempts": 0,
+        "trigger_rate": 1.0,
+        "false_trigger_rate": null
+      },
+      "sync-long-command": {
+        "requested_logical_runs": 1,
+        "valid_trials": 1,
+        "triggered_trials": 1,
+        "invalid_attempts": 0,
+        "trigger_rate": null,
+        "false_trigger_rate": 1.0
+      }
+    }
+  },
+  "pairwise_rate_deltas": {
+    "current__to__candidate": {
+      "positive_trigger_rate_delta": 0.0,
+      "negative_false_trigger_rate_delta": 0.0
+    }
+  }
+}

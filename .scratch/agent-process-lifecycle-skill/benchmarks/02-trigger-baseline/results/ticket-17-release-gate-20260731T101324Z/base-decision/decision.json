@@ -1,0 +1,93 @@
+{
+  "schema_version": 1,
+  "stage": "base",
+  "status": "blocked",
+  "outcome": "block",
+  "exit_code": 1,
+  "reason_codes": [
+    "gate_blocked"
+  ],
+  "reasons": [
+    "negative kubernetes-runtime has 3/3 false triggers",
+    "negative sync-long-command has 3/3 false triggers"
+  ],
+  "fixed_base_counts": {
+    "current": {
+      "positive": {
+        "triggered": 24,
+        "valid": 24,
+        "invalid_attempts": 0
+      },
+      "negative": {
+        "triggered": 22,
+        "valid": 24,
+        "invalid_attempts": 0
+      }
+    },
+    "candidate": {
+      "positive": {
+        "triggered": 24,
+        "valid": 24,
+        "invalid_attempts": 0
+      },
+      "negative": {
+        "triggered": 11,
+        "valid": 24,
+        "invalid_attempts": 0
+      }
+    }
+  },
+  "total_invalid_attempts": 0,
+  "base_aggregate": {
+    "path": "base/aggregate.json",
+    "sha256": "0c22f359c9c937287a284d95ca9588a220db0942759aefc3a72afa56627f3e78"
+  },
+  "required_targeted_prompt_ids": [],
+  "targeted": {},
+  "parity_status": "matched",
+  "safety_status": "passed",
+  "source_hashes": {
+    "evaluate_routing_release_gate.py": "8e38fbdcd22f9b3d142463bd9df5eda96b5c7866b612808b6ab2041643c91ea2",
+    "run_trigger_baseline.py": "ee7ca4420d0176a0ff79ad20d96e7cf51e362d92d04ae1ea12ab784b1b21c556",
+    "tests/evidence_fixtures.py": "1c4e37189fc466b3e232b1b216eff42fbdc65ffbfb47cbf325a4d6852d7b9827",
+    "tests/test_calibration_safety.py": "3a70a35243073b87d26b954fd9b46ccba1b10806d72359a784dbde5a329dfa52",
+    "tests/test_evaluator_cli.py": "2cd202c7b2341fe9f8e9c353b4becb59ee75112642c6b42129176caa4737b16b",
+    "tests/test_evaluator_layout.py": "f294ad2b961829b066c16c09df80ba52e971ae094cbdd22dd65c98145c2d1f30",
+    "tests/test_evidence.py": "f8f41cdff69facad151326b79a436718590b6825f41a1d425e263a538fab9351",
+    "tests/test_evidence_contract.py": "ee5ab98b0b8131dfd2bdae627b5ceba065da941bb038c06db3f6e5aed9afce15",
+    "tests/test_preflight_retry.py": "099c4428fc8062b6e8b00c0113c265e33db601163f91ff22f3b7754dcb6263ef",
+    "tests/test_reference_manifest_contract.py": "77c20e4fa8675a71eeb1bb7a118018dd2d6d5713e6730e9caf43dbf474cca98a",
+    "tests/test_release_gate.py": "2d4fcc7020f78a5e12fce551509922c8e0223cfb9fb4d8e3573cb9ada7541056",
+    "tests/test_release_safety.py": "9aa24c4b6842e9b25b8638a18ed78337e85008371f3d2dcf1f60ab044414f966",
+    "tests/test_selected_worker_contract.py": "e27c0cecf7bbd568ef910538c9b7fc4f2a59cec75b81f950d8e8dc282adb9604",
+    "tests/test_trials_observation.py": "dd7ea280b978304e1de370d84bccaae56910d2e6bff18e39630d354b4a3b4e22",
+    "tests/test_trigger_benchmark.py": "b1a05b87126cdbff1ef49f30d82918683d8a14a767f58fa6afe6d6a14bd177b4",
+    "trigger_benchmark/__init__.py": "4da98e0b1d531ea5bdffc23852c1d594d29bc9dd6a882cbfb18be8714300b4d3",
+    "trigger_benchmark/aggregate.py": "a82c57dd291b481e5e525367f22737318f92aebf2ea6ce9c16e547bb52caad78",
+    "trigger_benchmark/calibration.py": "d1097473e1a0156aa8a5236136be6c4128fd699938a023657da2e46fa73f9e9d",
+    "trigger_benchmark/completeness.py": "a36e63bb5f20501248ef2f9d679b1d98deee4df19f1aa80c44c6bb354396c5aa",
+    "trigger_benchmark/events.py": "6423546e71d1ecac3d2ac91a9068a5f545db933e984f26c9b93f994820e17a60",
+    "trigger_benchmark/evidence.py": "5c071fd9b191f4a05f742c35513e76c43ec135f1f31da828f6ab758369550b45",
+    "trigger_benchmark/evidence_format.py": "097e06d7a8e9d200c8f7fc21f79db9456113bd7d78e6379db6da848bf205b088",
+    "trigger_benchmark/execution.py": "7b9677e7628a34930aa7bc718d33872059e973dd4e9d6661817bd986c7a457b2",
+    "trigger_benchmark/fixture.py": "0119a9ba6908d2243349a916e9021163733f2404396ac9e98c20cd64097ea21d",
+    "trigger_benchmark/models.py": "e29940c1f8c23c7fa3dfcee402d0b82fa3df0491a8e959386060e20eca70a8ce",
+    "trigger_benchmark/phase.py": "d2808e4086ebb0dd861e8eb3993f3f90be4b2941f663f1c9de7ae52a0fac95e6",
+    "trigger_benchmark/preflight.py": "7015abc63baf985fb215ed1d380f07053d480b6183216ed03a916aea042d336e",
+    "trigger_benchmark/preflight_execution.py": "522b762f04b473c974add4f13be5a0fa954bd0b4fc5db467846cf0ee273158fa",
+    "trigger_benchmark/reference.py": "6d8db91f13aae11efd189f35a0d646bba29611d93c2f2d047a830417a6841443",
+    "trigger_benchmark/release_gate.py": "1505f6f4cd89b3c38c9cf75b753b01637faa60922b6e746f4c2f41f4ae11e6cf",
+    "trigger_benchmark/runner.py": "703a77f929e82e3853126828ba36cc6917486eea08509ca034c42adb38582bd0",
+    "trigger_benchmark/spec.py": "90cbce9600bf9352808f733ac13bfebe31dca7ff5691a6248bb6263576ff6ffd",
+    "trigger_benchmark/trial_contract.py": "3b3a68339ee45625589b9bbb5d80451acec8f334a15cc272cc3d079a35cdd47e",
+    "trigger_benchmark/trials.py": "1b1e3479a95b032cdbdc477242cfabfb8a7032f7a3e7bc5fbaf9733473ddb238",
+    "inputs/trigger-evals.json": "4b65390aa2fbdc105cb144f960fe578209550fde0c71609107d9fcea8ff3e5a0",
+    "inputs/variants.json": "bd7c32bcfaaf4f6d50e060ee315dd4e496e8053457dd86e5a732853a83c2f619",
+    "variants/current/SKILL.md": "f6f8bdf3c5052fb9b360fe3ac247eb88cdce5f8e7e2b1601088fb177ea016867",
+    "variants/candidate/SKILL.md": "9c7a7fae626d6112f4296c7db3f699a7cfe2877f23416c91bc906dbd7e29e251"
+  },
+  "artifact_hashes": {
+    "base/manifest.json": "bdcbe1e19dea16484c03a7d83e6ade3ec84578200d6f0373bd66d19af7c44909",
+    "base/aggregate.json": "0c22f359c9c937287a284d95ca9588a220db0942759aefc3a72afa56627f3e78"
+  }
+}

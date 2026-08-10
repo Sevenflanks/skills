@@ -2,37 +2,53 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import TypeAlias
-
+from .evidence_format import JsonValue
 from .models import Metadata, Prompt, Specification, Variant
+
+
+CANDIDATE_DESCRIPTION = "Use when lifecycle-decision routing is needed for an Agent-caused local OS process: a foreground local command may hang or outlive the initiating tool call, or a lingering, zombie, or unclear-owner local process needs cleanup or reconciliation. On Windows, classify owner, select the first viable execution tier, and handle readiness, Stop, Preserve, handoff, or reconciliation. On non-Windows, classify only to hand off or block before launch; do not perform lifecycle execution. Do not use for synchronous commands or when merely observing or using an external or runtime-managed resource whose owner and lifecycle contract are already clear."
+EXPECTED_VARIANT_SOURCES = (
+    ("current", "../../../../skills/playwright-server-lifecycle/SKILL.md", "playwright-server-lifecycle"),
+    ("candidate", "../../candidate/agent-process-lifecycle/SKILL.md", "agent-process-lifecycle"),
+)
 
 
 class SpecificationError(Exception):
     """Raised when frozen benchmark controls no longer describe the published skill."""
 
 
-JsonValue: TypeAlias = str | int | float | bool | None | list["JsonValue"] | dict[str, "JsonValue"]
-
-
 def load_specification(benchmark_root: Path) -> Specification:
-    """Load frozen inputs and fail if their current-metadata control drifted."""
+    """Load the fixed prompts and the two source-controlled frontmatters."""
     variants_document = _load_document(benchmark_root / "variants.json")
     evaluations_document = _load_document(benchmark_root / "trigger-evals.json")
-    current = _mapping(variants_document["current_metadata"], "current_metadata")
-    current_metadata = Metadata(_string(current["name"], "current_metadata.name"), _string(current["description"], "current_metadata.description"))
-    published_skill_path = _string(variants_document["published_skill_path"], "published_skill_path")
-    published_path = (benchmark_root / published_skill_path).resolve()
-    published = _read_frontmatter(published_path)
-    if published != current_metadata:
-        raise SpecificationError("variants.json current_metadata no longer matches published SKILL.md")
-    generalized_description = _string(variants_document["generalized_description"], "generalized_description")
-    variants = tuple(
-        Variant(_string(item["id"], "variant.id"), _string(item["skill_name"], "variant.skill_name"), _variant_description(_string(item["description_source"], "variant.description_source"), current_metadata, generalized_description))
-        for item in _mappings(variants_document["variants"], "variants")
-    )
+    variants = _load_variants(benchmark_root, variants_document)
     prompts = tuple(Prompt(_string(item["id"], "prompt.id"), _string(item["label"], "prompt.label"), _string(item["body"], "prompt.body")) for item in _mappings(evaluations_document["prompts"], "prompts"))
     _validate(prompts, variants)
-    return Specification(prompts, variants, current_metadata, published_skill_path)
+    return Specification(prompts, variants)
+
+
+def _load_variants(benchmark_root: Path, document: dict[str, JsonValue]) -> tuple[Variant, ...]:
+    if document.get("schema_version") != 2 or set(document) != {"schema_version", "variants"}:
+        raise SpecificationError("variants.json must use schema 2 with only variants")
+    entries = _mappings(document["variants"], "variants")
+    expected_ids = tuple(entry[0] for entry in EXPECTED_VARIANT_SOURCES)
+    found_ids = tuple(_string(entry.get("id"), "variant.id") for entry in entries)
+    if found_ids != expected_ids:
+        raise SpecificationError("variants.json must retain exactly current and candidate")
+    variants: list[Variant] = []
+    for entry, (expected_id, expected_path, expected_name) in zip(entries, EXPECTED_VARIANT_SOURCES, strict=True):
+        if set(entry) != {"id", "skill_path"}:
+            raise SpecificationError("variant entries must contain only id and skill_path")
+        skill_path = _string(entry["skill_path"], "variant.skill_path")
+        if skill_path != expected_path:
+            raise SpecificationError(f"{expected_id} source path changed")
+        metadata = _read_frontmatter((benchmark_root / skill_path).resolve())
+        if metadata.name != expected_name:
+            raise SpecificationError(f"{expected_id} frontmatter name changed")
+        if expected_id == "candidate" and metadata.description != CANDIDATE_DESCRIPTION:
+            raise SpecificationError("candidate frontmatter description changed")
+        variants.append(Variant(expected_id, metadata.name, metadata.description, skill_path))
+    return tuple(variants)
 
 
 def _load_document(path: Path) -> dict[str, JsonValue]:
@@ -43,12 +59,6 @@ def _load_document(path: Path) -> dict[str, JsonValue]:
     if not isinstance(document, dict):
         raise SpecificationError(f"{path.name} must be a JSON object")
     return document
-
-
-def _mapping(value: JsonValue, location: str) -> dict[str, JsonValue]:
-    if not isinstance(value, dict):
-        raise SpecificationError(f"{location} must be a JSON object")
-    return value
 
 
 def _mappings(value: JsonValue, location: str) -> list[dict[str, JsonValue]]:
@@ -85,19 +95,9 @@ def _read_frontmatter(path: Path) -> Metadata:
         raise SpecificationError("published SKILL.md lacks name or description") from error
 
 
-def _variant_description(source: str, current: Metadata, generalized: str) -> str:
-    match source:
-        case "current_metadata":
-            return current.description
-        case "generalized_description":
-            return generalized
-        case unexpected:
-            raise SpecificationError(f"unknown description source: {unexpected}")
-
-
 def _validate(prompts: tuple[Prompt, ...], variants: tuple[Variant, ...]) -> None:
-    if [variant.id for variant in variants] != ["current", "generalized-current-name", "generalized-neutral-name"]:
-        raise SpecificationError("variants must retain the exact three-way control design")
+    if tuple(variant.id for variant in variants) != ("current", "candidate"):
+        raise SpecificationError("variants must retain the exact two-way design")
     if len(prompts) != 16 or sum(prompt.label == "positive" for prompt in prompts) != 8 or sum(prompt.label == "negative" for prompt in prompts) != 8:
         raise SpecificationError("trigger-evals.json must contain eight positive and eight negative prompts")
     candidate_names = {variant.skill_name for variant in variants}
