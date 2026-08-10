@@ -1,0 +1,35 @@
+{
+  "variants": {
+    "candidate": {
+      "positive": {
+        "requested_logical_runs": 0,
+        "valid_trials": 0,
+        "triggered_trials": 0,
+        "invalid_attempts": 0,
+        "trigger_rate": null,
+        "false_trigger_rate": null
+      },
+      "negative": {
+        "requested_logical_runs": 7,
+        "valid_trials": 7,
+        "triggered_trials": 6,
+        "invalid_attempts": 0,
+        "trigger_rate": null,
+        "false_trigger_rate": 0.8571428571428571
+      }
+    }
+  },
+  "prompts": {
+    "candidate": {
+      "framework-complete-ownership": {
+        "requested_logical_runs": 7,
+        "valid_trials": 7,
+        "triggered_trials": 6,
+        "invalid_attempts": 0,
+        "trigger_rate": null,
+        "false_trigger_rate": 0.8571428571428571
+      }
+    }
+  },
+  "pairwise_rate_deltas": {}
+}

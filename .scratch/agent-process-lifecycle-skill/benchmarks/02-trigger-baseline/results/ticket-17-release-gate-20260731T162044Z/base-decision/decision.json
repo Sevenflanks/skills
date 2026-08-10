@@ -1,0 +1,88 @@
+{
+  "schema_version": 1,
+  "stage": "base",
+  "status": "passed",
+  "outcome": "pass",
+  "exit_code": 0,
+  "reason_codes": [],
+  "reasons": [],
+  "fixed_base_counts": {
+    "current": {
+      "positive": {
+        "triggered": 24,
+        "valid": 24,
+        "invalid_attempts": 0
+      },
+      "negative": {
+        "triggered": 23,
+        "valid": 24,
+        "invalid_attempts": 0
+      }
+    },
+    "candidate": {
+      "positive": {
+        "triggered": 24,
+        "valid": 24,
+        "invalid_attempts": 0
+      },
+      "negative": {
+        "triggered": 0,
+        "valid": 24,
+        "invalid_attempts": 0
+      }
+    }
+  },
+  "total_invalid_attempts": 0,
+  "base_aggregate": {
+    "path": "base/aggregate.json",
+    "sha256": "1c5cd54a991f5e87a79649a6d44ee7b4816dc752cf4b66592455f484aa9c63bb"
+  },
+  "required_targeted_prompt_ids": [],
+  "targeted": {},
+  "parity_status": "matched",
+  "safety_status": "passed",
+  "source_hashes": {
+    "evaluate_routing_release_gate.py": "c0265bb8505d27fdd3d51049aa6bbce87032137753396f273c3f107028df33b4",
+    "run_trigger_baseline.py": "1163160c49102693c89c63922e47a493b7abda384e81dfde51bf1dc2a85473ea",
+    "tests/evidence_fixtures.py": "894df84b241bd3c4c5f2c611b464d9cf58e2cae808d52b035de66d7ea50cec58",
+    "tests/test_calibration_safety.py": "4b45b589654ccfa4076d44425e226a3c14796af1b71b9a41b6bc248bd01cdaaf",
+    "tests/test_evaluator_cli.py": "507764568b8524851c1f4fda9afa16af3ce0d2eb868e45a1140f1b7dc715e0b2",
+    "tests/test_evaluator_layout.py": "d9b97410cbfbd1063cf10464b8ea5637898a97b03ac87ad2dbd47f91ecfef826",
+    "tests/test_evidence.py": "ce97374f469a8a7b131b2a3ef53ff0f5d08e0aa66d9a31d651900088defb0fc0",
+    "tests/test_evidence_contract.py": "771e49aa96e8ee8e5112f244cab228164288616e71e0a0ed7249dffc8b6d5510",
+    "tests/test_preflight_retry.py": "8038189ee339e6bd64caa0d8335b58a68069900eed27781b7ca816a6505c89c9",
+    "tests/test_reference_manifest_contract.py": "1240111588f3b25ab77f421983682880147dad7819d9d00fc4b1152e347cfab1",
+    "tests/test_release_gate.py": "d12248ac6f7a472f1b46d782191cd7a4cff0dd4fe853180c89e67604bee5cb60",
+    "tests/test_release_safety.py": "3f73990fb65216ebd4ad0ff4c701b2fca83f7d4cee527a26d79ac6ac1498e1e6",
+    "tests/test_selected_worker_contract.py": "603b1d4e068ef3dceaffa6b1add6dc856821c9bf31c1a5662fad53e7a12e3fc9",
+    "tests/test_trials_observation.py": "2217dc96826634289ab34eb00226520747676abeb6278df85d116f23abaef8fb",
+    "tests/test_trigger_benchmark.py": "acf87693c5bcd662c3cf0d72221b1d15819f49f6028c51adf85da3f06af432dd",
+    "trigger_benchmark/__init__.py": "4da98e0b1d531ea5bdffc23852c1d594d29bc9dd6a882cbfb18be8714300b4d3",
+    "trigger_benchmark/aggregate.py": "a82c57dd291b481e5e525367f22737318f92aebf2ea6ce9c16e547bb52caad78",
+    "trigger_benchmark/calibration.py": "01a7e311582a786662c457c2b280ad54db39dc36ea6e0cde4149dbfc9cc53a04",
+    "trigger_benchmark/completeness.py": "a36e63bb5f20501248ef2f9d679b1d98deee4df19f1aa80c44c6bb354396c5aa",
+    "trigger_benchmark/events.py": "e72b6d1da3272f8ae68909756accd0564c9a6ec7cf04fe83c21615cbda53fa2c",
+    "trigger_benchmark/evidence.py": "1cd1fd4876f49ceacc91cd906aba228f18ec75162c8d2b09c8ba492987eb14b5",
+    "trigger_benchmark/evidence_format.py": "ce7e05c8b0842d239df5a65c048b453f582e203bc1b8ff42151fc25ec5d8857a",
+    "trigger_benchmark/execution.py": "0fa05ee578b4f3b2a7e6d1720019017281f5723ed66344ed95063fc75825aa48",
+    "trigger_benchmark/fixture.py": "05da9c0dfc5a86fddb931ee9081810dcd9f02712054c2d7c6e104d70b2874a51",
+    "trigger_benchmark/models.py": "e916ff2ae34656f8f240504743caf1be73b39a21dc05b46581d211cba28ff030",
+    "trigger_benchmark/phase.py": "a0be6939781b6d6f0e5a2ee16eac71fb17cae91eae35123bcbe9e290785757c9",
+    "trigger_benchmark/preflight.py": "b996527ead73ff72d5e7bc6f8243a309ca6b4c9b86e2a2b372387579280db83d",
+    "trigger_benchmark/preflight_execution.py": "3d4d8792205ee482db3819a8f6ea6a651be0354c5bb8b0ad94602c1c80277b42",
+    "trigger_benchmark/reference.py": "82167fe8fc55713d2ccaf89500af59099d5f8cdbc12bf20c816f4fd8564d34bc",
+    "trigger_benchmark/release_gate.py": "7f74d370b916e9ce891170523566b392714f09291c024091cedd9690a1b6cb83",
+    "trigger_benchmark/runner.py": "7760ee27f0096ab389b6c71e9646177d876f36a8be540edf0a83a8e6001de84b",
+    "trigger_benchmark/spec.py": "3e562cd42ffec497c8104b38f4240a2998367980fc5c9e7f6b57fc30cc8f8bbd",
+    "trigger_benchmark/trial_contract.py": "500761f9c542b538e8da2ba6aa7319204543a4ccc3e152adc551006c871e61ef",
+    "trigger_benchmark/trials.py": "a72b4cb7046e663277e7e19856992d4ba849d015caf1bc0156907dcf8b79da59",
+    "inputs/trigger-evals.json": "4b65390aa2fbdc105cb144f960fe578209550fde0c71609107d9fcea8ff3e5a0",
+    "inputs/variants.json": "113a569f5d66b374fbf8174671f8bcc0d20581b9435a2e129d6a86f507237306",
+    "variants/current/SKILL.md": "f6f8bdf3c5052fb9b360fe3ac247eb88cdce5f8e7e2b1601088fb177ea016867",
+    "variants/candidate/SKILL.md": "ea5af37d74972aeed4c941b69201e5841b99087f1d07eb5e6a9ec88f18876031"
+  },
+  "artifact_hashes": {
+    "base/manifest.json": "b2a46302fd0b64322e6e150e6c31f48d40643da59d7cb4b8a8e0ea8fb1c00be2",
+    "base/aggregate.json": "1c5cd54a991f5e87a79649a6d44ee7b4816dc752cf4b66592455f484aa9c63bb"
+  }
+}
