@@ -148,6 +148,48 @@ class HistoricalEvidenceMigrationTests(unittest.TestCase):
             self.assertEqual(raw_before, _raw_hashes(evidence))
             self.assertTrue((evidence / "logs/current__prompt__run-1__attempt-1.stdout.ndjson").is_file())
 
+    def test_migration_when_planned_move_source_is_stale_rejects_without_mutating(self) -> None:
+        with tempfile.TemporaryDirectory(dir=BENCHMARK_ROOT) as temporary_directory:
+            benchmark_root = Path(temporary_directory)
+            evidence = benchmark_root / "results/evidence"
+            _write_legacy_evidence(evidence)
+            plan = plan_migration(benchmark_root)
+            (evidence / "logs/environment-opencode-version.stdout.txt").write_bytes(b"stale raw stream\n")
+            evidence_before = _evidence_bytes(evidence)
+
+            with self.assertRaises(MigrationError):
+                apply_migration(plan)
+
+            self.assertEqual(evidence_before, _evidence_bytes(evidence))
+
+    def test_migration_when_planned_move_destination_collides_rejects_without_mutating(self) -> None:
+        with tempfile.TemporaryDirectory(dir=BENCHMARK_ROOT) as temporary_directory:
+            benchmark_root = Path(temporary_directory)
+            evidence = benchmark_root / "results/evidence"
+            _write_legacy_evidence(evidence)
+            plan = plan_migration(benchmark_root)
+            (evidence / version_paths().stdout).write_bytes(b"unplanned destination\n")
+            evidence_before = _evidence_bytes(evidence)
+
+            with self.assertRaises(MigrationError):
+                apply_migration(plan)
+
+            self.assertEqual(evidence_before, _evidence_bytes(evidence))
+
+    def test_migration_when_planned_write_target_is_stale_rejects_without_mutating(self) -> None:
+        with tempfile.TemporaryDirectory(dir=BENCHMARK_ROOT) as temporary_directory:
+            benchmark_root = Path(temporary_directory)
+            evidence = benchmark_root / "results/evidence"
+            _write_legacy_evidence(evidence)
+            plan = plan_migration(benchmark_root)
+            (evidence / "manifest.json").write_bytes(b'{"stale": "write"}\n')
+            evidence_before = _evidence_bytes(evidence)
+
+            with self.assertRaises(MigrationError):
+                apply_migration(plan)
+
+            self.assertEqual(evidence_before, _evidence_bytes(evidence))
+
     def test_migration_when_declared_stream_traverses_outside_logs_rejects_before_mutating(self) -> None:
         with tempfile.TemporaryDirectory(dir=BENCHMARK_ROOT) as temporary_directory:
             benchmark_root = Path(temporary_directory)

@@ -31,6 +31,7 @@ class _Move:
 class _Write:
     path: Path
     content: bytes
+    expected_prior: bytes | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,6 +78,8 @@ def plan_migration(benchmark_root: Path) -> MigrationPlan:
 
 def apply_migration(plan: MigrationPlan) -> MigrationReceipt:
     """Apply a prevalidated plan; repeating an empty plan is a no-op."""
+    _validate_moves(plan.moves)
+    _validate_writes(plan.writes)
     for move in plan.moves:
         move.source.replace(move.destination)
     for write in plan.writes:
@@ -183,10 +186,12 @@ def _moves(root: Path, changes: dict[str, str]) -> list[_Move]:
     return [_Move(root / source, root / destination, _sha256(root / source)) for source, destination in changes.items() if source != destination]
 
 
-def _validate_moves(moves: list[_Move]) -> None:
+def _validate_moves(moves: list[_Move] | tuple[_Move, ...]) -> None:
     sources = {move.source for move in moves}
     destinations: set[Path] = set()
     for move in moves:
+        if move.source.is_symlink() or not move.source.is_file() or _sha256(move.source) != move.sha256:
+            raise MigrationError(f"raw source changed: {move.source}")
         if move.destination in destinations or (move.destination.exists() and move.destination not in sources):
             raise MigrationError(f"raw destination collision: {move.destination}")
         destinations.add(move.destination)
@@ -231,9 +236,9 @@ def _artifact_hashes(root: Path, manifest: dict[str, JsonValue], changes: dict[s
 
 
 def _writes(documents: dict[Path, dict[str, JsonValue]], trials: dict[Path, bytes], newlines: dict[Path, bytes]) -> list[_Write]:
-    writes = [_Write(path, content) for path, content in trials.items()]
-    writes.extend(_Write(path, _json_bytes(document, newlines[path])) for path, document in documents.items())
-    return [write for write in writes if not write.path.exists() or write.path.read_bytes() != write.content]
+    writes = [_planned_write(path, content) for path, content in trials.items()]
+    writes.extend(_planned_write(path, _json_bytes(document, newlines[path])) for path, document in documents.items())
+    return [write for write in writes if write is not None]
 
 
 def _gate_writes(benchmark_root: Path, manifests: dict[Path, dict[str, JsonValue]], newlines: dict[Path, bytes]) -> list[_Write]:
@@ -242,15 +247,36 @@ def _gate_writes(benchmark_root: Path, manifests: dict[Path, dict[str, JsonValue
         document = _document(path)
         newline = _newline(path.read_bytes())
         if _rewrite_calibration_hashes(document, path.parent, manifests, newlines):
-            writes.append(_Write(path, _json_bytes(document, newline)))
+            write = _planned_write(path, _json_bytes(document, newline))
+            if write is not None:
+                writes.append(write)
     for path in sorted((benchmark_root / "results").rglob("decision.json")):
         document = _document(path)
         newline = _newline(path.read_bytes())
         if _rewrite_decision_hashes(document, path.parent.parent, manifests, newlines):
-            writes.append(_Write(path, _json_bytes(document, newline)))
+            write = _planned_write(path, _json_bytes(document, newline))
+            if write is not None:
+                writes.append(write)
             report_newline = _newline(path.with_name("report.md").read_bytes())
-            writes.append(_Write(path.with_name("report.md"), _report(document).replace("\n", report_newline.decode()).encode("utf-8")))
+            report = _planned_write(path.with_name("report.md"), _report(document).replace("\n", report_newline.decode()).encode("utf-8"))
+            if report is not None:
+                writes.append(report)
     return writes
+
+
+def _planned_write(path: Path, content: bytes) -> _Write | None:
+    expected_prior = path.read_bytes() if path.exists() else None
+    return None if expected_prior == content else _Write(path, content, expected_prior)
+
+
+def _validate_writes(writes: tuple[_Write, ...]) -> None:
+    for write in writes:
+        if write.expected_prior is None:
+            if write.path.exists():
+                raise MigrationError(f"write target changed: {write.path}")
+            continue
+        if write.path.is_symlink() or not write.path.is_file() or write.path.read_bytes() != write.expected_prior:
+            raise MigrationError(f"write target changed: {write.path}")
 
 
 def _rewrite_calibration_hashes(document: dict[str, JsonValue], gate_root: Path, manifests: dict[Path, dict[str, JsonValue]], newlines: dict[Path, bytes]) -> bool:
