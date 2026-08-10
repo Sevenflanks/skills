@@ -7,6 +7,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TypeAlias
 
+from .artifact_paths import preflight_paths
 from .fixture import Fixture, FixtureIdentifierError, fixture_environment, validate_fixture_id
 from .evidence_format import EvidenceValidationError, integer, objects, string, strings
 from .models import RunShape, Specification, Variant
@@ -184,23 +185,22 @@ def validate_preflight_evidence(root: Path, value: JsonValue | None, shape: RunS
     expected = {variant.id: variant for variant in shape.variants}
     if {string(entry.get("variant_id"), "preflight.variant_id") for entry in entries} != set(expected) or len(entries) != len(expected):
         raise EvidenceValidationError("preflight variants are missing, duplicate, or unauthorized")
+    paths: set[str] = set()
     for entry in entries:
         variant = expected[string(entry.get("variant_id"), "preflight.variant_id")]
         attempts, successful_attempt = _attempts(entry)
-        paths: set[str] = set()
         for index, attempt in enumerate(attempts, start=1):
+            stdout_path = string(attempt.get("stdout_path"), "preflight.stdout_path")
+            stderr_path = string(attempt.get("stderr_path"), "preflight.stderr_path")
             if "attempts" in entry:
                 if integer(attempt.get("attempt"), "preflight.attempt") != index:
                     raise EvidenceValidationError("preflight attempt number does not match its position")
                 if string(attempt.get("outcome"), "preflight.attempt.outcome") not in {"success", "semantic-discovery-omission"}:
                     raise EvidenceValidationError("preflight attempt has an unauthorized outcome")
-                stdout_path = string(attempt.get("stdout_path"), "preflight.stdout_path")
-                stderr_path = string(attempt.get("stderr_path"), "preflight.stderr_path")
-                fixture_id = string(attempt.get("fixture_id"), "preflight.fixture_id")
-                prefix = f"logs/preflight-{variant.id}-{fixture_id}-attempt-{index}"
-                if stdout_path != f"{prefix}.stdout.txt" or stderr_path != f"{prefix}.stderr.txt" or stdout_path in paths or stderr_path in paths:
-                    raise EvidenceValidationError("preflight attempt raw streams are not independently named")
-                paths.update((stdout_path, stderr_path))
+            expected_paths = preflight_paths(variant.id, index)
+            if stdout_path != expected_paths.stdout or stderr_path != expected_paths.stderr or stdout_path in paths or stderr_path in paths:
+                raise EvidenceValidationError("preflight attempt raw streams are not independently named")
+            paths.update((stdout_path, stderr_path))
             _validate_stream_hashes(root, attempt)
         success = attempts[successful_attempt - 1]
         if "attempts" in entry and string(success.get("outcome"), "preflight.attempt.outcome") != "success":

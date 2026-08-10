@@ -10,6 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 
+from .artifact_paths import trial_paths
 from .fixture import create_fixture, fixture_environment
 from .models import AttemptStatus, Prompt, RunOptions, TrialRecord, Variant
 
@@ -86,12 +87,12 @@ def _run_attempt(plan: TrialPlan, cell: TrialCell, attempt: int) -> TrialRecord:
 
 def _persist_stream(output_directory: Path, stream: StreamOutput) -> TrialRecord:
     record = stream.record
-    prefix = f"{record.variant_id}__{record.prompt_id}__run-{record.logical_run}__attempt-{record.attempt}"
-    stdout_path = output_directory / "logs" / f"{prefix}.stdout.ndjson"
-    stderr_path = output_directory / "logs" / f"{prefix}.stderr.txt"
+    paths = trial_paths(record.fixture_id)
+    stdout_path = output_directory / paths.stdout
+    stderr_path = output_directory / paths.stderr
     stdout_path.write_text(stream.stdout, encoding="utf-8", newline="\n")
     stderr_path.write_text(stream.stderr, encoding="utf-8", newline="\n")
-    return replace(record, stdout_path=str(stdout_path.relative_to(output_directory)).replace("\\", "/"), stderr_path=str(stderr_path.relative_to(output_directory)).replace("\\", "/"), stdout_sha256=_sha256(stdout_path), stderr_sha256=_sha256(stderr_path))
+    return replace(record, stdout_path=paths.stdout, stderr_path=paths.stderr, stdout_sha256=_sha256(stdout_path), stderr_sha256=_sha256(stderr_path))
 
 
 def _timeout_text(value: str | bytes | None) -> str:

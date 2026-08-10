@@ -85,6 +85,10 @@ py -3.12 "$BenchmarkRoot/evaluate_routing_release_gate.py" evaluate --gate-root 
 
 每個 run 的 `manifest.json` 記錄 observed environment、variant frontmatter、selection、worker、reference、completeness、source hashes 與 artifact hashes；`trials.ndjson` 保留所有 attempts，`logs/` 保留 raw stdout/stderr，`aggregate.json` 只在該 phase completeness gate 通過後產生。
 
+## Raw Stream Names
+
+`logs/` 使用 compact opaque filenames：version 為 `v.out` 與 `v.err`，preflight attempt 為 `p-<variant_id>-<one-based-attempt>.out` 與 `.err`，trial 為 `t-<fixture_id>.out` 與 `.err`。名稱只提供安全且唯一的定位，不取代 raw stream reparse、SHA-256 verification、artifact completeness 或 fixture/attempt uniqueness 的要求。
+
 ## Historical Context And Scope
 
 既有三 variant、144 valid trials 的結果仍保留在規格作為 historical context。那次結果顯示 current positive `100.0%`、near-miss false trigger `54.2%`，原地泛化舊名稱為 `95.8%/83.3%`，neutral name 為 `100.0%/87.5%`。它不是新的兩 variant gate，也不是 runtime safety 或 publication acceptance。
