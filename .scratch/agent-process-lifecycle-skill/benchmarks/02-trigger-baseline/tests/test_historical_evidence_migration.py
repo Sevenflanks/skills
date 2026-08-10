@@ -169,6 +169,33 @@ class HistoricalEvidenceMigrationTests(unittest.TestCase):
             self.assertEqual(evidence_before, _evidence_bytes(evidence))
             self.assertEqual(outside_before, outside_file.read_bytes())
 
+    def test_migration_when_declared_stream_path_is_not_canonical_posix_rejects_before_mutating(self) -> None:
+        canonical_stream = "logs/environment-opencode-version.stdout.txt"
+        aliases = (
+            "logs/./environment-opencode-version.stdout.txt",
+            "logs//environment-opencode-version.stdout.txt",
+            "logs/../logs/environment-opencode-version.stdout.txt",
+            "/logs/environment-opencode-version.stdout.txt",
+            r"logs\environment-opencode-version.stdout.txt",
+        )
+        for source in aliases:
+            with self.subTest(source=source):
+                with tempfile.TemporaryDirectory(dir=BENCHMARK_ROOT) as temporary_directory:
+                    benchmark_root = Path(temporary_directory)
+                    evidence = benchmark_root / "results/evidence"
+                    _write_legacy_evidence(evidence)
+                    manifest = _document(evidence / "manifest.json")
+                    environment = manifest["observed_environment"]["opencode"]
+                    environment["stdout_path"] = source
+                    environment["stdout_sha256"] = _hash(evidence / canonical_stream)
+                    _write_document(evidence / "manifest.json", manifest, b"\n")
+                    evidence_before = _evidence_bytes(evidence)
+
+                    with self.assertRaises(MigrationError):
+                        plan_migration(benchmark_root)
+
+                    self.assertEqual(evidence_before, _evidence_bytes(evidence))
+
     def test_migration_when_declared_stream_is_symlink_rejects_before_mutating(self) -> None:
         with tempfile.TemporaryDirectory(dir=BENCHMARK_ROOT) as temporary_directory:
             benchmark_root = Path(temporary_directory)

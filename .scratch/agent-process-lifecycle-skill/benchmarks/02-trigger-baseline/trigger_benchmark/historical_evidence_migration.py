@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Final
 
 from .artifact_paths import StreamPaths, preflight_paths, trial_paths, version_paths
@@ -139,10 +139,18 @@ def _rewrite_evidence(root: Path, manifest: dict[str, JsonValue]) -> tuple[dict[
 def _rewrite_stream(root: Path, document: dict[str, JsonValue], paths: StreamPaths, changes: dict[str, str]) -> None:
     for field, destination in (("stdout_path", paths.stdout), ("stderr_path", paths.stderr)):
         source = _string(document.get(field), field)
+        declared = PurePosixPath(source)
         components = source.split("/")
-        if components[0] != "logs" or ".." in components:
+        if (
+            "\\" in source
+            or declared.is_absolute()
+            or source != declared.as_posix()
+            or any(component in {"", ".", ".."} for component in components)
+            or not declared.parts
+            or declared.parts[0] != "logs"
+        ):
             raise MigrationError(f"declared stream does not match {source}")
-        declared_source_path = root / Path(*components)
+        declared_source_path = root / Path(*declared.parts)
         if declared_source_path.is_symlink():
             raise MigrationError(f"declared stream does not match {source}")
         source_path = declared_source_path.resolve()
