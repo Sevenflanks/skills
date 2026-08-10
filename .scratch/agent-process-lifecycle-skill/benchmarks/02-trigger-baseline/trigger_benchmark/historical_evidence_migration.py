@@ -142,7 +142,10 @@ def _rewrite_stream(root: Path, document: dict[str, JsonValue], paths: StreamPat
         components = source.split("/")
         if components[0] != "logs" or ".." in components:
             raise MigrationError(f"declared stream does not match {source}")
-        source_path = (root / Path(*components)).resolve()
+        declared_source_path = root / Path(*components)
+        if declared_source_path.is_symlink():
+            raise MigrationError(f"declared stream does not match {source}")
+        source_path = declared_source_path.resolve()
         expected = _string(document.get(field.replace("path", "sha256")), field.replace("path", "sha256"))
         if not source_path.is_relative_to((root / "logs").resolve()) or not source_path.is_file() or _sha256(source_path) != expected:
             raise MigrationError(f"declared stream does not match {source}")

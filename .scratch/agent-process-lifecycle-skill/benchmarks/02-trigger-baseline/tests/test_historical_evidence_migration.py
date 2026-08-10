@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 BENCHMARK_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BENCHMARK_ROOT))
@@ -167,6 +168,21 @@ class HistoricalEvidenceMigrationTests(unittest.TestCase):
 
             self.assertEqual(evidence_before, _evidence_bytes(evidence))
             self.assertEqual(outside_before, outside_file.read_bytes())
+
+    def test_migration_when_declared_stream_is_symlink_rejects_before_mutating(self) -> None:
+        with tempfile.TemporaryDirectory(dir=BENCHMARK_ROOT) as temporary_directory:
+            benchmark_root = Path(temporary_directory)
+            evidence = benchmark_root / "results/evidence"
+            _write_legacy_evidence(evidence)
+            declared_stdout = evidence / "logs/environment-opencode-version.stdout.txt"
+            evidence_before = _evidence_bytes(evidence)
+            original_is_symlink = Path.is_symlink
+
+            with patch.object(Path, "is_symlink", autospec=True, side_effect=lambda path: path == declared_stdout or original_is_symlink(path)):
+                with self.assertRaises(MigrationError):
+                    plan_migration(benchmark_root)
+
+            self.assertEqual(evidence_before, _evidence_bytes(evidence))
 
 
 def _write_legacy_evidence(root: Path, *, reference: Path | None = None, duplicate_trial: bool = False) -> dict[str, str]:
