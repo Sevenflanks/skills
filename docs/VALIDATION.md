@@ -46,4 +46,4 @@ node scripts/check-tracked-path-budget.mjs
 
 ## CI
 
-`.github/workflows/validate.yml` 會在 push 到 `main` 與 pull request 時執行 `npm run validate`。
+`.github/workflows/validate.yml` 會在 push 到 `main` 與 pull request 時於 Ubuntu 執行 `npm run validate`。同一 workflow 也會在 Windows runner 將 source checkout 實際 clone 到 `$env:RUNNER_TEMP`，並以 command-scoped `core.longpaths=false` 驗證 clone 可完成、工作樹乾淨且 HEAD 與來源一致；暫存 clone 一律在 `finally` 清理。

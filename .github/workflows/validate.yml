@@ -20,3 +20,13 @@ jobs:
 
       - name: Validate skill repository
         run: npm run validate
+
+  windows-checkout-smoke:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify checkout without Windows long paths
+        shell: pwsh
+        run: .\scripts\Test-WindowsGitCheckout.ps1 -SourcePath $env:GITHUB_WORKSPACE
