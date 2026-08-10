@@ -6,6 +6,7 @@ import platform
 from dataclasses import replace
 from pathlib import Path
 
+from trigger_benchmark.artifact_paths import preflight_paths, trial_paths, version_paths
 from trigger_benchmark.evidence import MANIFEST_CONTRACT, MANIFEST_SCHEMA_VERSION, source_hashes_for
 from trigger_benchmark.evidence_format import JsonArray, JsonObject, json_array, json_object
 from trigger_benchmark.execution import RunExecutionPlan, VersionCapture
@@ -35,6 +36,7 @@ def make_plan(phase: RunPhase, *, prompt_ids: tuple[str, ...] = ()) -> RunExecut
 
 def make_manifest_template(plan: RunExecutionPlan) -> JsonObject:
     version_stdout = "opencode test"
+    version = version_paths()
     return json_object({
         "schema_version": MANIFEST_SCHEMA_VERSION,
         "contract": MANIFEST_CONTRACT,
@@ -44,7 +46,7 @@ def make_manifest_template(plan: RunExecutionPlan) -> JsonObject:
         "execution_contract": json_object({"model": plan.options.model, "agent": "build", "format": "json", "pure": True, "python_major_minor": f"{platform.python_version_tuple()[0]}.{platform.python_version_tuple()[1]}"}),
         "execution": json_object({"workers": plan.options.workers, "timeout_seconds": plan.options.timeout_seconds, "retries": plan.options.retries, "seed": plan.options.seed, "permission_policy": json_object({"*": "deny", "skill": "allow"})}),
         "environment_parity": json_object({"opencode_output": version_stdout, "python": platform.python_version(), "platform": platform.platform()}),
-        "observed_environment": json_object({"opencode": json_object({"command": json_array(("opencode", "--version")), "return_code": 0, "raw_output": version_stdout, "stdout_path": "logs/environment-opencode-version.stdout.txt", "stderr_path": "logs/environment-opencode-version.stderr.txt", "stdout_sha256": hashlib.sha256(version_stdout.encode()).hexdigest(), "stderr_sha256": hashlib.sha256(b"").hexdigest()}), "python": platform.python_version(), "platform": platform.platform()}),
+        "observed_environment": json_object({"opencode": json_object({"command": json_array(("opencode", "--version")), "return_code": 0, "raw_output": version_stdout, "stdout_path": version.stdout, "stderr_path": version.stderr, "stdout_sha256": hashlib.sha256(version_stdout.encode()).hexdigest(), "stderr_sha256": hashlib.sha256(b"").hexdigest()}), "python": platform.python_version(), "platform": platform.platform()}),
         "source_hashes": json_object({}),
         "preflight": json_array(()),
         "reference_manifest": None,
@@ -55,19 +57,21 @@ def write_evidence(root: Path, manifest: JsonObject, shape: RunShape) -> None:
     root.mkdir(parents=True)
     logs = root / "logs"
     logs.mkdir()
-    version_stdout = logs / "environment-opencode-version.stdout.txt"
-    version_stderr = logs / "environment-opencode-version.stderr.txt"
+    version = version_paths()
+    version_stdout = root / version.stdout
+    version_stderr = root / version.stderr
     version_stdout.write_text("opencode test", encoding="utf-8")
     version_stderr.write_text("", encoding="utf-8")
     preflight: JsonArray = []
     for variant in shape.variants:
-        stdout = logs / f"preflight-{variant.id}.stdout.txt"
-        stderr = logs / f"preflight-{variant.id}.stderr.txt"
+        streams = preflight_paths(variant.id, 1)
+        stdout = root / streams.stdout
+        stderr = root / streams.stderr
         fixture_id = f"preflight-{variant.id}"
         candidate_location = root / "fixtures" / fixture_id / ".opencode" / "skills" / variant.skill_name / "SKILL.md"
         stdout.write_text(_preflight_stream(variant, candidate_location), encoding="utf-8")
         stderr.write_text("", encoding="utf-8")
-        preflight.append(json_object({"variant_id": variant.id, "fixture_id": fixture_id, "command": json_array(("opencode", "debug", "skill", "--pure")), "return_code": 0, "fixture_candidate_count": 1, "candidate_name": variant.skill_name, "candidate_location": str(candidate_location.resolve()), "stdout_path": f"logs/{stdout.name}", "stderr_path": f"logs/{stderr.name}", "stdout_sha256": hash_file(stdout), "stderr_sha256": hash_file(stderr)}))
+        preflight.append(json_object({"variant_id": variant.id, "fixture_id": fixture_id, "command": json_array(("opencode", "debug", "skill", "--pure")), "return_code": 0, "fixture_candidate_count": 1, "candidate_name": variant.skill_name, "candidate_location": str(candidate_location.resolve()), "stdout_path": streams.stdout, "stderr_path": streams.stderr, "stdout_sha256": hash_file(stdout), "stderr_sha256": hash_file(stderr)}))
     records = _records_for_evidence(root, shape, logs)
     trials = root / "trials.ndjson"
     trials.write_text("".join(json.dumps(record) + "\n" for record in records), encoding="utf-8")
@@ -105,14 +109,15 @@ def _records_for_evidence(root: Path, shape: RunShape, logs: Path) -> list[JsonO
                 triggered = variant.id == "candidate" and prompt.label == "positive"
                 attempt_number = len(records) + 1
                 fixture_id = f"fixture-{attempt_number}"
-                stdout = logs / f"trial-{attempt_number}.stdout.ndjson"
-                stderr = logs / f"trial-{attempt_number}.stderr.txt"
+                streams = trial_paths(fixture_id)
+                stdout = root / streams.stdout
+                stderr = root / streams.stderr
                 stream = _stream(variant.skill_name, triggered)
                 stdout.write_text(stream, encoding="utf-8")
                 stderr.write_text("", encoding="utf-8")
                 command = ("opencode", "run", "--pure", "--format", "json", "--model", "test-model", "--agent", "build", "--dir", str((root / "fixtures" / fixture_id).resolve()), prompt.body)
                 record = TrialRecord.from_completed_process(variant.id, prompt.id, prompt.label, logical_run, 1, command, stream, "", 0, 1.0, variant.skill_name)
-                records.append(_record_document(replace(record, stdout_path=f"logs/{stdout.name}", stderr_path=f"logs/{stderr.name}", stdout_sha256=hash_file(stdout), stderr_sha256=hash_file(stderr)), fixture_id, variant.skill_name))
+                records.append(_record_document(replace(record, stdout_path=streams.stdout, stderr_path=streams.stderr, stdout_sha256=hash_file(stdout), stderr_sha256=hash_file(stderr)), fixture_id, variant.skill_name))
     return records
 
 

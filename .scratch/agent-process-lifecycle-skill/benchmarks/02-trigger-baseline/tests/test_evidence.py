@@ -11,6 +11,7 @@ from pathlib import Path
 BENCHMARK_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BENCHMARK_ROOT))
 
+from trigger_benchmark.artifact_paths import preflight_paths, trial_paths, version_paths
 from trigger_benchmark.evidence import EvidenceValidationError, source_hashes_for, validate_evidence
 from trigger_benchmark.models import RunPhase, RunShape, TrialRecord
 from trigger_benchmark.release_gate import select_calibration
@@ -78,7 +79,7 @@ class EvidenceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
             write_exploratory_evidence(root)
-            preflight_path = root / "logs" / "preflight.stdout.txt"
+            preflight_path = root / preflight_paths("candidate", 1).stdout
             discovery = json.loads(preflight_path.read_text(encoding="utf-8"))
             discovery.append({"name": "global-skill", "description": "outside fixture", "location": "relative/SKILL.md"})
             _replace_preflight_stdout(root, json.dumps(discovery))
@@ -146,8 +147,10 @@ class EvidenceTests(unittest.TestCase):
 def write_exploratory_evidence(evidence_root: Path) -> None:
     logs = evidence_root / "logs"
     logs.mkdir()
-    stdout_path = logs / "candidate.stdout.ndjson"
-    stderr_path = logs / "candidate.stderr.txt"
+    fixture_id = "candidate__listener-local-server__run-1__attempt-1"
+    trial = trial_paths(fixture_id)
+    stdout_path = evidence_root / trial.stdout
+    stderr_path = evidence_root / trial.stderr
     stdout = "\n".join(
         (
             '{"type":"tool_use","part":{"type":"tool","tool":"skill","state":{"status":"completed","input":{"name":"agent-process-lifecycle"}}}}',
@@ -156,18 +159,19 @@ def write_exploratory_evidence(evidence_root: Path) -> None:
     )
     stdout_path.write_text(stdout, encoding="utf-8")
     stderr_path.write_text("", encoding="utf-8")
-    version_stdout = logs / "version.stdout.txt"
-    version_stderr = logs / "version.stderr.txt"
+    version = version_paths()
+    version_stdout = evidence_root / version.stdout
+    version_stderr = evidence_root / version.stderr
     version_stdout.write_text("opencode test", encoding="utf-8")
     version_stderr.write_text("", encoding="utf-8")
     specification = load_specification(BENCHMARK_ROOT)
     candidate = specification.variants[1]
-    preflight_stdout = logs / "preflight.stdout.txt"
-    preflight_stderr = logs / "preflight.stderr.txt"
+    preflight = preflight_paths("candidate", 1)
+    preflight_stdout = evidence_root / preflight.stdout
+    preflight_stderr = evidence_root / preflight.stderr
     preflight_fixture_id = "preflight-candidate"
     preflight_stdout.write_text(_preflight_stdout(candidate.skill_name, candidate.description, candidate.skill_name, root=evidence_root, fixture_id=preflight_fixture_id), encoding="utf-8")
     preflight_stderr.write_text("", encoding="utf-8")
-    fixture_id = "candidate__listener-local-server__run-1__attempt-1"
     record = replace(
         TrialRecord.from_completed_process(
             "candidate",
@@ -182,8 +186,8 @@ def write_exploratory_evidence(evidence_root: Path) -> None:
             1.0,
             "agent-process-lifecycle",
         ),
-        stdout_path="logs/candidate.stdout.ndjson",
-        stderr_path="logs/candidate.stderr.txt",
+        stdout_path=trial.stdout,
+        stderr_path=trial.stderr,
         stdout_sha256=_hash(stdout_path),
         stderr_sha256=_hash(stderr_path),
     )
@@ -201,18 +205,18 @@ def write_exploratory_evidence(evidence_root: Path) -> None:
         "execution_contract": {"model": "test-model", "agent": "build", "format": "json", "pure": True, "python_major_minor": "3.12"},
         "execution": {"workers": 1, "timeout_seconds": 1.0, "retries": 0, "seed": 1, "permission_policy": {"*": "deny", "skill": "allow"}},
         "environment_parity": {"opencode_output": "opencode test", "python": "3.12", "platform": "test"},
-        "observed_environment": {"opencode": {"command": ["opencode", "--version"], "return_code": 0, "raw_output": "opencode test", "stdout_path": "logs/version.stdout.txt", "stderr_path": "logs/version.stderr.txt", "stdout_sha256": _hash(version_stdout), "stderr_sha256": _hash(version_stderr)}, "python": "3.12", "platform": "test"},
-        "preflight": [{"variant_id": "candidate", "fixture_id": preflight_fixture_id, "command": ["opencode", "debug", "skill", "--pure"], "return_code": 0, "fixture_candidate_count": 1, "candidate_name": candidate.skill_name, "candidate_location": str(_candidate_location(evidence_root, candidate.skill_name, preflight_fixture_id).resolve()), "stdout_path": "logs/preflight.stdout.txt", "stderr_path": "logs/preflight.stderr.txt", "stdout_sha256": _hash(preflight_stdout), "stderr_sha256": _hash(preflight_stderr)}],
+        "observed_environment": {"opencode": {"command": ["opencode", "--version"], "return_code": 0, "raw_output": "opencode test", "stdout_path": version.stdout, "stderr_path": version.stderr, "stdout_sha256": _hash(version_stdout), "stderr_sha256": _hash(version_stderr)}, "python": "3.12", "platform": "test"},
+        "preflight": [{"variant_id": "candidate", "fixture_id": preflight_fixture_id, "command": ["opencode", "debug", "skill", "--pure"], "return_code": 0, "fixture_candidate_count": 1, "candidate_name": candidate.skill_name, "candidate_location": str(_candidate_location(evidence_root, candidate.skill_name, preflight_fixture_id).resolve()), "stdout_path": preflight.stdout, "stderr_path": preflight.stderr, "stdout_sha256": _hash(preflight_stdout), "stderr_sha256": _hash(preflight_stderr)}],
         "reference_manifest": None,
         "source_hashes": source_hashes_for(BENCHMARK_ROOT, specification),
         "artifact_hashes": {
             "trials.ndjson": _hash(trial_path),
-            "logs/candidate.stdout.ndjson": _hash(stdout_path),
-            "logs/candidate.stderr.txt": _hash(stderr_path),
-            "logs/version.stdout.txt": _hash(version_stdout),
-            "logs/version.stderr.txt": _hash(version_stderr),
-            "logs/preflight.stdout.txt": _hash(preflight_stdout),
-            "logs/preflight.stderr.txt": _hash(preflight_stderr),
+            trial.stdout: _hash(stdout_path),
+            trial.stderr: _hash(stderr_path),
+            version.stdout: _hash(version_stdout),
+            version.stderr: _hash(version_stderr),
+            preflight.stdout: _hash(preflight_stdout),
+            preflight.stderr: _hash(preflight_stderr),
         },
     }
     (evidence_root / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
@@ -223,12 +227,13 @@ def _hash(path: Path) -> str:
 
 
 def _replace_preflight_stdout(root: Path, stdout: str) -> None:
-    path = root / "logs" / "preflight.stdout.txt"
+    preflight = preflight_paths("candidate", 1)
+    path = root / preflight.stdout
     path.write_text(stdout, encoding="utf-8")
     manifest_path = root / "manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     manifest["preflight"][0]["stdout_sha256"] = _hash(path)
-    manifest["artifact_hashes"]["logs/preflight.stdout.txt"] = _hash(path)
+    manifest["artifact_hashes"][preflight.stdout] = _hash(path)
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
 
 
