@@ -1,6 +1,6 @@
 # agent-process-lifecycle
 
-版本 `1.0.0`，Windows-only execution。這是處理 Agent 所造成之本機 OS process lifecycle decision 的 skill，不是 generic process manager，也不判定 downstream workload 是否成功。
+版本 `1.1.0`，Windows-only execution。這是處理 Agent 所造成之本機 OS process lifecycle decision 的 skill，不是 generic process manager，也不判定 downstream workload 是否成功。
 
 ## 解決的問題
 
@@ -16,7 +16,7 @@
 
 ## 平台與 execution tier
 
-`1.0.0` 只支援 Windows execution。non-Windows 只做分類與 bounded owner classification：可辨識 owner 時交付 handoff，否則在 launch 前 blocked；不做 OS inspection、lifecycle shell call、launch 或 termination。
+`1.1.0` 只支援 Windows execution。non-Windows 只做分類與 bounded owner classification：可辨識 owner 時交付 handoff，否則在 launch 前 blocked；不做 OS inspection、lifecycle shell call、launch 或 termination。
 
 Tier 不競速。上一 tier 必須先完成 Stop、Preserve、handoff 或 unresolved reconciliation，才可考慮下一 tier。Caller 必須提供 workload-specific readiness signal 與 deadline，不能以 spawn、process alive、fixed sleep 或 port occupied 代替 readiness。
 
@@ -28,6 +28,8 @@ Launch 前先決定 `Stop` 或 `Preserve`。`Stop` 必須有 identity-bound fina
 
 Self-managed helper 是前兩個 tier 不可用時的 Windows fallback。它隱藏 Job、ACL、atomic record、PID identity 與 retained handle 的複雜度，且只有兩個 public helper actions：`Launch` 與 `Finalize`。`Stop` 與 `Preserve` 是 `Finalize` 的 dispositions，不是額外 action。Caller 仍擁有 workload-specific readiness 語意與 deadline。
 
+`1.1.0` 允許 record 與 stdio 使用 caller 已獲授權的專案內 artifact 目錄，不要求 home-scoped 初始化或完整 ancestor ACL audit，也不修改既有 ACL。Launch 會同時等待 workload-specific readiness 與本次保留的 root handle；candidate early exit 與可辨識的 bind error 會在 deadline 前帶回 bounded stderr evidence，並只清理本次 owned resource。
+
 ## 檔案
 
 - [README.md](README.md)
@@ -37,6 +39,8 @@ Self-managed helper 是前兩個 tier 不可用時的 Windows fallback。它隱�
 - [references/windows-self-managed.md](references/windows-self-managed.md)
 - [scripts/Invoke-AgentProcessLifecycle.ps1](scripts/Invoke-AgentProcessLifecycle.ps1)
 - [scripts/JobHandleHolder.ps1](scripts/JobHandleHolder.ps1)
+- [tests/project-lifecycle.integration.test.ps1](tests/project-lifecycle.integration.test.ps1)
+- [tests/project-lifecycle-failures.integration.test.ps1](tests/project-lifecycle-failures.integration.test.ps1)
 
 ## 驗證證據與限制
 

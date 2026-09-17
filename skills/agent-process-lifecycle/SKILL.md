@@ -4,7 +4,7 @@ description: "Use when lifecycle-decision routing is needed for an Agent-caused 
 license: MIT
 metadata:
   author: sevenflankse
-  version: 1.0.0
+  version: 1.1.0
 ---
 
 # Agent Process Lifecycle
@@ -95,7 +95,7 @@ defined by `references/failure-and-handoff.md`; never collapse them into prose.
 
 ## 2. Platform Gate
 
-`1.0.0` supports lifecycle execution only on Windows. On non-Windows, perform
+`1.1.0` supports lifecycle execution only on Windows. On non-Windows, perform
 only bounded owner classification from information already available in the
 task. Do not inspect the OS, launch, terminate, issue a lifecycle shell call,
 or invent platform mechanics.
@@ -174,6 +174,11 @@ Every launch obtains a fresh current-run binding. The selected owner supplies
 stdio isolation and, when the workload needs it, one bounded
 workload-specific readiness signal and deadline. Spawn or liveness is not
 readiness.
+
+Windows self-managed 流程若只有專案內的寫入授權，record 與 stdio 就留在該範圍。
+helper 可保護本次建立的 artifacts，但不修改既有目錄 ACL、不要求 per-user
+初始化，也不把完整 ancestor ACL audit 當成啟動 authority。檢查聚焦於 artifact
+boundary；遇到 reparse 或 identity mismatch 時拒絕操作。
 
 For Windows self-managed work, public lifecycle actions are only `Launch` and
 `Finalize`. `Stop` and `Preserve` are `Finalize` dispositions, never third

@@ -30,6 +30,11 @@ For a failed execution tier, use this order:
 and do not terminate a resource when current identity evidence no longer proves
 authority.
 
+區分後續 recovery 與失敗中的原始 Launch。record 遺失、過時或 membership 無法
+驗證，且沒有其他有效 owned binding 時，後續 recovery 應有限返回 `unresolved`。
+原始 Launch 保留的 current-run OS handles 仍可作為清理該 candidate 的精確
+authority；不能只因 publication 或 readiness 失敗就捨棄它們。
+
 ## Callback Facts
 
 For failure, block, Preserve, handoff, or unresolved results, include

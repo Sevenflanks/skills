@@ -6,6 +6,8 @@
 
 只有在 Windows，且 workload 可由同一個 session、相容的 security context 啟動與後續管理時，才使用這個 helper。caller 必須能提供固定且新鮮的 `RecordPath`，並保留 helper 回傳的 opaque `binding`。`binding` 不可自行解讀、拼接或替換；record 是 authority-bearing helper artifact，不能當成一般狀態快取。
 
+`RecordPath` 與 stdio 可以位於 caller 已獲授權的專案目錄內，不需要先建立 home-scoped control root。helper 只保護本次建立的 control directory 與 artifact，並在 direct artifact boundary 拒絕 reparse 或 identity mismatch；不得修改既有專案目錄 ACL、擴增 trusted SID，或把完整 ancestor ACL audit 當成使用前提。若現有授權不足以建立或保護新 artifact，Launch 必須明確失敗。
+
 同一個 lifecycle owner 必須序列化對同一 record 的 `Finalize` 呼叫。helper 不提供 concurrent CAS guarantee，因此不可讓多個 owner 同時 Finalize。
 
 ## 公開操作：`Launch` 與 `Finalize`
@@ -19,7 +21,9 @@ Public actions 只有：
 
 Launch 至少需要 executable、`ArgumentList`、working directory、stdout/stderr paths、readiness identity、readiness context、readiness check、readiness deadline、`RecordPath` 與 `RequestedDisposition`。
 
-`RequestedDisposition` 可為 `Stop` 或 `Preserve`。選 `Preserve` 時必須提供 `RequestedLaterOwner`。選 `Stop` 時不可提供 `RequestedLaterOwner`。readiness 必須在有限 deadline 內成功，否則 Launch fail closed，不交付可用 binding。
+`RequestedDisposition` 可為 `Stop` 或 `Preserve`。選 `Preserve` 時必須提供 `RequestedLaterOwner`。選 `Stop` 時不可提供 `RequestedLaterOwner`。readiness 必須在有限 deadline 內成功，否則 Launch fail closed，不交付可用 binding。readiness callback 沿用 PowerShell truthiness；port occupied 或其他程序的回應不能單獨證明 candidate ready。實作 callback 時應避免輸出無關 pipeline value，測試 token probe 時應明確回傳 scalar Boolean，避免 array truthiness 造成誤判。
+
+等待 readiness 時必須同時觀察本次 Launch 保留的 root process handle。candidate 在 readiness 前退出時，回傳可區分的 early-exit failure；stderr 能辨識 bind conflict 時，回傳 bind-error failure 與 bounded stderr evidence，而不是只等 readiness timeout。這個失敗路徑仍以本次保留的 OS handles 清理已啟動的 owned resource，不需要從 record、PID、process name 或 port 重新推測 ownership。
 
 Launch 的 live evidence 只代表 preflight 當下觀察到的狀態，不是未來仍然有效的保證。成功時，caller 應保存回傳的 opaque `binding`、`RecordPath`、stdio、readiness 與 lifecycle result。
 
@@ -49,7 +53,7 @@ record_path: <同一個 RecordPath>
 * `lifecycle_result`，描述 lifecycle operation、`status`、cleanup 結果及失敗或 unresolved 原因。
 * `downstream_result`，由 caller 傳入並原樣保留，描述 downstream work，不代表 lifecycle cleanup 成功，也不會因 lifecycle rejection 被改寫。
 
-成功 Stop 應回報 graceful 或 forced operation、resource result，並移除 handoff record。成功 Preserve 應保持 workload 與 authority 可供 later Stop 使用，並將 `final_disposition.status` 設為 preserved。被拒絕或無法證明 authority 時，`lifecycle_result.status` 為 `unresolved`，不得執行 graceful action、forced termination 或猜測性 cleanup；record 與 workload 應保持不變，直到能安全重新驗證。
+成功 Stop 應回報 graceful 或 forced operation、resource result，並移除 handoff record。成功 Preserve 應保持 workload 與 authority 可供 later Stop 使用，並將 `final_disposition.status` 設為 preserved。record 遺失或過時，或 Job membership、creation time、image 等任一必要 live evidence 無法確認，且沒有其他有效的 current-run owned evidence 時，`lifecycle_result.status` 為 `unresolved`；不得執行 graceful action、forced termination、全機 scan 或猜測性 cleanup。record 與 workload 應保持不變，直到能安全重新驗證。
 
 Preserve 可能有 mixed result：若已證明 handoff 的 atomic publication 成功，只有 exact temporary artifact cleanup 尚未完成，則 `lifecycle_result.status` 可為 `unresolved`，但 `final_disposition.status` 仍為 `preserved`。此時 caller 或 later owner 必須照常接收 `later_owner` 與 safe `stop_method`，並在新的 invocation 執行 later Stop；成功的 later Stop 也必須清除該 record 所精確界定的 temporary residue。若 publication 仍是 original-unchanged 或狀態 unknown，不得宣稱成功 handoff，也不得交付可供 later Stop 使用的 Preserve 結果。
 

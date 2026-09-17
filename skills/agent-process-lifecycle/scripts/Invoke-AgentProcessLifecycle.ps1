@@ -215,6 +215,10 @@ namespace CandidateAgentProcessLifecycle
         [return: MarshalAs(UnmanagedType.Bool)]
         private static extern bool GetProcessTimes(IntPtr process, out FileTime creation, out FileTime exit, out FileTime kernel, out FileTime user);
 
+        [DllImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool GetExitCodeProcess(IntPtr process, out uint exitCode);
+
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
         [return: MarshalAs(UnmanagedType.Bool)]
         private static extern bool QueryFullProcessImageNameW(IntPtr process, uint flags, StringBuilder imagePath, ref uint size);
@@ -386,6 +390,13 @@ namespace CandidateAgentProcessLifecycle
             return WaitForSingleObject(process, milliseconds) == WaitObject0;
         }
 
+        public static uint ExitCode(IntPtr process)
+        {
+            uint exitCode;
+            if (!GetExitCodeProcess(process, out exitCode)) ThrowLastError("GetExitCodeProcess");
+            return exitCode;
+        }
+
         public static void Close(IntPtr handle)
         {
             CloseIfValid(handle);
@@ -485,46 +496,6 @@ function Get-CurrentUserSid {
     return [Security.Principal.WindowsIdentity]::GetCurrent().User
 }
 
-function Get-TrustedRecordParentSids {
-    return @(
-        (Get-CurrentUserSid).Value,
-        'S-1-5-18', # LocalSystem owns Windows-managed root paths.
-        'S-1-5-32-544', # BUILTIN\Administrators is trusted for machine-wide path administration.
-        'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464' # Windows TrustedInstaller owns protected system paths.
-    )
-}
-
-function Test-RecordParentMutationRight {
-    param([Parameter(Mandatory)][Security.AccessControl.FileSystemRights]$Rights)
-
-    $mutationRights = [Security.AccessControl.FileSystemRights]::Delete -bor
-        [Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles -bor
-        [Security.AccessControl.FileSystemRights]::ChangePermissions -bor
-        [Security.AccessControl.FileSystemRights]::TakeOwnership
-    return (($Rights -band $mutationRights) -ne 0)
-}
-
-function Assert-RecordParentDirectorySecurity {
-    param([Parameter(Mandatory)][IO.DirectoryInfo]$Directory)
-
-    $security = [IO.FileSystemAclExtensions]::GetAccessControl($Directory)
-    $trustedSids = Get-TrustedRecordParentSids
-    # TEST-INJECTION: parent-owner-check
-    if ($trustedSids -notcontains $security.GetOwner([Security.Principal.SecurityIdentifier]).Value) {
-        throw "RecordPath parent has an untrusted owner: $($Directory.FullName)"
-    }
-    foreach ($rule in $security.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
-        if ($rule.AccessControlType -ne [Security.AccessControl.AccessControlType]::Allow -or
-            ($rule.PropagationFlags -band [Security.AccessControl.PropagationFlags]::InheritOnly) -ne 0 -or
-            $trustedSids -contains $rule.IdentityReference.Value) {
-            continue
-        }
-        if (Test-RecordParentMutationRight -Rights $rule.FileSystemRights) {
-            throw "RecordPath parent allows an untrusted principal to mutate entries: $($Directory.FullName)"
-        }
-    }
-}
-
 function Assert-SafeRecordParent {
     param([Parameter(Mandatory)][string]$Path)
 
@@ -532,13 +503,9 @@ function Assert-SafeRecordParent {
     $directoryPath = [IO.Path]::GetDirectoryName($fullPath)
     if ([string]::IsNullOrWhiteSpace($directoryPath)) { throw 'RecordPath must have a parent directory.' }
 
-    $directory = [IO.DirectoryInfo]::new($directoryPath)
-    while ($null -ne $directory) {
-        if (-not $directory.Exists) { throw "RecordPath parent does not exist: $($directory.FullName)" }
-        if (($directory.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw "RecordPath parent is a reparse point: $($directory.FullName)" }
-        Assert-RecordParentDirectorySecurity -Directory $directory
-        $directory = $directory.Parent
-    }
+    $directory = Get-Item -LiteralPath $directoryPath -Force -ErrorAction SilentlyContinue
+    if ($null -eq $directory -or -not $directory.PSIsContainer) { throw "RecordPath parent does not exist: $directoryPath" }
+    if (($directory.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw "RecordPath parent is a reparse point: $directoryPath" }
 
     return $fullPath
 }
@@ -557,16 +524,17 @@ function Ensure-SafeRecordParent {
         if ($null -eq $existingAncestor.Parent) { throw "RecordPath parent has no existing safe ancestor: $directoryPath" }
         $existingAncestor = $existingAncestor.Parent
     }
-    Assert-SafeRecordParent -Path (Join-Path $existingAncestor.FullName 'record-parent-check') | Out-Null
+    $existingItem = Get-Item -LiteralPath $existingAncestor.FullName -Force
+    if (-not $existingItem.PSIsContainer) { throw "RecordPath parent has a non-directory ancestor: $($existingAncestor.FullName)" }
+    if (($existingItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw "RecordPath parent is a reparse point: $($existingAncestor.FullName)" }
 
     while ($missingDirectories.Count -gt 0) {
         $missingDirectory = $missingDirectories.Pop()
-        if (-not $missingDirectory.Exists) {
-            [IO.FileSystemAclExtensions]::CreateDirectory((New-CurrentUserDirectorySecurity), $missingDirectory.FullName) | Out-Null
-        }
+        if ($missingDirectory.Exists) { throw "RecordPath parent appeared before protected creation: $($missingDirectory.FullName)" }
+        [IO.FileSystemAclExtensions]::CreateDirectory((New-CurrentUserDirectorySecurity), $missingDirectory.FullName) | Out-Null
         $missingDirectory = [IO.DirectoryInfo]::new($missingDirectory.FullName)
         if (($missingDirectory.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw "RecordPath parent is a reparse point: $($missingDirectory.FullName)" }
-        Assert-RecordParentDirectorySecurity -Directory $missingDirectory
+        Assert-CurrentUserProtectedCallbackItem -Item $missingDirectory -Directory $true
     }
     return Assert-SafeRecordParent -Path $fullPath
 }
@@ -996,7 +964,13 @@ function Stop-CallbackJob {
 }
 
 function Invoke-BoundedCallback {
-    param([Parameter(Mandatory)][scriptblock]$Callback, [Parameter(Mandatory)][hashtable]$Context, [Parameter(Mandatory)][int]$DeadlineMilliseconds, [Parameter(Mandatory)][string]$Purpose)
+    param(
+        [Parameter(Mandatory)][scriptblock]$Callback,
+        [Parameter(Mandatory)][hashtable]$Context,
+        [Parameter(Mandatory)][int]$DeadlineMilliseconds,
+        [Parameter(Mandatory)][string]$Purpose,
+        [IntPtr]$ObservedProcessHandle = [IntPtr]::Zero
+    )
 
     $token = New-RunId
     $recordParent = Split-Path -Parent (Assert-SafeRecordParent -Path $RecordPath)
@@ -1053,16 +1027,39 @@ function Invoke-BoundedCallback {
         $workerAssignedToCallbackJob = $true
         [CandidateAgentProcessLifecycle.Native]::Resume($worker.ThreadHandle)
         $watch = [Diagnostics.Stopwatch]::StartNew()
-        $remaining = [Math]::Max(0, $DeadlineMilliseconds - [int]$watch.ElapsedMilliseconds)
-        if ($remaining -le 0 -or -not [CandidateAgentProcessLifecycle.Native]::WaitForExit($worker.ProcessHandle, [uint32]$remaining)) {
-            # callback Job 與 workload Job 沒有任何共享 member；timeout 只能回收這次 callback tree。
-            Stop-CallbackJob -JobHandle $callbackJob -Purpose $Purpose
-            $cleanupDeadline = [Diagnostics.Stopwatch]::StartNew()
-            while ((Get-CallbackActiveProcessCount -JobHandle $callbackJob -Purpose $Purpose) -ne 0 -and $cleanupDeadline.ElapsedMilliseconds -lt 1000) { [Threading.Thread]::Sleep(20) }
-            if ((Get-CallbackActiveProcessCount -JobHandle $callbackJob -Purpose $Purpose) -ne 0) { throw (New-CallbackCleanupFailure -Purpose $Purpose -Detail 'The callback Job did not empty after its deadline.') }
-            throw "The $Purpose callback exceeded its deadline."
+        while (-not [CandidateAgentProcessLifecycle.Native]::WaitForExit($worker.ProcessHandle, 0)) {
+            # callback Job 與 workload Job 完全隔離；只觀察 caller 已持有的 handle，root exit 時先回收 callback tree 再交回分類。
+            if ($ObservedProcessHandle -ne [IntPtr]::Zero -and [CandidateAgentProcessLifecycle.Native]::WaitForExit($ObservedProcessHandle, 0)) {
+                Stop-CallbackJob -JobHandle $callbackJob -Purpose $Purpose
+                $cleanupDeadline = [Diagnostics.Stopwatch]::StartNew()
+                while ((Get-CallbackActiveProcessCount -JobHandle $callbackJob -Purpose $Purpose) -ne 0 -and $cleanupDeadline.ElapsedMilliseconds -lt 1000) { [Threading.Thread]::Sleep(20) }
+                if ((Get-CallbackActiveProcessCount -JobHandle $callbackJob -Purpose $Purpose) -ne 0) { throw (New-CallbackCleanupFailure -Purpose $Purpose -Detail 'The callback Job did not empty after the observed process exited.') }
+                $observedExit = [InvalidOperationException]::new("The observed process exited while the $Purpose callback was running.")
+                [void]($observedExit.Data['AgentProcessLifecycle.ObservedProcessExited'] = $true)
+                throw $observedExit
+            }
+            $remaining = [Math]::Max(0, $DeadlineMilliseconds - [int]$watch.ElapsedMilliseconds)
+            if ($remaining -le 0) {
+                Stop-CallbackJob -JobHandle $callbackJob -Purpose $Purpose
+                $cleanupDeadline = [Diagnostics.Stopwatch]::StartNew()
+                while ((Get-CallbackActiveProcessCount -JobHandle $callbackJob -Purpose $Purpose) -ne 0 -and $cleanupDeadline.ElapsedMilliseconds -lt 1000) { [Threading.Thread]::Sleep(20) }
+                if ((Get-CallbackActiveProcessCount -JobHandle $callbackJob -Purpose $Purpose) -ne 0) { throw (New-CallbackCleanupFailure -Purpose $Purpose -Detail 'The callback Job did not empty after its deadline.') }
+                throw "The $Purpose callback exceeded its deadline."
+            }
+            [Threading.Thread]::Sleep([Math]::Min(20, $remaining))
         }
-        while ((Get-CallbackActiveProcessCount -JobHandle $callbackJob -Purpose $Purpose) -ne 0 -and $watch.ElapsedMilliseconds -lt $DeadlineMilliseconds) { [Threading.Thread]::Sleep(20) }
+        while ((Get-CallbackActiveProcessCount -JobHandle $callbackJob -Purpose $Purpose) -ne 0 -and $watch.ElapsedMilliseconds -lt $DeadlineMilliseconds) {
+            if ($ObservedProcessHandle -ne [IntPtr]::Zero -and [CandidateAgentProcessLifecycle.Native]::WaitForExit($ObservedProcessHandle, 0)) {
+                Stop-CallbackJob -JobHandle $callbackJob -Purpose $Purpose
+                $cleanupDeadline = [Diagnostics.Stopwatch]::StartNew()
+                while ((Get-CallbackActiveProcessCount -JobHandle $callbackJob -Purpose $Purpose) -ne 0 -and $cleanupDeadline.ElapsedMilliseconds -lt 1000) { [Threading.Thread]::Sleep(20) }
+                if ((Get-CallbackActiveProcessCount -JobHandle $callbackJob -Purpose $Purpose) -ne 0) { throw (New-CallbackCleanupFailure -Purpose $Purpose -Detail 'The callback Job did not empty after the observed process exited.') }
+                $observedExit = [InvalidOperationException]::new("The observed process exited while $Purpose callback descendants were running.")
+                [void]($observedExit.Data['AgentProcessLifecycle.ObservedProcessExited'] = $true)
+                throw $observedExit
+            }
+            [Threading.Thread]::Sleep(20)
+        }
         if ((Get-CallbackActiveProcessCount -JobHandle $callbackJob -Purpose $Purpose) -ne 0) {
             Stop-CallbackJob -JobHandle $callbackJob -Purpose $Purpose
             $cleanupDeadline = [Diagnostics.Stopwatch]::StartNew()
@@ -1135,14 +1132,93 @@ function Invoke-BoundedCallback {
     }
 }
 
+function Get-BoundedStderrDiagnostic {
+    param([Parameter(Mandatory)][string]$Path, [int]$MaximumBytes = 4096)
+
+    if (-not [IO.File]::Exists($Path)) { return $null }
+    $stream = $null
+    try {
+        $stream = [IO.File]::Open($Path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
+        $length = [Math]::Min([int64]$MaximumBytes, $stream.Length)
+        if ($length -le 0) { return $null }
+        $null = $stream.Seek(-$length, [IO.SeekOrigin]::End)
+        $bytes = [byte[]]::new([int]$length)
+        $read = $stream.Read($bytes, 0, $bytes.Length)
+        return [Text.Encoding]::UTF8.GetString($bytes, 0, $read).Trim()
+    }
+    catch {
+        return $null
+    }
+    finally {
+        if ($stream) { $stream.Dispose() }
+    }
+}
+
+function New-ReadinessFailure {
+    param(
+        [Parameter(Mandatory)][string]$FailureKind,
+        [Parameter(Mandatory)][string]$Message,
+        [Nullable[uint32]]$ExitCode,
+        [string]$StderrDiagnostic
+    )
+
+    $failure = [InvalidOperationException]::new($Message)
+    [void]($failure.Data['AgentProcessLifecycle.FailureKind'] = $FailureKind)
+    if ($null -ne $ExitCode) { [void]($failure.Data['AgentProcessLifecycle.ExitCode'] = [uint32]$ExitCode) }
+    if (-not [string]::IsNullOrWhiteSpace($StderrDiagnostic)) { [void]($failure.Data['AgentProcessLifecycle.StderrDiagnostic'] = $StderrDiagnostic) }
+    return $failure
+}
+
+function New-CandidateEarlyExitFailure {
+    param([Parameter(Mandatory)][IntPtr]$RootHandle, [Parameter(Mandatory)][string]$StderrPath)
+
+    $exitCode = [CandidateAgentProcessLifecycle.Native]::ExitCode($RootHandle)
+    $diagnostic = Get-BoundedStderrDiagnostic -Path $StderrPath
+    $failureKind = if ($diagnostic -match '(?i)AddressAlreadyInUse|address already in use|only one usage') { 'candidate-bind-error' } else { 'candidate-early-exit' }
+    $message = "The candidate root exited before readiness with exit code $exitCode."
+    if (-not [string]::IsNullOrWhiteSpace($diagnostic)) { $message = "$message stderr: $diagnostic" }
+    return New-ReadinessFailure -FailureKind $failureKind -Message $message -ExitCode $exitCode -StderrDiagnostic $diagnostic
+}
+
 function Wait-Readiness {
-    param([Parameter(Mandatory)][scriptblock]$Check, [Parameter(Mandatory)][hashtable]$Context, [Parameter(Mandatory)][int]$DeadlineMilliseconds)
+    param(
+        [Parameter(Mandatory)][scriptblock]$Check,
+        [Parameter(Mandatory)][hashtable]$Context,
+        [Parameter(Mandatory)][int]$DeadlineMilliseconds,
+        [Parameter(Mandatory)][IntPtr]$RootHandle,
+        [Parameter(Mandatory)][string]$StderrPath
+    )
 
     $watch = [Diagnostics.Stopwatch]::StartNew()
     while ($true) {
+        # 只信任本次 Launch 已持有的 root handle；port 或其他現存 server 都不能替候選程式證明 readiness。
+        if ([CandidateAgentProcessLifecycle.Native]::WaitForExit($RootHandle, 0)) {
+            throw (New-CandidateEarlyExitFailure -RootHandle $RootHandle -StderrPath $StderrPath)
+        }
         $remaining = Get-RemainingMilliseconds -Watch $watch -DeadlineMilliseconds $DeadlineMilliseconds
-        if ($remaining -le 0) { throw "The caller-defined readiness check did not succeed within $DeadlineMilliseconds ms." }
-        if (Invoke-BoundedCallback -Callback $Check -Context $Context -DeadlineMilliseconds $remaining -Purpose 'readiness') {
+        if ($remaining -le 0) {
+            throw (New-ReadinessFailure -FailureKind 'readiness-timeout' -Message "The caller-defined readiness check did not succeed within $DeadlineMilliseconds ms.")
+        }
+        try {
+            $readinessResult = Invoke-BoundedCallback -Callback $Check -Context $Context -DeadlineMilliseconds $remaining -Purpose 'readiness' -ObservedProcessHandle $RootHandle
+        }
+        catch {
+            $callbackException = $_.Exception
+            while ($callbackException -and $callbackException.Data['AgentProcessLifecycle.ObservedProcessExited'] -ne $true -and $callbackException.InnerException) {
+                $callbackException = $callbackException.InnerException
+            }
+            if ($callbackException.Data['AgentProcessLifecycle.ObservedProcessExited'] -eq $true) {
+                throw (New-CandidateEarlyExitFailure -RootHandle $RootHandle -StderrPath $StderrPath)
+            }
+            if ($_.Exception.Message -eq 'The readiness callback exceeded its deadline.') {
+                throw (New-ReadinessFailure -FailureKind 'readiness-timeout' -Message "The caller-defined readiness check did not succeed within $DeadlineMilliseconds ms.")
+            }
+            throw
+        }
+        if ($readinessResult) {
+            if ([CandidateAgentProcessLifecycle.Native]::WaitForExit($RootHandle, 0)) {
+                throw (New-CandidateEarlyExitFailure -RootHandle $RootHandle -StderrPath $StderrPath)
+            }
             return $watch.ElapsedMilliseconds
         }
         [Threading.Thread]::Sleep(20)
@@ -1338,17 +1414,15 @@ function Invoke-Launch {
     $stderrStream = $null
 
     try {
+        $failureKind = 'record-preparation'
+        $recordPathForRun = New-PreparingRecord -Path $RecordPath
+        $recordCreated = $true
         $failureKind = 'stdio-isolation'
         $stdoutPathForRun = Assert-FreshStdioPath -Path $StdoutPath -Name 'StdoutPath'
         $stderrPathForRun = Assert-FreshStdioPath -Path $StderrPath -Name 'StderrPath'
         if ([string]::Equals($stdoutPathForRun, $stderrPathForRun, [StringComparison]::OrdinalIgnoreCase)) {
             throw 'StdoutPath and StderrPath must resolve to different paths.'
         }
-
-        $failureKind = 'record-preparation'
-        $recordPathForRun = New-PreparingRecord -Path $RecordPath
-        $recordCreated = $true
-        $failureKind = 'stdio-isolation'
         $stdoutStream = New-ProtectedStdioStream -Path $stdoutPathForRun
         try {
             # TEST-INJECTION: stderr-before-create
@@ -1450,7 +1524,7 @@ function Invoke-Launch {
         [CandidateAgentProcessLifecycle.Native]::Resume($root.ThreadHandle)
 
         $failureKind = 'readiness'
-        $readinessElapsed = Wait-Readiness -Check $ReadinessCheck -Context $ReadinessContext -DeadlineMilliseconds $ReadinessDeadlineMilliseconds
+        $readinessElapsed = Wait-Readiness -Check $ReadinessCheck -Context $ReadinessContext -DeadlineMilliseconds $ReadinessDeadlineMilliseconds -RootHandle $root.ProcessHandle -StderrPath $stderrPathForRun
         $readinessSucceeded = $true
         $record.state = 'ready'
         $record.readiness.result = 'succeeded'
@@ -1475,6 +1549,14 @@ function Invoke-Launch {
         }
     }
     catch {
+        $launchException = $_.Exception
+        $classifiedException = $launchException
+        while ($classifiedException -and -not $classifiedException.Data['AgentProcessLifecycle.FailureKind'] -and $classifiedException.InnerException) {
+            $classifiedException = $classifiedException.InnerException
+        }
+        if ($classifiedException.Data['AgentProcessLifecycle.FailureKind']) {
+            $failureKind = [string]$classifiedException.Data['AgentProcessLifecycle.FailureKind']
+        }
         $recordCreated = $recordCreated -or ($_.Exception.Data['AgentProcessLifecycle.CreatedByCurrentInvocation'] -eq $true)
         $artifactValidationException = $null
         if ($failureKind -eq 'record-publication') {
@@ -1495,7 +1577,7 @@ function Invoke-Launch {
             binding = [ordered]@{ run_id = $runId; job_name = $jobName; record_path = $recordPathForRun; root_process_id = if ($root) { $root.ProcessId } else { $null }; root_identity = $rootIdentity; holder_identity = $holderIdentity }
             stdio = [ordered]@{ isolated = $stdioIsolated; stdout_path = if ($stdoutPathForRun) { $stdoutPathForRun } else { $StdoutPath }; stderr_path = if ($stderrPathForRun) { $stderrPathForRun } else { $StderrPath } }
             readiness = [ordered]@{ identity = $ReadinessIdentity; succeeded = $readinessSucceeded; deadline_milliseconds = $ReadinessDeadlineMilliseconds }
-            lifecycle_result = [ordered]@{ status = $status; operation = 'launch'; failure_kind = $failureKind; cleanup = $cleanup; unresolved_reason = if ($status -eq 'unresolved') { ($cleanup.errors -join ' ') } else { $null }; error = $_.Exception.Message }
+            lifecycle_result = [ordered]@{ status = $status; operation = 'launch'; failure_kind = $failureKind; cleanup = $cleanup; unresolved_reason = if ($status -eq 'unresolved') { ($cleanup.errors -join ' ') } else { $null }; error = $launchException.Message; exit_code = $classifiedException.Data['AgentProcessLifecycle.ExitCode']; stderr_diagnostic = $classifiedException.Data['AgentProcessLifecycle.StderrDiagnostic'] }
             downstream_result = $DownstreamResult
             final_disposition = [ordered]@{ requested = $RequestedDisposition; status = 'not-established' }
             later_owner = if ($RequestedDisposition -eq 'Preserve') { $RequestedLaterOwner } else { $null }
