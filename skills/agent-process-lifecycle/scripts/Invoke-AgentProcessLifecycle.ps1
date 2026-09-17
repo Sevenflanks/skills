@@ -1197,6 +1197,9 @@ function Wait-Readiness {
         }
         $remaining = Get-RemainingMilliseconds -Watch $watch -DeadlineMilliseconds $DeadlineMilliseconds
         if ($remaining -le 0) {
+            if ([CandidateAgentProcessLifecycle.Native]::WaitForExit($RootHandle, 0)) {
+                throw (New-CandidateEarlyExitFailure -RootHandle $RootHandle -StderrPath $StderrPath)
+            }
             throw (New-ReadinessFailure -FailureKind 'readiness-timeout' -Message "The caller-defined readiness check did not succeed within $DeadlineMilliseconds ms.")
         }
         try {
@@ -1211,6 +1214,9 @@ function Wait-Readiness {
                 throw (New-CandidateEarlyExitFailure -RootHandle $RootHandle -StderrPath $StderrPath)
             }
             if ($_.Exception.Message -eq 'The readiness callback exceeded its deadline.') {
+                if ([CandidateAgentProcessLifecycle.Native]::WaitForExit($RootHandle, 0)) {
+                    throw (New-CandidateEarlyExitFailure -RootHandle $RootHandle -StderrPath $StderrPath)
+                }
                 throw (New-ReadinessFailure -FailureKind 'readiness-timeout' -Message "The caller-defined readiness check did not succeed within $DeadlineMilliseconds ms.")
             }
             throw

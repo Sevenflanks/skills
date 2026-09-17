@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet('All', 'NeverReady', 'BlockedCallbackEarlyExit', 'TruthyReadiness', 'DeniedBoundary', 'HarnessFaultPreservesRecord', 'PortConflict', 'MissingRecord', 'StaleRecord', 'MembershipUnknown')]
+    [ValidateSet('All', 'NeverReady', 'BlockedCallbackEarlyExit', 'CallbackCleanupEarlyExit', 'TruthyReadiness', 'DeniedBoundary', 'HarnessFaultPreservesRecord', 'PortConflict', 'MissingRecord', 'StaleRecord', 'MembershipUnknown')]
     [string]$Scenario = 'All',
     [string]$HelperPath = (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts\Invoke-AgentProcessLifecycle.ps1'),
     [string]$WorkloadPath = (Join-Path $PSScriptRoot 'fixtures\bounded-loopback-workload.ps1')
@@ -117,7 +117,7 @@ function Invoke-LaunchFixture {
     param(
         [Parameter(Mandatory)][string]$Root,
         [Parameter(Mandatory)][string]$Name,
-        [Parameter(Mandatory)][ValidateSet('server', 'never-ready', 'delayed-exit')][string]$Mode,
+        [Parameter(Mandatory)][ValidateSet('server', 'never-ready', 'delayed-exit', 'callback-cleanup-exit')][string]$Mode,
         [Parameter(Mandatory)][string]$Token,
         [int]$Port = 0,
         [int]$DeadlineMilliseconds = 5000,
@@ -128,11 +128,15 @@ function Invoke-LaunchFixture {
     $readyPath = Join-Path $Root "$Name-ready.json"
     $stopPath = Join-Path $Root "$Name-stop.token"
     $watch = [Diagnostics.Stopwatch]::StartNew()
-    $result = & $HelperPath -Action Launch -RecordPath (Join-Path $control 'run.json') -Executable "$PSHOME\pwsh.exe" -ArgumentList @(
+    $argumentList = @(
         '-NoLogo', '-NoProfile', '-NonInteractive', '-File', $WorkloadPath,
         '-Mode', $Mode, '-ReadyPath', $readyPath, '-StopPath', $stopPath,
         '-Token', $Token, '-Port', [string]$Port, '-MaxLifetimeSeconds', '30'
-    ) -WorkingDirectory $Root -StdoutPath (Join-Path $control 'stdout.log') -StderrPath (Join-Path $control 'stderr.log') -ReadinessCheck $Check -ReadinessContext @{
+    )
+    if ($Mode -eq 'callback-cleanup-exit') {
+        $argumentList += @('-CallbackArtifactParent', $control, '-ExitCode', '43', '-StderrMessage', 'candidate_exited_during_callback_cleanup')
+    }
+    $result = & $HelperPath -Action Launch -RecordPath (Join-Path $control 'run.json') -Executable "$PSHOME\pwsh.exe" -ArgumentList $argumentList -WorkingDirectory $Root -StdoutPath (Join-Path $control 'stdout.log') -StderrPath (Join-Path $control 'stderr.log') -ReadinessCheck $Check -ReadinessContext @{
         ReadyPath = $readyPath
         Token = $Token
     } -ReadinessIdentity "loopback-token:$Token" -ReadinessDeadlineMilliseconds $DeadlineMilliseconds -RequestedDisposition Stop
@@ -181,6 +185,31 @@ function Invoke-BlockedCallbackEarlyExitCase {
     }
     if ($case.result.lifecycle_result.cleanup.status -ne 'completed') {
         throw "Blocked callback candidate cleanup was incomplete: $($case.result.lifecycle_result.cleanup | ConvertTo-Json -Depth 8 -Compress)"
+    }
+}
+
+function Invoke-CallbackCleanupEarlyExitCase {
+    param([Parameter(Mandatory)][string]$Root)
+
+    $blockedCheck = {
+        param([hashtable]$Context)
+
+        while (-not [IO.File]::Exists($Context.ReadyPath)) { [Threading.Thread]::Sleep(10) }
+        [Threading.Thread]::Sleep(5000)
+        return $false
+    }
+    $case = Invoke-LaunchFixture -Root $Root -Name 'callback-cleanup-exit' -Mode callback-cleanup-exit -Token ([guid]::NewGuid().ToString('N')) -DeadlineMilliseconds 1500 -Check $blockedCheck
+    if ($case.result.lifecycle_result.status -ne 'failed' -or $case.result.lifecycle_result.failure_kind -ne 'candidate-early-exit') {
+        throw "Callback cleanup exit was misclassified: $($case.result.lifecycle_result | ConvertTo-Json -Depth 8 -Compress)"
+    }
+    if ($case.result.lifecycle_result.exit_code -ne 43 -or $case.result.lifecycle_result.stderr_diagnostic -notmatch 'candidate_exited_during_callback_cleanup') {
+        throw "Callback cleanup exit did not preserve exit/stderr evidence: $($case.result.lifecycle_result | ConvertTo-Json -Depth 8 -Compress)"
+    }
+    if ($case.elapsed_milliseconds -ge 5000) {
+        throw "Callback cleanup exit was not bounded: $($case.elapsed_milliseconds) ms"
+    }
+    if ($case.result.lifecycle_result.cleanup.status -ne 'completed') {
+        throw "Callback cleanup candidate cleanup was incomplete: $($case.result.lifecycle_result.cleanup | ConvertTo-Json -Depth 8 -Compress)"
     }
 }
 
@@ -555,6 +584,7 @@ try {
     [IO.Directory]::CreateDirectory($runRoot) | Out-Null
     if ($Scenario -in @('All', 'NeverReady')) { Invoke-NeverReadyCase -Root $runRoot }
     if ($Scenario -in @('All', 'BlockedCallbackEarlyExit')) { Invoke-BlockedCallbackEarlyExitCase -Root $runRoot }
+    if ($Scenario -in @('All', 'CallbackCleanupEarlyExit')) { Invoke-CallbackCleanupEarlyExitCase -Root $runRoot }
     if ($Scenario -in @('All', 'TruthyReadiness')) { Invoke-TruthyReadinessCase -Root $runRoot }
     if ($Scenario -in @('All', 'DeniedBoundary')) { Invoke-DeniedBoundaryCase -Root $runRoot }
     if ($Scenario -in @('All', 'HarnessFaultPreservesRecord')) { Invoke-HarnessFaultPreservesRecordCase -Root $runRoot }

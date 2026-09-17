@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)]
-    [ValidateSet('server', 'never-ready', 'delayed-exit')]
+    [ValidateSet('server', 'never-ready', 'delayed-exit', 'callback-cleanup-exit')]
     [string]$Mode,
 
     [Parameter(Mandatory)][string]$ReadyPath,
@@ -11,7 +11,8 @@ param(
     [ValidateRange(1, 40)][int]$MaxLifetimeSeconds = 30,
     [ValidateRange(1, 5000)][int]$ExitDelayMilliseconds = 150,
     [ValidateRange(1, 255)][int]$ExitCode = 42,
-    [string]$StderrMessage = 'bind_failed socket_error=AddressAlreadyInUse'
+    [string]$StderrMessage = 'bind_failed socket_error=AddressAlreadyInUse',
+    [string]$CallbackArtifactParent
 )
 
 Set-StrictMode -Version Latest
@@ -32,6 +33,48 @@ if ($Mode -eq 'delayed-exit') {
     [Threading.Thread]::Sleep($ExitDelayMilliseconds)
     [Console]::Error.WriteLine($StderrMessage)
     exit $ExitCode
+}
+if ($Mode -eq 'callback-cleanup-exit') {
+    # 只在本次 fixture 的 callback 目錄鎖住 result，讓 deadline cleanup 等待；
+    # stdout handle 釋放後才退出，確保重現 cleanup 期間的交錯，而非靠 sleep 猜時間。
+    if ([string]::IsNullOrWhiteSpace($CallbackArtifactParent)) { throw 'CallbackArtifactParent is required.' }
+    $resultStream = $null
+    try {
+        while ([DateTimeOffset]::UtcNow -lt $deadline -and -not $resultStream) {
+            foreach ($directory in [IO.Directory]::EnumerateDirectories($CallbackArtifactParent, 'readiness-*.callback', [IO.SearchOption]::TopDirectoryOnly)) {
+                $resultPath = Join-Path $directory 'result.xml'
+                if (-not [IO.File]::Exists($resultPath)) { continue }
+                try {
+                    $resultStream = [IO.File]::Open($resultPath, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+                    [IO.File]::WriteAllText($ReadyPath, $Token, [Text.UTF8Encoding]::new($false))
+                    while ([DateTimeOffset]::UtcNow -lt $deadline) {
+                        $stdoutPath = Join-Path $directory 'stdout.log'
+                        $stdoutStream = $null
+                        try {
+                            $stdoutStream = [IO.File]::Open($stdoutPath, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+                            [Console]::Error.WriteLine($StderrMessage)
+                            [Console]::Error.Flush()
+                            [Environment]::Exit($ExitCode)
+                        }
+                        catch [IO.IOException] {
+                            [Threading.Thread]::Sleep(10)
+                        }
+                        finally {
+                            if ($stdoutStream) { $stdoutStream.Dispose() }
+                        }
+                    }
+                }
+                catch [IO.IOException] {
+                    [Threading.Thread]::Sleep(10)
+                }
+            }
+            [Threading.Thread]::Sleep(10)
+        }
+    }
+    finally {
+        if ($resultStream) { $resultStream.Dispose() }
+    }
+    exit 24
 }
 if ($Mode -eq 'never-ready') {
     while ([DateTimeOffset]::UtcNow -lt $deadline) {
