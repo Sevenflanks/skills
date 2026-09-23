@@ -49,8 +49,8 @@
     {
       "name": "agent-process-lifecycle",
       "source": "skills/agent-process-lifecycle",
-      "description": "管理 Agent 啟動之本機 OS process 的 ownership、execution tier、readiness、Stop、Preserve、handoff 與 reconciliation；Windows 提供 self-managed helper，non-Windows 僅分類、handoff 或 launch 前 blocked。",
-      "version": "1.1.0",
+      "description": "管理可能卡住或跨越 tool call 的本機 process；Windows 同 tool Stop 採當次 owner cleanup 契約，跨 tool Preserve 才需背景返回；缺證據的特殊路由可診斷；non-Windows 僅分類、handoff 或 launch 前 blocked。",
+      "version": "1.1.1",
       "keywords": [
         "agent",
         "process-lifecycle",

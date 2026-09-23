@@ -60,7 +60,7 @@
     {
       "id": "excluded-synchronous-command",
       "platform": "any",
-      "prompt": "Explicitly manually invoke the agent-process-lifecycle candidate. This command waits for exit normally and does not outlive its initiating tool call. Return only the lifecycle decision JSON; do not inspect the OS or invoke lifecycle execution.",
+      "prompt": "Explicitly manually invoke the agent-process-lifecycle candidate. After an ordinary app edit and HEAD change, this command waits for exit normally; every process and all work it started have finished, with no descendant or resource left to manage. Return only the lifecycle decision JSON; do not inspect the OS or invoke lifecycle execution.",
       "expected_output": "The synchronous command is excluded without creating lifecycle facts or actions.",
       "files": [],
       "expectations": [
@@ -83,6 +83,199 @@
           "skill"
         ],
         "reference_reads": []
+      }
+    },
+    {
+      "id": "short-cli-owned-descendant-stop",
+      "platform": "Windows",
+      "prompt": "Explicitly invoke the lifecycle candidate. On Windows a short CLI exits 0 after spawning a persistent child. A verified official launcher contract gives this run a fresh binding covering that child, a bounded test/readiness check, and an identity-bound Stop in the same tool's finally. The host call returns only after cleanup, so it has no return-live capability. The requested route is temporary Stop; downstream returns HTTP 202 and one probe fails. Return only lifecycle decision JSON, planning Stop even if downstream fails. Do not execute anything.",
+      "expected_output": "Select the official current-run owner and same-tool Stop without return-live evidence; keep HTTP/probe results separate from OS exit.",
+      "files": [],
+      "expectations": [
+        "Selects the official current-run owner rather than excluding the CLI or assuming helper root ownership.",
+        "Schedules identity-bound Stop in the same tool's finally without requiring host return-live; never infers OS exit from HTTP 202 or one failed probe."
+      ],
+      "assertions": {
+        "response_equals": {
+          "applicable": true,
+          "selected_tier": "external-launcher",
+          "owner_binding.kind": "official-interface-current-run",
+          "final_disposition.requested": "Stop",
+          "lifecycle_result.status": "planned"
+        },
+        "response_has_keys": ["lifecycle_result", "downstream_result", "final_disposition"],
+        "allowed_tools": ["read", "skill"],
+        "reference_reads": []
+      }
+    },
+    {
+      "id": "new-service-reliable-managed-contract",
+      "platform": "Windows",
+      "prompt": "明確呼叫 agent-process-lifecycle candidate。Windows 上首次啟動的新測試服務走同 tool 暫時 Stop；既有工具／框架契約提供涵蓋該服務的 scoped owner、隔離 stdio、bounded test/readiness、當次 fresh binding 與同 tool identity-bound Stop cleanup。host tool 可在 cleanup 後才返回，尚無此新服務的歷史 host return-live probe。只回傳 lifecycle decision JSON，不執行命令。",
+      "expected_output": "直接選 managed tier；同 tool Stop 不以缺少歷史 host return-live 阻止新服務，當次 binding 與 cleanup 仍須新鮮。",
+      "files": [],
+      "expectations": ["採涵蓋 bounded test、ownership 與同 tool Stop 的框架契約，不要求 host return-live 測試。", "本次資源仍取得 fresh binding、readiness 與 Stop。"],
+      "assertions": {
+        "response_equals": {"selected_tier": "managed-lifecycle", "owner_binding.kind": "opaque-current-run", "final_disposition.requested": "Stop", "lifecycle_result.status": "planned", "os_inspection_performed": false, "lifecycle_shell_calls": []},
+        "response_has_keys": ["readiness", "owner_binding", "final_disposition", "downstream_result"],
+        "allowed_tools": ["read", "skill"],
+        "reference_reads": []
+      }
+    },
+    {
+      "id": "route-capability-reuse-after-app-edit",
+      "platform": "Windows",
+      "prompt": "明確呼叫 agent-process-lifecycle candidate。Windows 特殊短命 CLI 留 child 的同一官方 launcher/tool／mode／route 已由 caller 驗證能在 child 存活時返回；官方介面可提供涵蓋 child 的當次 fresh binding、bounded readiness、later owner 與安全 Stop。此後只有普通 app code edit 與 HEAD 變更，執行方式、相關環境及 owner contract 均未變。本次要求 Preserve；只規劃取得當次 fresh binding、readiness 與 Stop evidence 的 lifecycle decision JSON，不執行命令。",
+      "expected_output": "沿用 route return-live capability，不因普通 app edit／HEAD 重測；本次 resource facts 重新取得。",
+      "files": [],
+      "expectations": ["沿用同路由已驗證 capability。", "規劃每次新的 owner binding、readiness 與 safe later Stop。"],
+      "assertions": {
+        "response_equals": {"selected_tier": "external-launcher", "final_disposition.requested": "Preserve", "lifecycle_result.status": "planned"},
+        "response_has_keys": ["owner_binding", "readiness", "later_owner", "stop_method", "downstream_result"],
+        "allowed_tools": ["read", "skill"],
+        "reference_reads": ["references/failure-and-handoff.md"]
+      }
+    },
+    {
+      "id": "readiness-failure-does-not-invalidate-return-live",
+      "platform": "Windows",
+      "prompt": "明確呼叫 agent-process-lifecycle candidate。Windows 短命 CLI 留 child 的同一官方 launcher/tool route 已驗證在 child 存活時 host 返回，官方契約涵蓋 child ownership、later owner 與 safe Stop。上次 app 的 workload-specific readiness 失敗，但 owner 已核對該次 binding 並成功 Stop，沒有未清理資源；host/tool/mode/環境及 owner contract 均未變。現在規劃下一次 Preserve，需重新取得當次 binding 與 readiness；只回傳 lifecycle decision JSON，不執行命令。",
+      "expected_output": "上次 readiness 只影響當次 resource；沿用已驗證 host-return route，不要求新 return-live probe，為新資源規劃 fresh facts。",
+      "files": [],
+      "expectations": ["保留同 route 的 host-return capability，app readiness 失敗不使它失效。", "上次 binding 已 Stop；下一次 Preserve 規劃新 binding、readiness 與 later Stop。"],
+      "assertions": {
+        "response_equals": {"selected_tier": "external-launcher", "final_disposition.requested": "Preserve", "lifecycle_result.status": "planned"},
+        "response_has_keys": ["owner_binding", "readiness", "later_owner", "stop_method", "downstream_result"],
+        "allowed_tools": ["read", "skill"],
+        "reference_reads": ["references/failure-and-handoff.md"]
+      }
+    },
+    {
+      "id": "unknown-self-detach-bounded-diagnostic",
+      "platform": "Windows",
+      "prompt": "明確呼叫 agent-process-lifecycle candidate。Windows 特殊短命 CLI 留 child 的 Preserve route 契約未涵蓋 host/tool 在 child 活著時返回，且無該 route 的實測證據；診斷 fixture 有合法 owner、Stop 與中斷後仍會自行結束的獨立 bounded lifetime，並可核對 tool result、process identity 與最後的 OS exit。正式 workload 另有可涵蓋 child 的 current-run owner、later owner 和 safe Stop 契約。只規劃安全診斷，不啟動正式服務，不使用 shell timeout，也不改成 Stop；回傳既有欄位的 lifecycle decision JSON。",
+      "expected_output": "先規劃 bounded targeted 診斷，未知不直接形成永遠 block 的循環，也不冒充正式 Preserve 已驗證。",
+      "files": [],
+      "expectations": ["診斷的 fixture 有合法 owner、Stop、獨立 bounded lifetime 與 exit 核對。", "正式 Preserve 前仍需 host return-live evidence。"],
+      "assertions": {
+        "response_equals": {"stage": "pre-launch", "launch_performed": false, "final_disposition.requested": "Preserve", "lifecycle_result.status": "planned"},
+        "response_has_keys": ["missing_safety_evidence", "downstream_result"],
+        "allowed_tools": ["read", "skill"],
+        "reference_reads": ["references/failure-and-handoff.md"]
+      }
+    },
+    {
+      "id": "changed-route-complete-managed-contract",
+      "platform": "Windows",
+      "prompt": "明確呼叫 agent-process-lifecycle candidate。特殊短命 CLI 的舊 host/tool route 曾經通過 return-live 測試；現在改用不同工具與 argument mode。新工具已有適用的新 managed lifecycle contract，明確涵蓋背景返回、持續存活 child 的當次 ownership、bounded readiness 與 identity-bound Stop，並可取得 fresh binding；新 route 尚無歷史實測。沒有未清理的舊資源。只回傳 lifecycle decision JSON，不執行命令。",
+      "expected_output": "舊 route 證據不套用新工具；新 route 的完整契約足夠直接選 managed tier，不要求 empirical return-live probe。",
+      "files": [],
+      "expectations": ["依新 route 的背景返回、ownership 與 Stop 契約直接選 tier。", "仍規劃本次 fresh binding 和 readiness。"],
+      "assertions": {
+        "response_equals": {"selected_tier": "managed-lifecycle", "owner_binding.kind": "opaque-current-run", "lifecycle_result.status": "planned", "os_inspection_performed": false, "lifecycle_shell_calls": []},
+        "response_has_keys": ["owner_binding", "readiness", "final_disposition", "downstream_result"],
+        "allowed_tools": ["read", "skill"],
+        "reference_reads": []
+      }
+    },
+    {
+      "id": "route-tool-change-return-live-pending",
+      "platform": "Windows",
+      "prompt": "明確呼叫 agent-process-lifecycle candidate。特殊短命 CLI 的原 host/tool return-live route 已驗證，但本次換了 execution tool 和 argument mode；新 route 的正式 Preserve 契約已有可涵蓋 child 的 current-run owner、later owner 與 safe Stop，只有 host return-live 未知，且沒有新資源啟動。診斷 fixture 另有合法 owner、Stop 與中斷後獨立 bounded lifetime。只規劃新 route 的 targeted return-live 診斷，回傳既有欄位的 lifecycle decision JSON，不執行命令。",
+      "expected_output": "不沿用舊 route 能力；只有 return-live 待證，先規劃 bounded targeted 診斷，未宣稱新的 binding 已建立。",
+      "files": [],
+      "expectations": ["不以舊工具的 capability 證明新工具。", "已有正式 owner/Stop 契約且 fixture 自有合法 owner/Stop，僅對未知 return-live 規劃 bounded 診斷。"],
+      "assertions": {
+        "response_equals": {"launch_performed": false, "lifecycle_result.status": "planned"},
+        "response_has_keys": ["missing_safety_evidence", "lifecycle_result"],
+        "allowed_tools": ["read", "skill"],
+        "reference_reads": ["references/failure-and-handoff.md"]
+      }
+    },
+    {
+      "id": "diagnostic-probe-cannot-supply-production-owner",
+      "platform": "Windows",
+      "prompt": "明確呼叫 agent-process-lifecycle candidate。特殊短命 CLI 的新 Preserve route 已用合法 owner、Stop 與獨立 bounded lifetime 的 fixture 證明 host 在 child 活著時返回，且已核對 fixture OS exit；但正式 workload 沒有涵蓋 child 的 owner binding、later owner 或可執行 Stop 契約。目前沒有正式 resource 啟動。只回傳 lifecycle decision JSON；不因診斷成功就啟動正式服務。",
+      "expected_output": "fixture 只證明 return-live，不能授權正式 ownership 或 Stop；取得適用正式契約前 pre-launch block/handoff。",
+      "files": [],
+      "expectations": ["明確指出缺正式 child ownership、later owner 與 Stop authority。", "不把成功 probe 當成正式 tier launch 授權。"],
+      "assertions": {
+        "response_equals": {"action": "blocked", "stage": "pre-launch", "failure_kind": "no-viable-tier", "launch_performed": false, "lifecycle_result.status": "blocked"},
+        "response_has_keys": ["missing_safety_evidence", "next_owner", "downstream_result"],
+        "allowed_tools": ["read", "skill"],
+        "reference_reads": ["references/failure-and-handoff.md"]
+      }
+    },
+    {
+      "id": "unknown-timeout-return-live-pending",
+      "platform": "Windows",
+      "prompt": "明確呼叫 agent-process-lifecycle candidate。特殊短命 CLI 的 Preserve route 先前可在 child 活著時返回，但最近同一 host/tool route 發生 timeout，原因未知，可能是 host 等 child exit；前次 binding 的 cleanup 仍未確認。一般 framework 契約存在但不涵蓋該失敗 route。只回傳 lifecycle decision JSON，先處理既有 binding 的 reconciliation，並將可能受影響的 host return-live capability 列為待查；不啟動新資源。",
+      "expected_output": "未知原因 timeout 使可能受影響的 host-return capability 待查，而非所有 route capability 全面失效；先保留 unresolved resource evidence 再做 targeted 驗證。",
+      "files": [],
+      "expectations": ["查明 timeout 原因前只暫停可能受影響的 host-return 能力，不泛化失效。", "前次 binding 未清理時先 reconciliation，不靜默重啟或改 Stop。"],
+      "assertions": {
+        "response_equals": {"launch_performed": false, "lifecycle_result.status": "unresolved"},
+        "response_has_keys": ["evidence_paths", "missing_safety_evidence", "unresolved_items", "downstream_result"],
+        "allowed_tools": ["read", "skill"],
+        "reference_reads": ["references/failure-and-handoff.md"]
+      }
+    },
+    {
+      "id": "short-cli-preserve-unverified-host-block",
+      "platform": "Windows",
+      "prompt": "Explicitly invoke the lifecycle candidate. A Windows short CLI exits 0 leaving a live child; a fresh owner binding and later Stop method are known. This exact host/tool route was already observed waiting until child exit, and no new targeted verification has overturned that failure; the only new timestamp is shell-end. The requested disposition is Preserve. Return only lifecycle decision JSON before production launch; do not switch to Stop or treat a general managed contract as proof for this failed route.",
+      "expected_output": "Blocks the known-failed Preserve route before launch without silently turning it into Stop.",
+      "files": [],
+      "expectations": ["Rejects shell-end as host completion and a general contract as a substitute for targeted evidence.", "Returns a pre-launch block and identifies missing return-live capability."],
+      "assertions": {
+        "response_equals": {
+          "action": "blocked",
+          "stage": "pre-launch",
+          "launch_performed": false,
+          "final_disposition.requested": "Preserve",
+          "lifecycle_result.status": "blocked"
+        },
+        "response_has_keys": ["missing_safety_evidence", "next_owner", "downstream_result"],
+        "allowed_tools": ["read", "skill"],
+        "reference_reads": ["references/failure-and-handoff.md"]
+      }
+    },
+    {
+      "id": "short-cli-helper-root-exit-block",
+      "platform": "Windows",
+      "prompt": "Explicitly invoke the lifecycle candidate. A Windows CLI exits before its child becomes ready. No managed or official launcher owner binds the child; the Windows self-managed helper observes the CLI root before readiness and cannot be assumed to adopt an exited launcher's child. Return only lifecycle decision JSON before launch.",
+      "expected_output": "Blocks before launching a child it cannot safely own; no PID or port adoption.",
+      "files": [],
+      "expectations": ["Rejects a root-only helper as a descendant owner.", "Does not make a speculative termination claim."],
+      "assertions": {
+        "response_equals": {
+          "action": "blocked",
+          "stage": "pre-launch",
+          "failure_kind": "no-viable-tier",
+          "launch_performed": false,
+          "termination_performed": false
+        },
+        "response_has_keys": ["missing_safety_evidence", "next_owner", "lifecycle_result"],
+        "allowed_tools": ["read", "skill"],
+        "reference_reads": ["references/failure-and-handoff.md"]
+      }
+    },
+    {
+      "id": "short-cli-interrupted-stop-unresolved",
+      "platform": "Windows",
+      "prompt": "Explicitly invoke the lifecycle candidate. A Windows temporary Stop route had a verified current-run descendant binding; the host interrupted the tool before its finally could be confirmed. A test fixture has an independent bounded lifetime, but there is no evidence yet of child OS exit. Return only lifecycle decision JSON; no guessed PID/name/port kill and no completed Stop claim.",
+      "expected_output": "Reconciles as unresolved pending owner-backed evidence; independent fixture deadline is not a production Stop guarantee.",
+      "files": [],
+      "expectations": ["Does not assume interrupted finally executed.", "Keeps lifecycle unresolved and retains ownership evidence."],
+      "assertions": {
+        "response_equals": {
+          "lifecycle_result.status": "unresolved",
+          "termination_performed": false,
+          "final_disposition.requested": "Stop"
+        },
+        "response_has_keys": ["evidence_paths", "next_owner", "unresolved_items", "downstream_result"],
+        "allowed_tools": ["read", "skill"],
+        "reference_reads": ["references/failure-and-handoff.md"]
       }
     },
     {
@@ -359,7 +552,7 @@
     {
       "id": "watcher-self-managed-preserve",
       "platform": "Windows",
-      "prompt": "Explicitly manually invoke the agent-process-lifecycle candidate. On Windows, an Agent-caused watcher requires self-managed lifecycle and must remain running for a named later owner. A bounded readiness signal, fresh binding, record, stdio, and safe later Stop handoff are available. Return only lifecycle decision JSON; do not execute a command.",
+      "prompt": "Explicitly manually invoke the agent-process-lifecycle candidate. On Windows, an Agent-caused watcher requires self-managed lifecycle and must remain running for a named later owner. This exact route's host tool has been observed by the caller to return while the watcher remains alive. A bounded readiness signal, fresh binding, record, stdio, and safe later Stop handoff are available. Return only lifecycle decision JSON; do not execute a command.",
       "expected_output": "Plans Launch then Finalize with Preserve and reports the later ownership handoff.",
       "files": [],
       "expectations": [
@@ -410,7 +603,7 @@
     {
       "id": "preserve-publication-cleanup-unresolved",
       "platform": "Windows",
-      "prompt": "Explicitly manually invoke the agent-process-lifecycle candidate. A Windows self-managed Preserve handoff atomically published its fresh binding, record, isolated stdio, bounded readiness, named later owner, and safe later Stop method. Exact temporary-artifact cleanup is unresolved after that publication. Return only lifecycle decision JSON; do not revoke the published handoff or execute a command.",
+      "prompt": "Explicitly manually invoke the agent-process-lifecycle candidate. The caller already verified this exact Windows route's host tool returns with the watcher alive. A self-managed Preserve handoff atomically published its fresh binding, record, isolated stdio, bounded readiness, named later owner, and safe later Stop method. Exact temporary-artifact cleanup is unresolved after that publication. Return only lifecycle decision JSON; do not revoke the published handoff or execute a command.",
       "expected_output": "Preserves the published handoff while reporting temporary-artifact cleanup as unresolved.",
       "files": [],
       "expectations": [

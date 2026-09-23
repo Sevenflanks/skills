@@ -27,6 +27,8 @@ Launch 至少需要 executable、`ArgumentList`、working directory、stdout/std
 
 Launch 的 live evidence 只代表 preflight 當下觀察到的狀態，不是未來仍然有效的保證。成功時，caller 應保存回傳的 opaque `binding`、`RecordPath`、stdio、readiness 與 lifecycle result。
 
+短命 launcher 若在 descendant ready 前已退出，本 helper 會走 candidate early-exit 路徑；不可把已退出 launcher 的 PID 或 descendant 的 port 當成新的 binding。這類工作應在 launch 前選擇確實涵蓋 descendant 的 managed/official owner，或安全 block/handoff。暫時 Stop 路由須由選定 owner 在同一 tool 的 `finally` 執行 identity-bound cleanup；測試 fixture 另需獨立的 bounded lifetime，以免 interrupt 略過 `finally`。
+
 ### 收尾：`Finalize`
 
 Finalize 需要 `RecordPath` 與 `Disposition`。`Disposition` 可為 `Stop` 或 `Preserve`。
@@ -58,6 +60,8 @@ record_path: <同一個 RecordPath>
 Preserve 可能有 mixed result：若已證明 handoff 的 atomic publication 成功，只有 exact temporary artifact cleanup 尚未完成，則 `lifecycle_result.status` 可為 `unresolved`，但 `final_disposition.status` 仍為 `preserved`。此時 caller 或 later owner 必須照常接收 `later_owner` 與 safe `stop_method`，並在新的 invocation 執行 later Stop；成功的 later Stop 也必須清除該 record 所精確界定的 temporary residue。若 publication 仍是 original-unchanged 或狀態 unknown，不得宣稱成功 handoff，也不得交付可供 later Stop 使用的 Preserve 結果。
 
 Preserve 交付的是責任轉移，不是 credential 轉移。若 later owner 不在同一 session 或不具相容的 security context，或任一必要 live evidence 在重新驗證時不成立，helper 必須 safe rejection/unresolved，而不是降級成 PID 或名稱式停止。
+
+同 tool Stop 以本次 retained owner binding 執行 bounded test 與 identity-bound cleanup，不以 child 存活時 host 返回為必要條件。跨 tool Preserve 才需 host 在 child 活著時返回；契約未涵蓋此能力的特殊短命 CLI 留 child 或自脫離 route 要先確認同一 route/host tool 的 return-live capability。`Finalize Preserve` 成功或 shell 輸出最後一行，不代表 caller 已收到完整 tool result。已驗證且執行方式未變的 capability 可沿用，但每次 Preserve 的 binding、readiness、later owner 與 later Stop 仍須新鮮有效。return-live 未知且診斷 fixture 有合法 owner、獨立 bounded lifetime 與 Stop 時可診斷；fixture probe 不提供正式 workload 的 owner／Stop authority，正式契約若缺則 block/handoff。同 route host-return 或 ownership／Stop 能力被反證時只對受影響能力 targeted 重新驗證；app readiness／downstream 失敗僅處理當次資源。timeout 先查原因，未知時將可能受影響能力待查，不用泛稱契約蓋過，也不悄悄改 Preserve 為 Stop。新 route 依所選 disposition 評估完整契約後可直接採用。
 
 ## 明確限制
 
