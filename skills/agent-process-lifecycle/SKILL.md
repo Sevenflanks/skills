@@ -1,10 +1,10 @@
 ---
 name: agent-process-lifecycle
-description: "Use when lifecycle-decision routing is needed for an Agent-caused local OS process: a foreground local command may hang or outlive the initiating tool call, a lingering, zombie, or unclear-owner local process needs cleanup or reconciliation, or the task explicitly requests a lifecycle decision for an Agent-started or managed current-run binding. On Windows, select the first viable execution tier and handle readiness, Stop, Preserve, handoff, or reconciliation. On non-Windows, classify an Agent-caused local process only to hand off or block before launch; do not perform lifecycle execution. Do not use for a command that remains synchronous until normal exit, regardless of duration. Do not load this skill merely to classify, Preserve, observe, check status, or use a resource when the prompt already identifies a framework, IDE, Kubernetes, Docker, Windows Service, CI, or other external or runtime owner and states its complete lifecycle contract; follow that owner's contract directly."
+description: "Use for lifecycle routing of an Agent-caused local process, including a short-lived CLI launcher whose descendant remains alive after CLI exit, a command that may hang or outlive its tool call, owned-resource cleanup/reconciliation, or an explicit lifecycle-decision request. On Windows select a verified owner and Stop/Preserve route; on non-Windows classify for handoff or pre-launch block. Exclude only genuinely synchronous work whose resources have all finished normally, and resources with an already-identified external/runtime owner and complete contract; follow that owner directly."
 license: MIT
 metadata:
   author: sevenflankse
-  version: 1.1.0
+  version: 1.1.1
 ---
 
 # Agent Process Lifecycle
@@ -57,9 +57,11 @@ configuration, and an already-provided owner contract. Do not perform a
 per-command audit, OS inspection, PID or port probe, lifecycle shell call, or
 polling to decide applicability.
 
-Exit with no lifecycle fact bundle for a synchronous command that waits for
-exit, or a task that only observes or uses an external or runtime-managed
-resource whose owner and complete lifecycle contract are already clear. Return:
+Exit with no lifecycle fact bundle only when the command and *all work it
+started* finish normally with no resource left to manage, or when the task
+only uses an external/runtime-managed resource whose owner and complete
+contract are already clear. A short-lived CLI's exit code, HTTP response, or
+readiness signal does not exclude its still-running descendant. Return:
 
 ```json
 {
@@ -95,7 +97,7 @@ defined by `references/failure-and-handoff.md`; never collapse them into prose.
 
 ## 2. Platform Gate
 
-`1.1.0` supports lifecycle execution only on Windows. On non-Windows, perform
+`1.1.1` supports lifecycle execution only on Windows. On non-Windows, perform
 only bounded owner classification from information already available in the
 task. Do not inspect the OS, launch, terminate, issue a lifecycle shell call,
 or invent platform mechanics.
@@ -118,7 +120,8 @@ On Windows, select the first positively verified tier in this order:
 4. Blocked or handoff.
 
 A managed or external tier is viable only when its current contract can produce
-a fresh current-run scoped binding for the selected operation. Do not reconstruct
+a fresh current-run scoped binding covering the resource that *remains* after
+the launcher exits, with a viable finalization method. Do not reconstruct
 a PID tree for a managed owner. A normal managed result uses its opaque binding,
 sets `os_inspection_performed: false` and `lifecycle_shell_calls: []`, and
 reads neither reference.
@@ -131,6 +134,14 @@ executable current-run tier, not an external-owner handoff. It uses no extra OS
 inspection or lifecycle shell calls; report `os_inspection_performed: false`
 and `lifecycle_shell_calls: []`, with
 `owner_binding.kind: "official-interface-current-run"`.
+
+For a short-lived launcher, decide from its declared spawn/owner contract
+whether a descendant survives. A launcher exit does not establish descendant
+exit or transfer ownership. The Windows helper's `Launch` observes its root
+process before readiness; do not assume it can adopt a child whose launcher
+already exited. Select a tier only if its binding really covers the descendant.
+If no tier does, block or hand off *before* launch. Do not add a per-command OS
+scan or replace a requested Preserve with Stop to make a tier appear viable.
 
 An identified external or runtime owner is a handoff, not current-run cleanup.
 Read `references/failure-and-handoff.md` immediately before that handoff. If no
@@ -161,7 +172,8 @@ external-handoff, or non-Windows paths.
 Before `Launch`, choose one final disposition:
 
 * `Stop` requires an executable identity-bound finalization path.
-* `Preserve` requires a named later owner and safe handoff contract.
+* `Preserve` requires a named later owner, safe handoff contract, and evidence
+  that this exact route/host tool returns while the child is alive.
 
 Neither PID, name, port, process liveness, foreground return, fixed sleep, nor
 tool timeout proves detachment, readiness, ownership, or termination authority.
@@ -174,6 +186,19 @@ Every launch obtains a fresh current-run binding. The selected owner supplies
 stdio isolation and, when the workload needs it, one bounded
 workload-specific readiness signal and deadline. Spawn or liveness is not
 readiness.
+
+For a temporary Stop route involving a short-lived launcher, keep the selected
+owner's descendant binding through the *same tool call* and invoke its
+identity-bound Stop in `finally`, including after downstream failure. Confirm
+cleanup with the owner contract; an HTTP 202, successful CLI exit, or a single
+failed readiness/probe check is neither OS exit nor completed Stop. On
+readiness failure, cancellation or interruption reconcile through the binding;
+interruption may prevent `finally` from running, so tests need an independent
+bounded fixture lifetime/finalization and must retain unresolved evidence.
+Never substitute shell timeout for cleanup. Preserve is allowed only when the
+current route's actual host tool completion (observable by the caller after
+return, not a shell-end marker) has been verified while the child is live, and
+a later owner has a safe Stop method. Otherwise block/handoff before launch.
 
 Windows self-managed 流程若只有專案內的寫入授權，record 與 stdio 就留在該範圍。
 helper 可保護本次建立的 artifacts，但不修改既有目錄 ACL、不要求 per-user
@@ -229,7 +254,9 @@ unchanged downstream object without reselecting a tier or reading a reference.
 
 ## 7. Contrastive Decisions
 
-* A synchronous build that waits for exit is excluded and creates no facts.
+* A synchronous build whose entire work has exited is excluded and creates no facts.
+* A CLI that exits 0 but leaves a descendant alive requires a binding covering
+  that descendant; temporary Stop finalizes in the same tool call.
 * A managed current-run binding is selected without a PID dossier or extra
   lifecycle shell work.
 * An external runtime-owned service is handed off, never adopted into cleanup.

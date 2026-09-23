@@ -60,7 +60,7 @@
     {
       "id": "excluded-synchronous-command",
       "platform": "any",
-      "prompt": "Explicitly manually invoke the agent-process-lifecycle candidate. This command waits for exit normally and does not outlive its initiating tool call. Return only the lifecycle decision JSON; do not inspect the OS or invoke lifecycle execution.",
+      "prompt": "Explicitly manually invoke the agent-process-lifecycle candidate. This command waits for exit normally; every process and all work it started have finished, with no descendant or resource left to manage. Return only the lifecycle decision JSON; do not inspect the OS or invoke lifecycle execution.",
       "expected_output": "The synchronous command is excluded without creating lifecycle facts or actions.",
       "files": [],
       "expectations": [
@@ -83,6 +83,87 @@
           "skill"
         ],
         "reference_reads": []
+      }
+    },
+    {
+      "id": "short-cli-owned-descendant-stop",
+      "platform": "Windows",
+      "prompt": "Explicitly invoke the lifecycle candidate. On Windows a short CLI exits 0 after spawning a persistent child. A verified official launcher contract gives this run a fresh binding covering that child, a bounded readiness check, and an identity-bound Stop. The requested route is temporary Stop; downstream returns HTTP 202 and one probe fails. Return only lifecycle decision JSON, planning Stop in the same tool's finally even if downstream fails. Do not execute anything.",
+      "expected_output": "The live child is applicable despite CLI exit; select its actual owner and same-tool binding Stop, keeping HTTP/probe results separate from OS exit.",
+      "files": [],
+      "expectations": [
+        "Selects the official current-run owner rather than excluding the CLI or assuming helper root ownership.",
+        "Schedules identity-bound Stop in the same tool's finally and never infers OS exit from HTTP 202 or one failed probe."
+      ],
+      "assertions": {
+        "response_equals": {
+          "applicable": true,
+          "selected_tier": "external-launcher",
+          "owner_binding.kind": "official-interface-current-run",
+          "final_disposition.requested": "Stop",
+          "lifecycle_result.status": "planned"
+        },
+        "response_has_keys": ["lifecycle_result", "downstream_result", "final_disposition"],
+        "allowed_tools": ["read", "skill"],
+        "reference_reads": []
+      }
+    },
+    {
+      "id": "short-cli-preserve-unverified-host-block",
+      "platform": "Windows",
+      "prompt": "Explicitly invoke the lifecycle candidate. A Windows CLI exits 0 leaving a live child; a fresh owner binding and later Stop method are known. The requested disposition is Preserve, but this exact host/tool route has not been observed returning while that child stays alive; the only timestamp is shell-end. No other viable Preserve route exists. Return only lifecycle decision JSON before launch; do not switch to Stop.",
+      "expected_output": "Blocks the unverified Preserve route before launch without silently turning it into Stop.",
+      "files": [],
+      "expectations": ["Rejects shell-end as host completion.", "Returns a pre-launch block and identifies missing host-return evidence."],
+      "assertions": {
+        "response_equals": {
+          "action": "blocked",
+          "stage": "pre-launch",
+          "launch_performed": false,
+          "final_disposition.requested": "Preserve",
+          "lifecycle_result.status": "blocked"
+        },
+        "response_has_keys": ["missing_safety_evidence", "next_owner", "downstream_result"],
+        "allowed_tools": ["read", "skill"],
+        "reference_reads": ["references/failure-and-handoff.md"]
+      }
+    },
+    {
+      "id": "short-cli-helper-root-exit-block",
+      "platform": "Windows",
+      "prompt": "Explicitly invoke the lifecycle candidate. A Windows CLI exits before its child becomes ready. No managed or official launcher owner binds the child; the Windows self-managed helper observes the CLI root before readiness and cannot be assumed to adopt an exited launcher's child. Return only lifecycle decision JSON before launch.",
+      "expected_output": "Blocks before launching a child it cannot safely own; no PID or port adoption.",
+      "files": [],
+      "expectations": ["Rejects a root-only helper as a descendant owner.", "Does not make a speculative termination claim."],
+      "assertions": {
+        "response_equals": {
+          "action": "blocked",
+          "stage": "pre-launch",
+          "failure_kind": "no-viable-tier",
+          "launch_performed": false,
+          "termination_performed": false
+        },
+        "response_has_keys": ["missing_safety_evidence", "next_owner", "lifecycle_result"],
+        "allowed_tools": ["read", "skill"],
+        "reference_reads": ["references/failure-and-handoff.md"]
+      }
+    },
+    {
+      "id": "short-cli-interrupted-stop-unresolved",
+      "platform": "Windows",
+      "prompt": "Explicitly invoke the lifecycle candidate. A Windows temporary Stop route had a verified current-run descendant binding; the host interrupted the tool before its finally could be confirmed. A test fixture has an independent bounded lifetime, but there is no evidence yet of child OS exit. Return only lifecycle decision JSON; no guessed PID/name/port kill and no completed Stop claim.",
+      "expected_output": "Reconciles as unresolved pending owner-backed evidence; independent fixture deadline is not a production Stop guarantee.",
+      "files": [],
+      "expectations": ["Does not assume interrupted finally executed.", "Keeps lifecycle unresolved and retains ownership evidence."],
+      "assertions": {
+        "response_equals": {
+          "lifecycle_result.status": "unresolved",
+          "termination_performed": false,
+          "final_disposition.requested": "Stop"
+        },
+        "response_has_keys": ["evidence_paths", "next_owner", "unresolved_items", "downstream_result"],
+        "allowed_tools": ["read", "skill"],
+        "reference_reads": ["references/failure-and-handoff.md"]
       }
     },
     {
@@ -359,7 +440,7 @@
     {
       "id": "watcher-self-managed-preserve",
       "platform": "Windows",
-      "prompt": "Explicitly manually invoke the agent-process-lifecycle candidate. On Windows, an Agent-caused watcher requires self-managed lifecycle and must remain running for a named later owner. A bounded readiness signal, fresh binding, record, stdio, and safe later Stop handoff are available. Return only lifecycle decision JSON; do not execute a command.",
+      "prompt": "Explicitly manually invoke the agent-process-lifecycle candidate. On Windows, an Agent-caused watcher requires self-managed lifecycle and must remain running for a named later owner. This exact route's host tool has been observed by the caller to return while the watcher remains alive. A bounded readiness signal, fresh binding, record, stdio, and safe later Stop handoff are available. Return only lifecycle decision JSON; do not execute a command.",
       "expected_output": "Plans Launch then Finalize with Preserve and reports the later ownership handoff.",
       "files": [],
       "expectations": [
@@ -410,7 +491,7 @@
     {
       "id": "preserve-publication-cleanup-unresolved",
       "platform": "Windows",
-      "prompt": "Explicitly manually invoke the agent-process-lifecycle candidate. A Windows self-managed Preserve handoff atomically published its fresh binding, record, isolated stdio, bounded readiness, named later owner, and safe later Stop method. Exact temporary-artifact cleanup is unresolved after that publication. Return only lifecycle decision JSON; do not revoke the published handoff or execute a command.",
+      "prompt": "Explicitly manually invoke the agent-process-lifecycle candidate. The caller already verified this exact Windows route's host tool returns with the watcher alive. A self-managed Preserve handoff atomically published its fresh binding, record, isolated stdio, bounded readiness, named later owner, and safe later Stop method. Exact temporary-artifact cleanup is unresolved after that publication. Return only lifecycle decision JSON; do not revoke the published handoff or execute a command.",
       "expected_output": "Preserves the published handoff while reporting temporary-artifact cleanup as unresolved.",
       "files": [],
       "expectations": [

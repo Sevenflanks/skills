@@ -27,6 +27,8 @@ Launch 至少需要 executable、`ArgumentList`、working directory、stdout/std
 
 Launch 的 live evidence 只代表 preflight 當下觀察到的狀態，不是未來仍然有效的保證。成功時，caller 應保存回傳的 opaque `binding`、`RecordPath`、stdio、readiness 與 lifecycle result。
 
+短命 launcher 若在 descendant ready 前已退出，本 helper 會走 candidate early-exit 路徑；不可把已退出 launcher 的 PID 或 descendant 的 port 當成新的 binding。這類工作應在 launch 前選擇確實涵蓋 descendant 的 managed/official owner，或安全 block/handoff。暫時 Stop 路由須由選定 owner 在同一 tool 的 `finally` 執行 identity-bound cleanup；測試 fixture 另需獨立的 bounded lifetime，以免 interrupt 略過 `finally`。
+
 ### 收尾：`Finalize`
 
 Finalize 需要 `RecordPath` 與 `Disposition`。`Disposition` 可為 `Stop` 或 `Preserve`。
@@ -58,6 +60,8 @@ record_path: <同一個 RecordPath>
 Preserve 可能有 mixed result：若已證明 handoff 的 atomic publication 成功，只有 exact temporary artifact cleanup 尚未完成，則 `lifecycle_result.status` 可為 `unresolved`，但 `final_disposition.status` 仍為 `preserved`。此時 caller 或 later owner 必須照常接收 `later_owner` 與 safe `stop_method`，並在新的 invocation 執行 later Stop；成功的 later Stop 也必須清除該 record 所精確界定的 temporary residue。若 publication 仍是 original-unchanged 或狀態 unknown，不得宣稱成功 handoff，也不得交付可供 later Stop 使用的 Preserve 結果。
 
 Preserve 交付的是責任轉移，不是 credential 轉移。若 later owner 不在同一 session 或不具相容的 security context，或任一必要 live evidence 在重新驗證時不成立，helper 必須 safe rejection/unresolved，而不是降級成 PID 或名稱式停止。
+
+Preserve 的安全 handoff 還取決於目前的 route/host tool 能在 child 仍存活時真正返回；`Finalize Preserve` 成功或 shell 輸出最後一行，不代表 caller 已取得可用 handoff。沒有實測 host completion 與 later Stop 時，不在此 route 啟動 Preserve，也不將請求悄悄改為 Stop。
 
 ## 明確限制
 

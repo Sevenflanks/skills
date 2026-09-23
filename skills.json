@@ -57,7 +57,7 @@
       "name": "agent-process-lifecycle",
       "path": "skills/agent-process-lifecycle",
       "summary": "管理 Agent 啟動之本機 OS process 的 ownership、execution tier、readiness、Stop、Preserve、handoff 與 reconciliation；Windows 提供 self-managed helper，non-Windows 僅分類、handoff 或 launch 前 blocked。",
-      "version": "1.1.0",
+      "version": "1.1.1",
       "license": "MIT",
       "author": "sevenflankse",
       "tags": [

@@ -15,6 +15,14 @@ state, cleanup attempt and result, relevant logs or record path, and the next
 owner. Do not perform a broad OS scan or construct a PID tree unless the
 selected owner contract itself supplies that scoped evidence.
 
+Short-lived launcher exit (including exit 0), HTTP 202, and one failed probe
+are not evidence of descendant OS exit. If the current binding cannot prove
+ownership, keep `unresolved` and do not terminate by PID/name/port. When an
+interrupt prevents the same-tool Stop `finally` from running, the test fixture
+must expire independently within a bounded time; retain targeted evidence if
+cleanup cannot be confirmed. A shell-end timestamp is not host-tool
+completion; only the caller can observe the returned tool call.
+
 ## Reconciliation Before Fallback
 
 For a failed execution tier, use this order:
