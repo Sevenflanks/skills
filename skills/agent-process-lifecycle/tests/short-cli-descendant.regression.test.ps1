@@ -47,7 +47,7 @@ if ($Scenario -eq 'CleanupDiagnostic') {
 }
 
 function Invoke-Cli([string]$Mode, [string]$Directory, [string]$Token) {
-    & $node $fixture $Mode $Directory $Token $FixtureLifetimeMilliseconds 250
+    & $node $fixture $Mode $Directory $Token $FixtureLifetimeMilliseconds
     if ($LASTEXITCODE -ne 0) { throw "Fixture CLI $Mode failed with exit code $LASTEXITCODE" }
 }
 
@@ -121,7 +121,7 @@ function Run-OwnedCase([string]$Name, [string]$Failure) {
         if (-not (Test-Ready $dir $token)) { throw 'Readiness probe failed.' }
         if ($case.processHandle.HasExited) { throw 'Child exited before CLI return was checked.' }
         if ($Failure -eq 'none') {
-            & $node $fixture stop $dir ([guid]::NewGuid().ToString('N')) $FixtureLifetimeMilliseconds 250 2>$null
+            & $node $fixture stop $dir ([guid]::NewGuid().ToString('N')) $FixtureLifetimeMilliseconds 2>$null
             if ($LASTEXITCODE -eq 0 -or $case.processHandle.HasExited -or
                 -not (Test-Ready $dir $token)) { throw 'Unknown binding stopped or disrupted the owned child.' }
         }
@@ -140,6 +140,7 @@ function Run-OwnedCase([string]$Name, [string]$Failure) {
                 throw 'Owner Stop did not produce exit intent.'
             }
             if ($case.processHandle.WaitForExit(0)) { throw 'Fixture did not expose intent before OS exit.' }
+            Invoke-Cli 'release' $dir $token
             $reason = Confirm-OsExit $case
             if ($reason -ne 'owner-stop') { throw "Stop was not owner-finalized: $reason" }
             $case.stopped = $true
@@ -204,7 +205,13 @@ finally {
     foreach ($case in $cases) {
         if ($Scenario -ne 'HostDiagnostic' -and $case.launched -and -not $case.stopped -and $null -ne $case.processHandle) {
             if (-not $case.processHandle.HasExited) {
-                try { Invoke-Cli 'stop' $case.dir $case.token }
+                try {
+                    Invoke-Cli 'stop' $case.dir $case.token
+                    if ((Wait-File (Join-Path $case.dir 'child-exit-intent.json') 2500) -and
+                        -not $case.processHandle.HasExited) {
+                        Invoke-Cli 'release' $case.dir $case.token
+                    }
+                }
                 catch { Write-Warning "Owner recovery failed; fixture has independent deadline: $($_.Exception.Message)" }
             }
             try { $null = Confirm-OsExit $case; $case.stopped = $true }
