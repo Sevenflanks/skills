@@ -77,13 +77,16 @@ function Test-Ready([string]$Directory, [string]$Token) {
     finally { $client.Dispose() }
 }
 
-function Open-OwnedProcess([string]$Directory, [string]$Token) {
-    $ready = [IO.File]::ReadAllText((Join-Path $Directory 'ready.json')) | ConvertFrom-Json
+function Open-OwnedProcess([string]$Directory, [string]$Token, [switch]$WithoutReady) {
     $binding = [IO.File]::ReadAllText((Join-Path $Directory 'launcher.json')) | ConvertFrom-Json
-    if ($ready.token -cne $Token -or $binding.token -cne $Token -or $binding.childPid -ne $ready.pid) {
+    $evidence = if ($WithoutReady) { 'child-started.json' } else { 'ready.json' }
+    $child = [IO.File]::ReadAllText((Join-Path $Directory $evidence)) | ConvertFrom-Json
+    $expectedMode = if ($WithoutReady) { 'launch-no-ready' } else { 'launch' }
+    if ($child.token -cne $Token -or $binding.token -cne $Token -or $binding.childPid -ne $child.pid -or
+        $binding.mode -cne $expectedMode) {
         throw 'No matching fixture descendant identity.'
     }
-    $process = [Diagnostics.Process]::GetProcessById([int]$ready.pid)
+    $process = [Diagnostics.Process]::GetProcessById([int]$child.pid)
     try {
         if ($process.StartTime.ToUniversalTime() -lt [datetime]::Parse($binding.launchStartedUtc).ToUniversalTime()) {
             throw 'Process start predates fixture launch; retain evidence.'
@@ -151,6 +154,42 @@ function Run-OwnedCase([string]$Name, [string]$Failure) {
     }
 }
 
+function Run-NeverReadyCase {
+    $dir = Join-Path $root 'never-ready'
+    [IO.Directory]::CreateDirectory($dir) | Out-Null
+    $token = [guid]::NewGuid().ToString('N')
+    $case = @{ dir = $dir; token = $token; launched = $false; stopped = $false; processHandle = $null }
+    $cases.Add($case)
+    Invoke-Cli 'launch-no-ready' $dir $token
+    $case.launched = $true
+    if (-not (Wait-File (Join-Path $dir 'child-started.json') 2500)) {
+        throw 'Never-ready child launch identity missing; retain unresolved evidence.'
+    }
+    # Readiness 不存在時，保留由本次 launcher 與 child 共同核對的 OS handle，才能在 deadline 後安全 Finalize。
+    $case.processHandle = Open-OwnedProcess $dir $token -WithoutReady
+    if ($case.processHandle.HasExited) { throw 'Never-ready child exited before readiness deadline.' }
+    if (Wait-File (Join-Path $dir 'ready.json') 2500) {
+        throw 'Never-ready child unexpectedly published readiness.'
+    }
+    & $node $fixture stop $dir ([guid]::NewGuid().ToString('N')) $FixtureLifetimeMilliseconds 2>$null
+    if ($LASTEXITCODE -eq 0 -or $case.processHandle.HasExited -or
+        [IO.File]::Exists((Join-Path $dir 'stop.token'))) {
+        throw 'Unknown token stopped the never-ready child.'
+    }
+    Invoke-Cli 'stop' $dir $token
+    if (-not (Wait-File (Join-Path $dir 'child-exit-intent.json') 2500)) {
+        throw 'Never-ready owner Stop did not produce exit intent; retain unresolved evidence.'
+    }
+    if ($case.processHandle.WaitForExit(0)) { throw 'Never-ready intent was not observed before OS exit.' }
+    Invoke-Cli 'release' $dir $token
+    $reason = Confirm-OsExit $case
+    if ($reason -ne 'owner-stop' -or [IO.File]::Exists((Join-Path $dir 'ready.json'))) {
+        throw "Never-ready finalization was not identity-bound owner Stop: $reason"
+    }
+    $case.stopped = $true
+    Write-Host "Never-ready deadline exceeded; bound child $($case.processHandle.Id) exited after owner Stop ($reason)."
+}
+
 try {
     [IO.Directory]::CreateDirectory($root) | Out-Null
     if ($Scenario -eq 'All') {
@@ -162,6 +201,7 @@ try {
         Run-OwnedCase 'stop' 'none'
         Run-OwnedCase 'cancel' 'cancel'
         Run-OwnedCase 'readiness-failure' 'readiness'
+        Run-NeverReadyCase
         $deadlineDir = Join-Path $root 'open-socket-deadline'
         [IO.Directory]::CreateDirectory($deadlineDir) | Out-Null
         $deadlineToken = [guid]::NewGuid().ToString('N')
