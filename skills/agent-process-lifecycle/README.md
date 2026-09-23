@@ -8,7 +8,7 @@
 
 ## 使用時機
 
-當 foreground local command 可能 hang 或超出 initiating tool call，或 Agent-started process 需要 cleanup、reconciliation、保留或責任轉移時使用。Windows 先選第一個 viable tier：verified managed lifecycle、verified external launcher、Windows self-managed helper，最後才是 blocked 或 handoff。
+當 foreground local command 可能 hang 或超出 initiating tool call，或 Agent-started process 需要 cleanup、reconciliation、保留或責任轉移時使用。Windows 先選第一個 viable tier：verified managed lifecycle、verified external launcher、Windows self-managed helper，最後才是 blocked 或 handoff。標準測試與新服務依既有 owner 契約直接執行：同 tool Stop 需要當次 ownership、bounded test 與 cleanup；跨 tool Preserve 才需要背景返回與 later Stop，不一律要求歷史 probe。
 
 ## 不適用情境
 
@@ -24,7 +24,9 @@ Tier 不競速。上一 tier 必須先完成 Stop、Preserve、handoff 或 unres
 
 Launch 前先決定 `Stop` 或 `Preserve`。`Stop` 必須有 identity-bound final disposition 與 live ownership proof。`Preserve` 必須指定 later-cleanup owner 與 handoff contract，交付 fresh binding、record、stdio、readiness 與日後 Stop 方法。兩者都無法成立時，結果是 blocked、handoff 或 unresolved。
 
-短命 launcher 的暫時 Stop 路由在同一 tool 的 `finally` 依已驗證 binding 清理，readiness 失敗、cancel、interrupt 仍需 reconciliation；測試另有不依賴 shell timeout 或 `finally` 的 bounded fixture lifetime。Preserve 還需 caller 已觀察到此 route 的 host tool 在 child 活著時返回；shell-end 不是 host completion，缺此證據時 launch 前 block/handoff，不改成 Stop。單次 probe 失敗不表示 OS exit，lifecycle/downstream 結果各自回報。
+短命 launcher 的暫時 Stop 路由在同一 tool 的 `finally` 依已驗證 binding 清理，host 可在 cleanup 後才返回；readiness 失敗、cancel、interrupt 仍需 reconciliation；測試另有不依賴 shell timeout 或 `finally` 的 bounded fixture lifetime。跨 tool Preserve route 需確認 caller 收到完整 tool result 時 child 尚活著；若只缺 return-live 能力，可用有合法 owner 與 Stop 的獨立 bounded fixture 診斷。診斷不補足正式 owner／Stop 契約；缺口須先取得適用契約，否則 block/handoff。單次 probe 失敗不表示 OS exit，lifecycle/downstream 結果各自回報。
+
+Route capability 在相同 tool、mode、相關環境與契約下可沿用，普通 app edit／HEAD 變更不觸發重驗；每次啟動仍須新鮮 binding、readiness、owner 與 Stop evidence。route／tool 改變時依 disposition 評估新契約，完整即可採用。同 route host-return、ownership 或 Stop 契約被反證時才需對受影響能力 targeted 驗證；app readiness／downstream 失敗只處理當次資源。timeout 按原因判斷，原因未知則相關能力待查；現存 binding 先 reconciliation，不用未涵蓋失敗 route 的泛稱契約覆蓋。
 
 ## Windows self-managed helper
 
@@ -50,7 +52,7 @@ Self-managed helper 是前兩個 tier 不可用時的 Windows fallback。它隱�
 
 `pwsh -NoProfile -File skills/agent-process-lifecycle/tests/short-cli-descendant.regression.test.ps1` 會執行全同步 baseline、短命 CLI 留下真實 loopback child、同 tool `finally` 的 Stop，及模擬 cancel/readiness failure 的 reconciliation。它會驗證錯誤 owner token 不可停止 child、`child-exit-intent.json` 出現時不可宣稱 OS exit、持續開啟的 socket 不妨礙 child 到期退出。同 tool 保留已核對的 Process handle，有限 `WaitForExit` 確認實際退出後才清理本次目錄；沒有確認則保留證據。fixture token 僅是受控測試的 cooperative owner method，不代表產品環境的 ownership authority。child 的 `FixtureLifetimeMilliseconds` 預設 8000，只是測試中斷時的獨立上限，非產品程序壽命。
 
-若需診斷**目前 host** 的 Preserve 可行性，另在欲驗證的 host/tool route 執行 `pwsh -NoProfile -File skills/agent-process-lifecycle/tests/short-cli-descendant.regression.test.ps1 -Scenario HostDiagnostic -FixtureLifetimeMilliseconds 8000`。紀錄 caller 收到**整個 tool result** 的時間，於 tool 返回時核對輸出目錄中 `process-identity.json` 的 PID 與 OS 上的 process start time、確認 child 尚活著；`shell-end.json` 或 `child-exit-intent.json` 都不證明 host completion／OS exit。即使某次 tool 在 child 活著時返回，也需先確認 later owner 和 Stop 才能規劃 Preserve；若直到 child 的 bounded exit 才返回，該 route 應在 launch 前 block/handoff。diagnostic 的 child 自行屆期，待 `child-exit-intent.json` 出現後，以命令輸出的 `-Scenario CleanupDiagnostic -DiagnosticRoot '<exact root>'` 核對原 process OS 已退出並清理；原 PID 若被重用、creation time 不符或無法核對，保守保留證據。本診斷不推論所有 host 的行為，也不使用 shell timeout 當 detach 或 cleanup。
+特殊自脫離 Preserve route 僅缺背景返回保證且 fixture 有合法 owner、獨立 bounded lifetime 與 Stop 時，可在欲驗證的 host/tool route 執行 `pwsh -NoProfile -File skills/agent-process-lifecycle/tests/short-cli-descendant.regression.test.ps1 -Scenario HostDiagnostic -FixtureLifetimeMilliseconds 8000`。紀錄 caller 收到**整個 tool result** 的時間，於 tool 返回時核對輸出目錄中 `process-identity.json` 的 PID 與 OS 上的 process start time、確認 child 尚活著；`shell-end.json` 或 `child-exit-intent.json` 都不證明 host completion／OS exit。即使某次 tool 在 child 活著時返回，fixture owner／Stop 也不授權正式 launch；正式 workload 仍需適用的 later owner 與 Stop 契約，缺少就 block/handoff。若直到 child 的 bounded exit 才返回，該 route 應在正式 Preserve 前 block/handoff。diagnostic 的 child 自行屆期，待 `child-exit-intent.json` 出現後，以命令輸出的 `-Scenario CleanupDiagnostic -DiagnosticRoot '<exact root>'` 核對原 process OS 已退出並清理；原 PID 若被重用、creation time 不符或無法核對，保守保留證據。本診斷不推論所有 host 的行為，也不使用 shell timeout 當 detach 或 cleanup。
 
 ## 驗證證據與限制
 

@@ -1,6 +1,6 @@
 ---
 name: agent-process-lifecycle
-description: "Use for lifecycle routing of an Agent-caused local process, including a short-lived CLI launcher whose descendant remains alive after CLI exit, a command that may hang or outlive its tool call, owned-resource cleanup/reconciliation, or an explicit lifecycle-decision request. On Windows select a verified owner and Stop/Preserve route; on non-Windows classify for handoff or pre-launch block. Exclude only genuinely synchronous work whose resources have all finished normally, and resources with an already-identified external/runtime owner and complete contract; follow that owner directly."
+description: "Agent 啟動的前景本機命令可能卡住（may hang）、跨越 tool call，短命 CLI 留下 child，或需要 cleanup／reconciliation 時，進行 lifecycle routing；明確要求 lifecycle decision 時也適用。Windows 優先採有 current-run ownership 與 Stop 的 owner contract；跨 tool Preserve 才需背景返回能力，缺證據的特殊自脫離路由可診斷。non-Windows 僅分類、handoff 或 launch 前 blocked。所有工作已正常結束的同步命令，以及已有完整 external/runtime owner 契約的資源，直接依原 owner 處理。"
 license: MIT
 metadata:
   author: sevenflankse
@@ -55,7 +55,9 @@ For every executable tier, return exactly this object at `minimum_outcomes`:
 Before the first relevant decision, reason only from the task, declared
 configuration, and an already-provided owner contract. Do not perform a
 per-command audit, OS inspection, PID or port probe, lifecycle shell call, or
-polling to decide applicability.
+polling to decide applicability. 標準測試與新服務若已有涵蓋當次 resource
+ownership、bounded test 與同 tool Stop cleanup 的契約，可直接依契約執行；
+跨 tool Preserve 才需背景返回與 later Stop 證據，不一律要求歷史 probe。
 
 Exit with no lifecycle fact bundle only when the command and *all work it
 started* finish normally with no resource left to manage, or when the task
@@ -71,18 +73,23 @@ readiness signal does not exclude its still-running descendant. Return:
 }
 ```
 
-For an applicable lifecycle decision, keep a task-local fact bundle only while
-the repo, worktree, HEAD, working directory, launch configuration,
-environment, launcher, wrapper, execution tool, argument mode, launch
-behavior, owner identity, owner contract, owner state, requested decision, and
-freshness remain known and unchanged. Invalidate it before the next relevant
-decision after any of those changes, an exit, crash, timeout, session
-interruption, previous failure, stale or unknown freshness, or an observation
-that contradicts it.
+區分可重用的 route capability 與每次執行的 resource facts。完整 owner contract
+或已證實的執行方式可在相同 route、tool、mode、相關環境及契約未變時沿用；普通 app
+code edit 或 HEAD 變更本身不使其失效，也不要求重做 host return-live 測試。
+每次啟動仍要取得 fresh current-run binding、readiness 與 current Stop evidence。
+route／tool／mode、相關環境或 owner contract 改變時，舊 route 的證據不直接
+適用；先按所選 Stop 或 Preserve 評估新 route 契約，完整即可選 tier。
+同一 route 已知 host-return 被 child 卡住、ownership 或 Stop 契約失效時，
+先處理當次 binding，受影響能力需該 route 的 targeted evidence 才能恢復。
+timeout 先釐清原因；未知原因僅將可能受影響的能力列為待查，不泛化失效。
+單次 app readiness 失敗或 downstream assertion 失敗只處理當次 resource，
+不自動否定已驗證的 host-return capability。背景返回未知且其他安全條件
+齊備的特殊 Preserve route 可做 bounded 診斷，不使新服務因無歷史 probe 卡住。
+exit、crash、timeout、session interruption 或 owner state 變化也會使該次
+resource facts 失效；先處理既有 binding 的 reconciliation，再決定後續操作。
 
-When any invalidating event occurs, mark the bundle invalid and repeat this
-reasoning-only entry check before the next relevant decision. Do not reuse
-stale owner, configuration, or readiness facts.
+當事件使 resource facts 失效，標記受影響的 bundle，並在下次相關決策前重做
+reasoning-only entry check；不可沿用過時的 owner、configuration 或 readiness。
 
 When a scenario is limited to an invalidating owner change, return
 `fact_bundle.invalidated: true`, `fact_bundle.invalidation_event:
@@ -121,7 +128,11 @@ On Windows, select the first positively verified tier in this order:
 
 A managed or external tier is viable only when its current contract can produce
 a fresh current-run scoped binding covering the resource that *remains* after
-the launcher exits, with a viable finalization method. Do not reconstruct
+the launcher exits, with a viable finalization method. 同 tool Stop 須由
+owner contract 涵蓋 bounded test 與 identity-bound cleanup；host tool 可在
+cleanup 後才返回。跨 tool Preserve 才需 child 存活時 host 返回、named later
+owner 與 safe later Stop 的契約或同 route return-live 證據。兩者每次 launch
+均需新鮮 binding、readiness 與 Stop evidence。Do not reconstruct
 a PID tree for a managed owner. A normal managed result uses its opaque binding,
 sets `os_inspection_performed: false` and `lifecycle_shell_calls: []`, and
 reads neither reference.
@@ -142,6 +153,12 @@ process before readiness; do not assume it can adopt a child whose launcher
 already exited. Select a tier only if its binding really covers the descendant.
 If no tier does, block or hand off *before* launch. Do not add a per-command OS
 scan or replace a requested Preserve with Stop to make a tier appear viable.
+只有背景返回未知，正式 workload 已有涵蓋 child 的 owner／Stop 契約，且
+診斷 fixture 有合法 owner、獨立 bounded lifetime 與 Stop 的特殊自脫離
+route，可先讀 `references/failure-and-handoff.md`，並按第 5 節描述診斷
+步驟與尚缺證據；
+診斷只能確認 return-live，不能補足正式 workload 的 ownership 或 Stop
+契約。正式 owner／Stop 缺口須取得適用契約，否則 pre-launch block/handoff。
 
 An identified external or runtime owner is a handoff, not current-run cleanup.
 Read `references/failure-and-handoff.md` immediately before that handoff. If no
@@ -172,8 +189,9 @@ external-handoff, or non-Windows paths.
 Before `Launch`, choose one final disposition:
 
 * `Stop` requires an executable identity-bound finalization path.
-* `Preserve` requires a named later owner, safe handoff contract, and evidence
-  that this exact route/host tool returns while the child is alive.
+* `Preserve` requires a named later owner and safe handoff contract. 跨 tool
+  Preserve 須確定 host 在 child 存活時返回；契約未涵蓋此能力的特殊短命 CLI
+  留 child／自脫離 route，才需同 route 實測。Stop 不以此為門檻。
 
 Neither PID, name, port, process liveness, foreground return, fixed sleep, nor
 tool timeout proves detachment, readiness, ownership, or termination authority.
@@ -195,10 +213,19 @@ failed readiness/probe check is neither OS exit nor completed Stop. On
 readiness failure, cancellation or interruption reconcile through the binding;
 interruption may prevent `finally` from running, so tests need an independent
 bounded fixture lifetime/finalization and must retain unresolved evidence.
-Never substitute shell timeout for cleanup. Preserve is allowed only when the
-current route's actual host tool completion (observable by the caller after
-return, not a shell-end marker) has been verified while the child is live, and
-a later owner has a safe Stop method. Otherwise block/handoff before launch.
+Never substitute shell timeout for cleanup. 契約未涵蓋背景返回的特殊自脫離
+route 要 Preserve，需同 route/host tool return-live 證據、named later owner 與 safe
+Stop；shell-end marker 不等於 caller 收到完整 tool result。只有背景返回
+未知、正式 owner／Stop 契約齊備且 fixture 有合法 owner 與 Stop 時，可先用
+獨立 bounded、能在 interruption 後自行結束的 fixture 做 targeted 診斷，
+並在診斷後核對 host completion、child identity 與 OS exit；未取得證據前不啟動
+正式 Preserve。可用既有 `lifecycle_result.status: "planned"` 表示只規劃診斷，
+以 `missing_safety_evidence` 說明正式 launch 尚缺證據；診斷 fixture 有獨立
+bounded lifetime，不須先證明該未知 route 可返回。若同一 route 已證實
+等到 child exit 才返回，或 timeout 原因未知且可能影響 host-return，
+依 failure reference 調查受影響能力；如有未清理 binding 則先 reconcile。
+不能以未涵蓋該失敗 route 的泛稱契約覆蓋、shell timeout
+代替 detach，或靜默將 Preserve 改為 Stop。
 
 Windows self-managed 流程若只有專案內的寫入授權，record 與 stdio 就留在該範圍。
 helper 可保護本次建立的 artifacts，但不修改既有目錄 ACL、不要求 per-user

@@ -3,8 +3,9 @@
 Read this reference only for a non-Windows block or handoff, an external owner
 handoff, no viable Windows tier, or an escalation: ownership ambiguity,
 readiness failure, owner conflict, unexpected exit, wrapper ambiguity, shutdown
-transfer. Do not load it for an ordinary excluded, managed, natural-completion,
-or downstream-separation result.
+transfer. 另於 timeout、identity mismatch、residual resource、Preserve 或
+handoff 時讀取；普通 excluded、managed、natural-completion 或
+downstream-separation result 不需讀取。
 
 ## Targeted Evidence
 
@@ -22,6 +23,21 @@ interrupt prevents the same-tool Stop `finally` from running, the test fixture
 must expire independently within a bounded time; retain targeted evidence if
 cleanup cannot be confirmed. A shell-end timestamp is not host-tool
 completion; only the caller can observe the returned tool call.
+
+同 tool Stop 依涵蓋 child 的當次 binding、bounded test 與 owner cleanup 契約，
+可在 cleanup 後才返回；跨 tool Preserve 才需要 child 存活時 host 返回。
+已證實的 return-live capability 在 route／tool／mode 與相關環境不變時可沿用；
+普通 app edit 或 HEAD 變更不構成失效。每次 resource binding、readiness 與
+Stop evidence 仍須依當次 owner contract 核對。route 改變時依 disposition
+重新評估契約，完整即可採用。同 route 的 host-return 被 child 卡住或 owner／
+Stop 契約失效，才使對應能力待 targeted 驗證；app readiness／downstream 失敗
+只需處理該次資源。timeout 先查原因，未知原因只將可能受影響的能力列為待查；
+若有尚未清理的 binding，先 reconcile，不以未涵蓋失敗 route 的泛稱契約覆蓋。
+只有 return-live 未知，且診斷 fixture 有合法 owner、獨立 bounded lifetime 與
+Stop 時，才做 bounded 診斷，確認 caller 收到完整 tool result 時 child 尚活著，
+並核對後續 OS exit。診斷不提供正式 workload 的 owner 或 Stop authority；
+正式契約若仍缺這兩項，須取得適用契約，否則 block/handoff。fixture 的期限
+不能當成 production Stop authority，shell timeout 也不是 detachment。
 
 ## Reconciliation Before Fallback
 

@@ -61,7 +61,7 @@ Preserve 可能有 mixed result：若已證明 handoff 的 atomic publication �
 
 Preserve 交付的是責任轉移，不是 credential 轉移。若 later owner 不在同一 session 或不具相容的 security context，或任一必要 live evidence 在重新驗證時不成立，helper 必須 safe rejection/unresolved，而不是降級成 PID 或名稱式停止。
 
-Preserve 的安全 handoff 還取決於目前的 route/host tool 能在 child 仍存活時真正返回；`Finalize Preserve` 成功或 shell 輸出最後一行，不代表 caller 已取得可用 handoff。沒有實測 host completion 與 later Stop 時，不在此 route 啟動 Preserve，也不將請求悄悄改為 Stop。
+同 tool Stop 以本次 retained owner binding 執行 bounded test 與 identity-bound cleanup，不以 child 存活時 host 返回為必要條件。跨 tool Preserve 才需 host 在 child 活著時返回；契約未涵蓋此能力的特殊短命 CLI 留 child 或自脫離 route 要先確認同一 route/host tool 的 return-live capability。`Finalize Preserve` 成功或 shell 輸出最後一行，不代表 caller 已收到完整 tool result。已驗證且執行方式未變的 capability 可沿用，但每次 Preserve 的 binding、readiness、later owner 與 later Stop 仍須新鮮有效。return-live 未知且診斷 fixture 有合法 owner、獨立 bounded lifetime 與 Stop 時可診斷；fixture probe 不提供正式 workload 的 owner／Stop authority，正式契約若缺則 block/handoff。同 route host-return 或 ownership／Stop 能力被反證時只對受影響能力 targeted 重新驗證；app readiness／downstream 失敗僅處理當次資源。timeout 先查原因，未知時將可能受影響能力待查，不用泛稱契約蓋過，也不悄悄改 Preserve 為 Stop。新 route 依所選 disposition 評估完整契約後可直接採用。
 
 ## 明確限制
 
