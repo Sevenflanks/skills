@@ -1,13 +1,16 @@
 ---
 name: push-post-pr
-description: 使用者明確要求將目前成果 commit、push 並發布 PR 時使用；先確認完成範圍、PR title 與模板，再核對實際交付結果。
+description: 確認工作完成後，依授權 commit／push 並發布繁中 PR，核對 title、本文與交付狀態。
 license: MIT
+disable-model-invocation: true
 metadata:
   author: sevenflankse
-  version: 0.1.0
+  version: 0.1.1
 ---
 
 # 發布目前成果為 PR
+
+本 skill 僅限使用者明確觸發，不依需求內容自動選用。
 
 載入流程不代表已授權 GitHub 寫入；依本次使用者明確要求的範圍執行 commit、push 與 PR，保留既有授權及 repo 規範。
 

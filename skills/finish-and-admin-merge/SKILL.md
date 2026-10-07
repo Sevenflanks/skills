@@ -1,13 +1,16 @@
 ---
 name: finish-and-admin-merge
-description: 使用者明確要求對指定 PR 執行 admin merge 並收尾工作環境時使用；自行核實 review、checks、最新 head 與 cleanup。
+description: 依最新 PR、review 與 checks 證據執行已授權的 admin squash merge，並安全收尾 branch／worktree。
 license: MIT
+disable-model-invocation: true
 metadata:
   author: sevenflankse
-  version: 0.1.0
+  version: 0.1.1
 ---
 
 # Admin merge 與工作收尾
+
+本 skill 僅限使用者明確觸發，不依需求內容自動選用。
 
 本 skill 負責 repo／PR 的 merge readiness；依 GitHub 最新狀態判斷，不以任務追蹤器、Manager projection 或前輪敘述代替證據。
 

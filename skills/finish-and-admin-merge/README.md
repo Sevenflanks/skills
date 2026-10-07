@@ -4,7 +4,9 @@
 
 ## 使用方式
 
-在支援 Agent Skills 的 runtime 呼叫 `finish-and-admin-merge`，並提供本次需求或目標；沒有額外輸入時依入口說明使用前文。安裝時複製整個 skill 資料夾，包含 references 與 evals，不只複製入口。
+本 skill 僅限人工明確觸發：Codex 使用 `$finish-and-admin-merge`，Claude Code 使用 `/finish-and-admin-merge`。其他 runtime 也須由使用者明確指定本 skill。提供本次需求或目標；沒有額外輸入時依入口說明使用前文。
+
+安裝時複製整個 skill 資料夾，包含 [agents/openai.yaml](agents/openai.yaml)、references（如有）與 evals，不只複製入口。
 
 ## 流程與驗證
 

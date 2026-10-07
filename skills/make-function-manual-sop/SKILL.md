@@ -1,13 +1,16 @@
 ---
 name: make-function-manual-sop
-description: 需要製作系統功能操作說明書、操作手冊或 user guide 時使用；以實機畫面、版本與互動規則證據產出 Word、PDF 或 Markdown。
+description: 以版本、實機畫面與欄位證據製作操作說明書，依可用 renderer 驗證並交付。
 license: MIT
+disable-model-invocation: true
 metadata:
   author: sevenflankse
-  version: 0.1.0
+  version: 0.1.1
 ---
 
 # 系統功能操作說明書製作 SOP
+
+本 skill 僅限使用者明確觸發，不依需求內容自動選用。
 
 適用 Web、桌面、內部業務系統或 API 驅動功能。目標是讓未參與開發者找得到入口、照步驟操作，理解每個欄位／按鈕／icon／狀態、必填與限制，並追溯適用版本與證據。
 

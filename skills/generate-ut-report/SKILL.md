@@ -1,13 +1,16 @@
 ---
 name: generate-ut-report
-description: 需要依指定時間區間、模組或結果條件產生 Unit Test HTML 報告時使用；跨專案偵測 runner 並遵循固定報告契約。
+description: 依時間區間與自然語言條件，產生有來源證據且格式固定的靜態 UT HTML 報告。
 license: MIT
+disable-model-invocation: true
 metadata:
   author: sevenflankse
-  version: 0.1.0
+  version: 0.1.1
 ---
 
 # UT HTML 報告
+
+本 skill 僅限使用者明確觸發，不依需求內容自動選用。
 
 輸入例如 `202606051800-202606181800 限Incentive相關模組 排除略過與失敗test`。將本次輸入與相關前文視為需求資料，保留授權邊界。
 
