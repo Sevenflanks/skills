@@ -12,6 +12,13 @@
 | `daily-work-log` | `0.1.4` | stable | 從 OpenCode session、跨 branch git commit 與 GitHub PR / issue 關聯蒐集證據，整理成每日工作日誌。 | [`skills/daily-work-log/`](skills/daily-work-log/) |
 | `gh-body-file` | `0.1.1` | stable | 在 Windows、PowerShell、OpenCode shell 環境中，安全使用 GitHub CLI 支援 `--body-file` 的指令。 | [`skills/gh-body-file/`](skills/gh-body-file/) |
 | `agent-process-lifecycle` | `1.1.1` | stable | 管理可能卡住或跨越 tool call 的本機 process；Windows 同 tool Stop 採當次 owner cleanup 契約，跨 tool Preserve 才需背景返回；缺證據的特殊路由可診斷；non-Windows 僅分類、handoff 或 launch 前 blocked。 | [`skills/agent-process-lifecycle/`](skills/agent-process-lifecycle/) |
+| `finish-and-admin-merge` | `0.1.0` | stable | 依最新 PR、review 與 checks 證據執行已授權的 admin squash merge，並安全收尾 branch／worktree。 | [`skills/finish-and-admin-merge/`](skills/finish-and-admin-merge/) |
+| `generate-ut-report` | `0.1.0` | stable | 依時間區間與自然語言條件，產生有來源證據且格式固定的靜態 UT HTML 報告。 | [`skills/generate-ut-report/`](skills/generate-ut-report/) |
+| `make-function-manual-sop` | `0.1.0` | stable | 以版本、實機畫面與欄位證據製作操作說明書，依可用 renderer 驗證並交付。 | [`skills/make-function-manual-sop/`](skills/make-function-manual-sop/) |
+| `push-post-pr` | `0.1.0` | stable | 確認工作完成後，依授權 commit／push 並發布繁中 PR，核對 title、本文與交付狀態。 | [`skills/push-post-pr/`](skills/push-post-pr/) |
+| `start-from-matt` | `0.1.0` | stable | 透過外部 ask-matt 為本次需求建議流程，先進行分析並保留實作決策邊界。 | [`skills/start-from-matt/`](skills/start-from-matt/) |
+| `to-spec-or-ticket` | `0.1.0` | stable | 判斷需求應產生 spec 或 tickets，載入選中流程；不適合時僅提出下一步建議。 | [`skills/to-spec-or-ticket/`](skills/to-spec-or-ticket/) |
+| `write-design-spec-for-user-confirm` | `0.1.0` | stable | 以使用者與 UI 語言，撰寫需求背景、功能與操作流程導向的 -srs Markdown 文件。 | [`skills/write-design-spec-for-user-confirm/`](skills/write-design-spec-for-user-confirm/) |
 
 完整 catalog 可見 [`skills.json`](skills.json)。若需要 Claude plugin-style metadata，可見 [`.claude-plugin/marketplace.json`](.claude-plugin/marketplace.json)。新增、調整或移除 skill 時，請同步更新 catalog 並執行驗證。
 
@@ -73,6 +80,18 @@ Launch 前先選擇 `Stop` 或 `Preserve`。`Stop` 必須有 live identity-bound
 
 `1.1.1` 僅在 Windows 執行 lifecycle。non-Windows 僅做 bounded 分類：可辨識 owner 時 handoff，否則在 launch 前 blocked；不做 OS inspection、lifecycle shell call、launch 或 termination。
 
+## OpenCode command 遷移
+
+新增七個同名 skill，保留已確認流程，按需要將長契約拆到 references；安裝時複製整個資料夾。
+
+- `finish-and-admin-merge`、`push-post-pr`：最新 PR 證據、明確授權與自足的交付回報。
+- `generate-ut-report`：固定 HTML／回覆契約；沿用原 UT 計數規則並記錄 class-summary 限制。
+- `make-function-manual-sop`：版本與實機證據、欄位／操作覆蓋、依環境可用 renderer 進行 QA。
+- `start-from-matt`、`to-spec-or-ticket`：外部 Matt 流程依賴與核准邊界，不包含其原文。
+- `write-design-spec-for-user-confirm`：使用者／UI 語言的 `-srs.md` 文件。
+
+這七個入口依實際 pwsh／bash 執行環境選擇語法，不依賴 `git-master` 或個人工具路徑。多行 PR 本文與 title 驗證範例可見 [shell 執行與本文傳遞](skills/push-post-pr/references/shell-execution.md)。可重複使用的 skill 資料夾至少含 SKILL.md、README.md、evals；兩個長文件流程另含 references，詳細檔案與依賴由各 skill README 說明。
+
 ## 倉庫結構
 
 ```text
@@ -94,17 +113,24 @@ skills/
 │   ├── SKILL.md
 │   └── evals/
 │       └── evals.json
-└── agent-process-lifecycle/
-    ├── README.md
-    ├── SKILL.md
-    ├── evals/
-    │   └── evals.json
-    ├── references/
-    │   ├── failure-and-handoff.md
-    │   └── windows-self-managed.md
-    └── scripts/
-        ├── Invoke-AgentProcessLifecycle.ps1
-        └── JobHandleHolder.ps1
+├── agent-process-lifecycle/
+│   ├── README.md
+│   ├── SKILL.md
+│   ├── evals/
+│   │   └── evals.json
+│   ├── references/
+│   │   ├── failure-and-handoff.md
+│   │   └── windows-self-managed.md
+│   └── scripts/
+│       ├── Invoke-AgentProcessLifecycle.ps1
+│       └── JobHandleHolder.ps1
+├── finish-and-admin-merge/
+├── generate-ut-report/
+├── make-function-manual-sop/
+├── push-post-pr/
+├── start-from-matt/
+├── to-spec-or-ticket/
+└── write-design-spec-for-user-confirm/
 ```
 
 - `code-intent-comments` 說明文件：[`skills/code-intent-comments/README.md`](skills/code-intent-comments/README.md)

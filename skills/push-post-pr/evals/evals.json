@@ -1,0 +1,37 @@
+{
+  "skill_name": "push-post-pr",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "請把模擬成果 commit、push、發 PR；其中一項開發還沒完成，也沒有略過確認。",
+      "expected_output": "停止發布並列出未完成項目，不建立不成熟 PR。",
+      "files": [],
+      "expectations": [
+        "沒有 commit 或發布",
+        "列出未完成項目"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "已授權發模擬 PR；本文含中文、反引號、$() 與換行，執行 shell 是 bash。",
+      "expected_output": "使用 bash 分支保留原文字元與 UTF-8，透過 body-file 發布，檢查 exit code 並清理本次暫存檔。",
+      "files": [],
+      "expectations": [
+        "沒有使用 pwsh 語法",
+        "本文不是可執行字串",
+        "核對 PR 本文與 head"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "模擬 PR title 不符合 conventional commits，但 push 已成功；請完成發布。",
+      "expected_output": "先修正並實際驗證 title，核對已有遠端進度後接續，不重複 commit／push。",
+      "files": [],
+      "expectations": [
+        "title 通過後才發布",
+        "沿用已確認進度",
+        "回報未完成 checks"
+      ]
+    }
+  ]
+}

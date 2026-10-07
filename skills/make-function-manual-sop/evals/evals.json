@@ -1,0 +1,38 @@
+{
+  "skill_name": "make-function-manual-sop",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "請替模擬 UAT 功能製作操作手冊：有前後端 tag、查詢權限與實機截圖，只允許查看。",
+      "expected_output": "確認 tag SHA 與目標版本，建立覆蓋矩陣及互動說明，使用實機截圖與可用 renderer 做 QA，不送出資料。",
+      "files": [],
+      "expectations": [
+        "核對版本證據",
+        "說明所有互動與欄位限制",
+        "遵守僅查看授權"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "環境沒有 Word，但有可用的其他 DOCX renderer；請交付 Word 與 PDF 手冊。",
+      "expected_output": "偵測並驗證可用 renderer，取得本次輸出並逐頁檢視，以實際工具名稱回報，不宣稱 Word 渲染。",
+      "files": [],
+      "expectations": [
+        "不強制 Word COM",
+        "單一工具缺少不阻擋其他候選",
+        "以實際 evidence 回報"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "所有模擬 renderer 不可用；DOCX 結構檢查通過，截圖裡有客戶個資。",
+      "expected_output": "先遮罩或處理交付同意，明確揭露缺少渲染 QA，不宣稱版面驗證完成。",
+      "files": [],
+      "expectations": [
+        "處理敏感資料",
+        "揭露未完成 render QA",
+        "核對交付檔存在與大小"
+      ]
+    }
+  ]
+}

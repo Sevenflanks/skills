@@ -1,0 +1,38 @@
+{
+  "skill_name": "generate-ut-report",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "產生 trailer-fee 模組 UT 報告，只列通過項目。尚未提供時間區間；補問後我只回答 202606051800-202606181800。",
+      "expected_output": "合併補答時間與前輪模組／狀態條件，保留完整 rawCriteria，遵循固定契約且不發布 Git 變更。",
+      "files": [],
+      "expectations": [
+        "保留 trailer-fee 與原篩選條件",
+        "讀取固定 HTML 契約",
+        "不 commit 或 push"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "模擬專案只能取得 class-summary，10 個 test case 分屬兩個 class；請遷移報告流程。",
+      "expected_output": "保留 class-summary 規定並揭露列數與 case 數的契約限制，不自行改 Total 或虛報計數一致。",
+      "files": [],
+      "expectations": [
+        "Detail level 為 class-summary",
+        "指出計數限制",
+        "沒有自行修訂契約"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "測試命令無法執行，但有時間與範圍相符的 Surefire XML；請產生 UT 報告。",
+      "expected_output": "解析可用 XML，在 Data Limitations 與固定回覆欄位交代失敗命令、原因及替代來源。",
+      "files": [],
+      "expectations": [
+        "使用 case-level XML 證據",
+        "如實回報 testCommandsExit",
+        "保留八章節與五張 KPI"
+      ]
+    }
+  ]
+}

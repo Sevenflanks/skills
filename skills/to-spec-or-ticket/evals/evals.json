@@ -1,0 +1,38 @@
+{
+  "skill_name": "to-spec-or-ticket",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "需求已收斂，是一個完整可驗收工作；無獨立規格需求，兩個外部流程都可用。",
+      "expected_output": "選 to-tickets，簡短回報理由後載入原文，保留粒度及 blocking edges 核准，不額外建 parent spec。",
+      "files": [],
+      "expectations": [
+        "預設一張票",
+        "載入 to-tickets 原文",
+        "等待其核准後才發布"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "前文有已足夠實作的 issue，現在呼叫 to-spec-or-ticket。",
+      "expected_output": "選第三類，只建議 implement，不重複建票或進入實作。",
+      "files": [],
+      "expectations": [
+        "不修改 issue",
+        "不建立 spec",
+        "不啟動 implement"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "多張票需要共用且獨立維護的規格；to-spec 不可載入，但 to-tickets 可用。",
+      "expected_output": "選 to-spec 並回報缺少依賴，不擅自改選 to-tickets。",
+      "files": [],
+      "expectations": [
+        "回報缺口",
+        "不替換流程",
+        "不發布不完整產物"
+      ]
+    }
+  ]
+}
