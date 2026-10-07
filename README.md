@@ -12,7 +12,7 @@
 | `daily-work-log` | `0.1.4` | stable | 從 OpenCode session、跨 branch git commit 與 GitHub PR / issue 關聯蒐集證據，整理成每日工作日誌。 | [`skills/daily-work-log/`](skills/daily-work-log/) |
 | `gh-body-file` | `0.1.1` | stable | 在 Windows、PowerShell、OpenCode shell 環境中，安全使用 GitHub CLI 支援 `--body-file` 的指令。 | [`skills/gh-body-file/`](skills/gh-body-file/) |
 | `agent-process-lifecycle` | `1.1.1` | stable | 管理可能卡住或跨越 tool call 的本機 process；Windows 同 tool Stop 採當次 owner cleanup 契約，跨 tool Preserve 才需背景返回；缺證據的特殊路由可診斷；non-Windows 僅分類、handoff 或 launch 前 blocked。 | [`skills/agent-process-lifecycle/`](skills/agent-process-lifecycle/) |
-| `finish-and-admin-merge` | `0.1.1` | stable | 依最新 PR、review 與 checks 證據執行已授權的 admin squash merge，並安全收尾 branch／worktree。 | [`skills/finish-and-admin-merge/`](skills/finish-and-admin-merge/) |
+| `finish-and-admin-merge` | `0.1.2` | stable | 依最新 PR、review 與 checks 證據執行已授權的 admin squash merge，並安全收尾 branch／worktree。 | [`skills/finish-and-admin-merge/`](skills/finish-and-admin-merge/) |
 | `generate-ut-report` | `0.1.1` | stable | 依時間區間與自然語言條件，產生有來源證據且格式固定的靜態 UT HTML 報告。 | [`skills/generate-ut-report/`](skills/generate-ut-report/) |
 | `make-function-manual-sop` | `0.1.1` | stable | 以版本、實機畫面與欄位證據製作操作說明書，依可用 renderer 驗證並交付。 | [`skills/make-function-manual-sop/`](skills/make-function-manual-sop/) |
 | `push-post-pr` | `0.1.1` | stable | 確認工作完成後，依授權 commit／push 並發布繁中 PR，核對 title、本文與交付狀態。 | [`skills/push-post-pr/`](skills/push-post-pr/) |

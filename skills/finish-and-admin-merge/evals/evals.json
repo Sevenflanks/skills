@@ -14,12 +14,12 @@
     },
     {
       "id": 2,
-      "prompt": "模擬 PR 的 checks 通過，但 review 只有零 finding，沒有完成的 Approve verdict；能收尾嗎？",
-      "expected_output": "停止 merge，回報 review 證據缺口；不把零 finding 當成 Approve。",
+      "prompt": "模擬 PR 的 checks 通過，但 review 只有零 finding，沒有完成的 Approve 或 Clean verdict；能收尾嗎？",
+      "expected_output": "停止 merge，回報 review 證據缺口；不把零 finding 當成 Approve 或 Clean。",
       "files": [],
       "expectations": [
         "不執行 merge",
-        "指出缺少 Approve verdict"
+        "指出缺少已完成的 Approve 或 Clean verdict"
       ]
     },
     {
@@ -31,6 +31,17 @@
         "保留未知檔案",
         "不因 gitignore 推定可刪除",
         "不推定 cleanup 成功"
+      ]
+    },
+    {
+      "id": 4,
+      "prompt": "請對模擬 PR 執行 admin merge。使用者已授權；review 已完成並對應目前 head，verdict 為 clean，沒有 blocking／must-fix；PR 非 draft、identity 明確、required checks 全數通過。",
+      "expected_output": "接受 clean 作為有效 review verdict，重核最新 head 與 readiness 後執行 admin squash merge，讀回結果並安全收尾。",
+      "files": [],
+      "expectations": [
+        "接受明確的 clean verdict，不要求改成 Approve",
+        "合併前仍核實授權、head、identity、blocking／must-fix 與 checks",
+        "讀回 merge 結果後才宣稱完成"
       ]
     }
   ]

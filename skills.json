@@ -79,7 +79,7 @@
       "name": "finish-and-admin-merge",
       "path": "skills/finish-and-admin-merge",
       "summary": "依最新 PR、review 與 checks 證據執行已授權的 admin squash merge，並安全收尾 branch／worktree。",
-      "version": "0.1.1",
+      "version": "0.1.2",
       "license": "MIT",
       "author": "sevenflankse",
       "tags": [
