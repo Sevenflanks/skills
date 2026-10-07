@@ -1,13 +1,16 @@
 ---
 name: write-design-spec-for-user-confirm
-description: 實作內容已有基礎，需要提供使用者確認功能與操作細節的 -srs Markdown 文件時使用；不混入工程測試清單或內部決策歷程。
+description: 以使用者與 UI 語言，撰寫需求背景、功能與操作流程導向的 -srs Markdown 文件。
 license: MIT
+disable-model-invocation: true
 metadata:
   author: sevenflankse
-  version: 0.1.0
+  version: 0.1.1
 ---
 
 # 使用者確認用設計說明
+
+本 skill 僅限使用者明確觸發，不依需求內容自動選用。
 
 根據本次需求與已有上下文，建立 `<feature>-srs.md`，放在使用者指定或專案既有文件位置。若關鍵功能尚未確定且會影響敘述，精確詢問；不編造操作細節。
 

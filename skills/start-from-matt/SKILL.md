@@ -1,13 +1,16 @@
 ---
 name: start-from-matt
-description: 開始正式任務前，需要根據本次需求或前文判斷適合的 Matt skill／流程時使用；建議流程並直接開始可做的分析。
+description: 透過外部 ask-matt 為本次需求建議流程，先進行分析並保留實作決策邊界。
 license: MIT
+disable-model-invocation: true
 metadata:
   author: sevenflankse
-  version: 0.1.0
+  version: 0.1.1
 ---
 
 # 從 Matt 流程開始
+
+本 skill 僅限使用者明確觸發，不依需求內容自動選用。
 
 1. 取得使用者本次需求；只有 skill 名稱而沒有需求時，使用前文已提出的需求，不另猜新任務。
 2. 分析需求及已知 repo 現況，確認外部 `ask-matt` 可載入，讀取其原文後判斷適合工序。依 runtime 的 skill 目錄或載入機制定位，不硬編碼個人路徑，不複製外部 skill。

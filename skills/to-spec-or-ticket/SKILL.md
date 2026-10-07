@@ -1,13 +1,16 @@
 ---
 name: to-spec-or-ticket
-description: 需求與討論已有基礎，需要判斷並執行 to-spec 或 to-tickets 時使用；保留所選流程的核准點，一次只進行一個階段。
+description: 判斷需求應產生 spec 或 tickets，載入選中流程；不適合時僅提出下一步建議。
 license: MIT
+disable-model-invocation: true
 metadata:
   author: sevenflankse
-  version: 0.1.0
+  version: 0.1.1
 ---
 
 # Spec／ticket 路由
+
+本 skill 僅限使用者明確觸發，不依需求內容自動選用。
 
 輸入為本次使用者需求與相關前文，不依賴 OpenCode 的參數佔位符。
 

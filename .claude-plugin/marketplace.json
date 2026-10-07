@@ -69,7 +69,7 @@
       "name": "finish-and-admin-merge",
       "source": "skills/finish-and-admin-merge",
       "description": "依最新 PR、review 與 checks 證據執行已授權的 admin squash merge，並安全收尾 branch／worktree。",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "keywords": [
         "github",
         "merge",
@@ -81,7 +81,7 @@
       "name": "generate-ut-report",
       "source": "skills/generate-ut-report",
       "description": "依時間區間與自然語言條件，產生有來源證據且格式固定的靜態 UT HTML 報告。",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "keywords": [
         "testing",
         "report",
@@ -93,7 +93,7 @@
       "name": "make-function-manual-sop",
       "source": "skills/make-function-manual-sop",
       "description": "以版本、實機畫面與欄位證據製作操作說明書，依可用 renderer 驗證並交付。",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "keywords": [
         "documentation",
         "manual",
@@ -105,7 +105,7 @@
       "name": "push-post-pr",
       "source": "skills/push-post-pr",
       "description": "確認工作完成後，依授權 commit／push 並發布繁中 PR，核對 title、本文與交付狀態。",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "keywords": [
         "github",
         "pull-request",
@@ -117,7 +117,7 @@
       "name": "start-from-matt",
       "source": "skills/start-from-matt",
       "description": "透過外部 ask-matt 為本次需求建議流程，先進行分析並保留實作決策邊界。",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "keywords": [
         "workflow",
         "routing",
@@ -128,7 +128,7 @@
       "name": "to-spec-or-ticket",
       "source": "skills/to-spec-or-ticket",
       "description": "判斷需求應產生 spec 或 tickets，載入選中流程；不適合時僅提出下一步建議。",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "keywords": [
         "specification",
         "tickets",
@@ -139,7 +139,7 @@
       "name": "write-design-spec-for-user-confirm",
       "source": "skills/write-design-spec-for-user-confirm",
       "description": "以使用者與 UI 語言，撰寫需求背景、功能與操作流程導向的 -srs Markdown 文件。",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "keywords": [
         "documentation",
         "srs",
