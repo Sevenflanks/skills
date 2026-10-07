@@ -5,7 +5,7 @@ license: MIT
 disable-model-invocation: true
 metadata:
   author: sevenflankse
-  version: 0.1.1
+  version: 0.1.2
 ---
 
 # Admin merge 與工作收尾
@@ -18,7 +18,7 @@ metadata:
 
 載入 skill 是取得流程；使用者明確要求 admin merge，才授權對該 PR 合併。這項要求表示不會有第二人／帳號 approve，因此可忽略「必須由第二個帳號 approve」的 gate；其餘 review、blocking finding、checks 與 identity 檢查仍須完成。
 
-先確認目標 repo、PR URL／number、base、head repo／branch／SHA、PR state、draft、review verdict、未解 blocking／must-fix 與 required checks。Review 必須已完成且明確 verdict 為 Approve；沒有 finding 或未成功取得 review 對象不能替代 Approve。無法唯一確認目標時停止並列出缺少的證據。
+先確認目標 repo、PR URL／number、base、head repo／branch／SHA、PR state、draft、review verdict、未解 blocking／must-fix 與 required checks。Review 必須已完成、對應目前 PR head，且明確 verdict 為 `Approve` 或 `Clean`（接受小寫 `clean`）；沒有 finding 或未成功取得 review 對象不能替代明確 verdict。無法唯一確認目標時停止並列出缺少的證據。
 
 ## 執行流程
 

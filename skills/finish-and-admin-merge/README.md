@@ -10,6 +10,8 @@
 
 ## 流程與驗證
 
+支援 `Approve` 與 `Clean`（含小寫 `clean`）審查結果；合併前的授權、head、blocking／must-fix 與 checks 條件依 [SKILL.md](SKILL.md) 核實。
+
 - [SKILL.md](SKILL.md)：觸發範圍、執行流程與完成條件。
 - [evals/evals.json](evals/evals.json)：主要行為與授權邊界的評估情境，使用模擬資料，不操作真實 PR 或正式系統。
 
