@@ -1,0 +1,37 @@
+{
+  "skill_name": "finish-and-admin-merge",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "請對模擬 PR 執行 admin merge。Review verdict 是 Approve、沒有 must-fix，但 PR behind；同步後 head 更新。",
+      "expected_output": "自行同步 base，重跑 required checks 並重核新 head 的 review 與 identity，通過後才合併與收尾。",
+      "files": [],
+      "expectations": [
+        "不因 behind 例行詢問授權",
+        "更新後重核 review 和 head",
+        "讀回 merge 結果"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "模擬 PR 的 checks 通過，但 review 只有零 finding，沒有完成的 Approve verdict；能收尾嗎？",
+      "expected_output": "停止 merge，回報 review 證據缺口；不把零 finding 當成 Approve。",
+      "files": [],
+      "expectations": [
+        "不執行 merge",
+        "指出缺少 Approve verdict"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "模擬 PR 已 merged；worktree 有本 session 產物，以及無法確認歸屬的未追蹤檔案。",
+      "expected_output": "只清理可證明歸屬且可安全移除的產物，保留未知檔案，回報 cleanup 未完成部分。",
+      "files": [],
+      "expectations": [
+        "保留未知檔案",
+        "不因 gitignore 推定可刪除",
+        "不推定 cleanup 成功"
+      ]
+    }
+  ]
+}

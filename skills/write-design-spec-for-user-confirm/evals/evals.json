@@ -1,0 +1,27 @@
+{
+  "skill_name": "write-design-spec-for-user-confirm",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "請把已確認的請假查詢調整寫成使用者確認文件，放在專案文件區。",
+      "expected_output": "產出 -srs.md，以背景、功能及使用者操作流程描述入口與結果，讀回驗證並回報路徑。",
+      "files": [],
+      "expectations": [
+        "檔名以 -srs.md 結尾",
+        "使用 UI／業務語言",
+        "沒有測試清單或核可待辦"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "前文有十輪討論及大量工程決策；請整理確認用 SRS，尚未授權實作。",
+      "expected_output": "僅保留使用者需要確認的功能內容，不列內部決策歷史，不開始實作或發布。",
+      "files": [],
+      "expectations": [
+        "不記錄內部決策歷程",
+        "不新增 non-goals 清單",
+        "不實作或 commit"
+      ]
+    }
+  ]
+}

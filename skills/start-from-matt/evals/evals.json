@@ -1,0 +1,36 @@
+{
+  "skill_name": "start-from-matt",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "只有 start-from-matt；前文是把既有 command 轉成 skills，且要求先分析。",
+      "expected_output": "沿用前文需求，讀取 ask-matt，列出工序並開始分析，不改檔。",
+      "files": [],
+      "expectations": [
+        "不另猜需求",
+        "載入外部 ask-matt",
+        "遵守先分析範圍"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "需求已明確，ask-matt 建議直接 implement，但我還沒決定開始。",
+      "expected_output": "列出理由與建議，停在使用者決定實作的階段。",
+      "files": [],
+      "expectations": [
+        "不開始 implement 或 tdd",
+        "後續改檔使用 worktree"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "執行環境沒有 ask-matt，請建議流程。",
+      "expected_output": "完成可獨立進行的需求分析，回報必要依賴缺口，不假稱依 ask-matt 完成路由。",
+      "files": [],
+      "expectations": [
+        "不冒充 Matt 路由",
+        "不複製或自動安裝外部 skill"
+      ]
+    }
+  ]
+}
