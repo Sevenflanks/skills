@@ -46,6 +46,7 @@ $body = @'
 '@
 try {
     [System.IO.File]::WriteAllText($bodyFile, $body, [System.Text.UTF8Encoding]::new($false))
+    if ([System.IO.File]::ReadAllText($bodyFile) -cne $body) { throw 'PR 本文讀回與原文不同。' }
     gh pr create --repo $repo --base $base --head $branch --title $title --body-file $bodyFile
     $publishExit = $LASTEXITCODE
     if ($publishExit -ne 0) { throw "PR 發布失敗，exit=$publishExit；先讀回確認再重試。" }
@@ -62,11 +63,24 @@ finally {
   body_dir=$(mktemp -d "${TMPDIR:-/tmp}/pr-body.XXXXXX") || exit "$?"
   body_file="$body_dir/body.md"
   trap 'rm -f -- "$body_file"; rmdir -- "$body_dir"' EXIT
-  cat > "$body_file" <<'PR_BODY_LITERAL'
+  body=$(cat <<'PR_BODY_LITERAL'
 ## 測試正文
 保留 `code`、$()、"引號" 與中文。
 第二行：原文不展開。
 PR_BODY_LITERAL
+  )
+  body_exit=$?
+  [ "$body_exit" -eq 0 ] || exit "$body_exit"
+  printf '%s\n' "$body" > "$body_file"
+  write_exit=$?
+  [ "$write_exit" -eq 0 ] || exit "$write_exit"
+  read_body=$(cat -- "$body_file")
+  read_exit=$?
+  [ "$read_exit" -eq 0 ] || exit "$read_exit"
+  if [ "$read_body" != "$body" ]; then
+    printf '%s\n' 'PR 本文讀回與原文不同。' >&2
+    exit 1
+  fi
   gh pr create --repo "$repo" --base "$base" --head "$branch" --title "$title" --body-file "$body_file"
   publish_exit=$?
   exit "$publish_exit"
