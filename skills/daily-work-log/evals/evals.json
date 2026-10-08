@@ -368,7 +368,7 @@
       "prompt": "Codex 指定日期有超過 128 檔與巨大單行，其中前幾筆有有效活動。請整理日誌並顯示實際涵蓋限制。",
       "expected_output": "依固定日期／entry／file／實際 byte cap 有界讀取；巨大單行不經無界 ReadLine，超長或截斷行不解析。保留前面成功活動，partial 明講限制造成的缺口，不擴大搜尋。",
       "files": [],
-      "expectations": ["最多32日期、2048 entries、128 candidates、16 MiB total、2 MiB file、64 KiB line。", "列舉 lazy 達限即停，actual readBytes 不超額。"],
+      "expectations": ["最多32日期、2048 entries、128 candidates，預設64 MiB total／8 MiB file、固定64 KiB line。", "列舉 lazy 達限即停，actual readBytes 不超額；超長行丟棄至 newline 後續讀，丟棄 bytes 仍計額度。"],
       "assertions": ["limitHits 與 coverage counters 可觀察。", "partial 證據可用但不宣稱完整；沒有有效活動時不產生日誌。"]
     },
     {
@@ -378,6 +378,30 @@
       "files": [],
       "expectations": ["全部紀錄入口與 CLI 隔離。", "記錄 output bytes 與量測範圍。", "reference 不作 production fallback。"],
       "assertions": ["增加範圍外歷史後 collection counters 不增加。", "probe 只訪問已知入口第一個 entry，openedFiles/readBytes=0。", "公開 JSON 不包含私人內容或本機 fixture 絕對路徑。"]
+    },
+    {
+      "id": 26,
+      "prompt": "用預設額度整理 Codex 日報；另一次請明確指定 128／16 MiB。若達限，不要自動加碼或重跑，也不要改成無上限。",
+      "expected_output": "預設 CodexTotalBytes=64 MiB／CodexFileBytes=8 MiB，另一次明確傳入 128／16 MiB；probe 與 collection 共用範圍及額度，單行仍固定64 KiB。參數只接受有限正整數 bytes，拒絕無效／無限值。達限保留缺口且不自動重跑。",
+      "files": [],
+      "expectations": ["明確參數調整，不改 days／entries／files／line cap。", "File 額度大於 total 時有效額度仍取剩餘總量較小值。"],
+      "assertions": ["沒有 unlimited 模式、auto retry、cache 或新來源。", "較高額度不被描述為完整涵蓋保證或最佳門檻。"]
+    },
+    {
+      "id": 27,
+      "prompt": "台北指定日期前一天有大量 Codex transcript。另有多日與負時區範圍。額度不足時，請先處理指定時區日期並如實呈現未訪問候選。",
+      "expected_output": "候選日期聯集不變，指定時區的實際日期升序在前、UTC 額外候選升序在後；filesystem 最多32日且 lazy。coverage 的 candidateDays／visitedDays／unvisitedDays 與 stopReason 揭露達限結果，visited 包含不存在或拒絕 partition path，不表示全日列舉。",
+      "files": [],
+      "expectations": ["指定日期不被 UTC 補日前置而餓死。", "未訪問候選為空、candidate-days-exhausted 或 empty 都不代表完整查無活動。"],
+      "assertions": ["complete=false，不擴大 archive／範圍外續行搜尋。", "沒有全歷史列舉、排序或達限自動重跑。"]
+    },
+    {
+      "id": 28,
+      "prompt": "Codex 合成檔案有 UTF8 跨 chunk、BOM／CRLF、超長行前後活動及 byte cap 尾行。請保留可讀 evidence 並說清楚缺口，不要把截斷尾行稱為損壞 JSON。",
+      "expected_output": "4 KiB chunks 與64 KiB line buffer 有界串流，實讀不超過剩餘額度；超長行跳過至 newline 後續讀且每行計一次 oversizedLines。完整壞 UTF8／JSON 留警告及前後 evidence，真正 EOF 可解析無 newline 尾行，capped incomplete tail 不解析。局部 fileBytes／lineBytes 由 limitHits 揭露，全域 stopReason 分開說明，formatter 保留 additive coverage。",
+      "files": [],
+      "expectations": ["所有丟棄 bytes 都計單檔及總額度。", "4／64 KiB buffers 不被宣稱為整個 process 的 hard memory cap。"],
+      "assertions": ["保留既有 partial／failed／empty 語意與前後有效事件。", "合成量測揭露計時與 memory 界線，不宣稱性能 SLA 或真實 workload 已確認。"]
     }
   ]
 }

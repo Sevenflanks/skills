@@ -9,6 +9,10 @@ param(
   [string]$OpenCodeLogRoot,
   [string]$OpenCodeStorageRoot,
   [string]$CodexRoot,
+  [ValidateScript({ $_ -gt 0 -and $_ -le [long]::MaxValue -and $_ -eq [decimal]::Truncate($_) })]
+  [decimal]$CodexTotalBytes = 64MB,
+  [ValidateScript({ $_ -gt 0 -and $_ -le [long]::MaxValue -and $_ -eq [decimal]::Truncate($_) })]
+  [decimal]$CodexFileBytes = 8MB,
   [switch]$ProbeOnly
 )
 
@@ -147,24 +151,42 @@ function Get-CodexFilesBounded {
   # Issue #28：可漏收，不能先掃全歷史再過濾。日期僅定位候選；已讀事件仍以 timestamp 為準。
   $coverage = [pscustomobject][ordered]@{
     complete = $false; strategy = 'date-partitions-no-cache'; archive = 'skipped'
-    limits = [ordered]@{ days = 32; entries = 2048; files = 128; totalBytes = 16777216; fileBytes = 2097152; lineBytes = 65536; pathComponents = 64 }
+    limits = [ordered]@{ days = 32; entries = 2048; files = 128; totalBytes = [long]$CodexTotalBytes; fileBytes = [long]$CodexFileBytes; lineBytes = 65536; pathComponents = 64 }
     daysConsidered = 0; visitedEntries = 0; candidateFiles = 0; openedFiles = 0; readBytes = [long]0
     enumerationFailures = 0; selectedDays = [System.Collections.Generic.List[string]]::new()
+    candidateDays = @(); visitedDays = [System.Collections.Generic.List[string]]::new(); unvisitedDays = @()
+    stopReason = 'candidate-days-exhausted'; oversizedLines = 0
     limitHits = [System.Collections.Generic.HashSet[string]]::new()
     skipped = [System.Collections.Generic.HashSet[string]]::new([string[]]@('archive', 'outside-date-partitions'))
   }
   $Source | Add-Member -NotePropertyName coverage -NotePropertyValue $coverage -Force
   $zone = Resolve-TimeZoneInfo -TimezoneId $Timezone
-  $dates = @($FromRange.UtcDateTime.Date, $ToRange.UtcDateTime.Date,
-    ([TimeZoneInfo]::ConvertTime($FromRange, $zone)).Date, ([TimeZoneInfo]::ConvertTime($ToRange, $zone)).Date)
+  $localFirst = ([TimeZoneInfo]::ConvertTime($FromRange, $zone)).Date
+  $localLast = ([TimeZoneInfo]::ConvertTime($ToRange, $zone)).Date
+  $dates = @($FromRange.UtcDateTime.Date, $ToRange.UtcDateTime.Date, $localFirst, $localLast)
   $first = ($dates | Measure-Object -Minimum).Minimum
   $last = ($dates | Measure-Object -Maximum).Maximum
   $dayCount = [int]($last - $first).TotalDays + 1
+  # 候選聯集不變；先訪問指定時區日期，避免 UTC 補日耗盡額度而漏掉本日。
+  $orderedDays = [System.Collections.Generic.List[string]]::new()
+  $localDayCount = [int]($localLast - $localFirst).TotalDays + 1
+  for ($i = 0; $i -lt $localDayCount; $i++) {
+    $orderedDays.Add($localFirst.AddDays($i).ToString('yyyy/MM/dd', [Globalization.CultureInfo]::InvariantCulture))
+  }
+  for ($i = 0; $i -lt $dayCount; $i++) {
+    $date = $first.AddDays($i)
+    if ($date -lt $localFirst -or $date -gt $localLast) {
+      $orderedDays.Add($date.ToString('yyyy/MM/dd', [Globalization.CultureInfo]::InvariantCulture))
+    }
+  }
+  $coverage.candidateDays = $orderedDays.ToArray()
   if ($dayCount -gt $coverage.limits.days) { $null = $coverage.limitHits.Add('days') }
   $sessionRoot = @($Source.entries)[0].path
   for ($i = 0; $i -lt [Math]::Min($dayCount, $coverage.limits.days); $i++) {
     if ($coverage.visitedEntries -ge $coverage.limits.entries -or $coverage.candidateFiles -ge $coverage.limits.files -or $coverage.readBytes -ge $coverage.limits.totalBytes) { break }
-    $day = $first.AddDays($i).ToString('yyyy/MM/dd', [Globalization.CultureInfo]::InvariantCulture)
+    $day = $orderedDays[$i]
+    # visited 僅表示開始 partition path 檢查；不存在／被拒絕也算，不表示全日列舉完畢。
+    $coverage.visitedDays.Add($day)
     $coverage.daysConsidered++
     $coverage.selectedDays.Add($day)
     $path = Join-Path $sessionRoot $day
@@ -189,6 +211,12 @@ function Get-CodexFilesBounded {
   if ($coverage.visitedEntries -ge $coverage.limits.entries) { $null = $coverage.limitHits.Add('entries') }
   if ($coverage.candidateFiles -ge $coverage.limits.files) { $null = $coverage.limitHits.Add('files') }
   if ($coverage.readBytes -ge $coverage.limits.totalBytes) { $null = $coverage.limitHits.Add('totalBytes') }
+  $coverage.unvisitedDays = $orderedDays.GetRange($coverage.daysConsidered, $dayCount - $coverage.daysConsidered).ToArray()
+  # stopReason 只描述全域 traversal；fileBytes／lineBytes 局部缺口由 limitHits 說明。
+  $coverage.stopReason = if ($coverage.readBytes -ge $coverage.limits.totalBytes) { 'totalBytes' }
+    elseif ($coverage.visitedEntries -ge $coverage.limits.entries) { 'entries' }
+    elseif ($coverage.candidateFiles -ge $coverage.limits.files) { 'files' }
+    elseif ($coverage.unvisitedDays.Count -gt 0) { 'days' } else { 'candidate-days-exhausted' }
 }
 
 function Test-CodexPartitionPath {
@@ -210,44 +238,62 @@ function Test-CodexPartitionPath {
 
 function Read-CodexLinesBounded {
   param([string]$Path, [object]$Coverage, [ref]$ReadFailed)
-  $budget = [int][Math]::Min($Coverage.limits.fileBytes, $Coverage.limits.totalBytes - $Coverage.readBytes)
+  $budget = [long][Math]::Min($Coverage.limits.fileBytes, $Coverage.limits.totalBytes - $Coverage.readBytes)
   if ($budget -le 0) { return }
   $stream = $null
   try {
-    # 直接限制 FileStream.Read 的實際 bytes；不用可能先吞掉巨大單行的 StreamReader.ReadLine。
+    # buffer 與 byte 額度分離：提高額度仍只保留一個 chunk 與一個有限長度行。
     $stream = [IO.FileStream]::new($Path, 'Open', 'Read', ([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete), 1)
     $Coverage.openedFiles++
-    $buffer = [byte[]]::new($budget)
-    $count = 0
-    while ($count -lt $budget) {
-      $read = $stream.Read($buffer, $count, [Math]::Min(4096, $budget - $count))
-      if ($read -eq 0) { break }
-      $count += $read; $Coverage.readBytes += $read
-    }
-    $truncated = $stream.Position -lt $stream.Length
-    if ($truncated) {
-      $null = $Coverage.limitHits.Add($(if ($Coverage.readBytes -ge $Coverage.limits.totalBytes) { 'totalBytes' } else { 'fileBytes' }))
-    }
-    $start = 0
+    $chunk = [byte[]]::new(4096)
+    $lineBuffer = [byte[]]::new($Coverage.limits.lineBytes)
+    $lineCount = 0; $fileRead = [long]0; $discard = $false; $firstLine = $true
     $utf8 = [Text.UTF8Encoding]::new($false, $true)
-    while ($start -lt $count) {
-      $end = [Array]::IndexOf($buffer, [byte]10, $start, $count - $start)
-      if ($end -lt 0) {
-        if ($count - $start -gt $Coverage.limits.lineBytes) { $null = $Coverage.limitHits.Add('lineBytes'); break }
-        if ($truncated) { break } # 未讀完的尾行不解析，避免 partial JSON／UTF-8 偽失敗。
-        $end = $count
-      }
-      if ($end - $start -gt $Coverage.limits.lineBytes) { $null = $Coverage.limitHits.Add('lineBytes'); break }
-      # 解碼失敗只略過該完整行；若拋出例外，foreach 求值會連前段有效 evidence 一起丟失。
-      try { $line = $utf8.GetString($buffer, $start, $end - $start).TrimEnd([char]13) }
-      catch [Text.DecoderFallbackException] {
-        $ReadFailed.Value = $true
+    while ($fileRead -lt $budget) {
+      $read = $stream.Read($chunk, 0, [int][Math]::Min([long]$chunk.Length, $budget - $fileRead))
+      if ($read -eq 0) { break }
+      # 包含超長行的丟棄 bytes；每次 Read 都受單檔與全域剩餘額度限制。
+      $fileRead += $read; $Coverage.readBytes += $read
+      $start = 0
+      while ($start -lt $read) {
+        $end = [Array]::IndexOf($chunk, [byte]10, $start, $read - $start)
+        $hasNewline = $end -ge 0
+        if (-not $hasNewline) { $end = $read }
+        $length = $end - $start
+        if (-not $discard) {
+          if ($lineCount + $length -gt $lineBuffer.Length) {
+            $discard = $true; $lineCount = 0; $Coverage.oversizedLines++
+            $null = $Coverage.limitHits.Add('lineBytes')
+          } else {
+            [Buffer]::BlockCopy($chunk, $start, $lineBuffer, $lineCount, $length)
+            $lineCount += $length
+          }
+        }
+        if ($hasNewline) {
+          if (-not $discard) {
+            try {
+              $line = $utf8.GetString($lineBuffer, 0, $lineCount).TrimEnd([char]13)
+              if ($firstLine) { $line = $line.TrimStart([char]0xfeff) }
+              $line
+            } catch [Text.DecoderFallbackException] { $ReadFailed.Value = $true }
+          }
+          $firstLine = $false; $discard = $false; $lineCount = 0
+        }
         $start = $end + 1
-        continue
       }
-      if ($start -eq 0) { $line = $line.TrimStart([char]0xfeff) }
-      $line
-      $start = $end + 1
+    }
+    # 真正 EOF 才解析無 newline 尾行；達額度的未完整 JSON／UTF8 尾行直接略過。
+    $truncated = $stream.Position -lt $stream.Length
+    if ($fileRead -ge $budget) {
+      if ($Coverage.readBytes -ge $Coverage.limits.totalBytes) { $null = $Coverage.limitHits.Add('totalBytes') }
+      if ($fileRead -ge $Coverage.limits.fileBytes -and $truncated) { $null = $Coverage.limitHits.Add('fileBytes') }
+    }
+    if (-not $truncated -and -not $discard -and $lineCount -gt 0) {
+      try {
+        $line = $utf8.GetString($lineBuffer, 0, $lineCount).TrimEnd([char]13)
+        if ($firstLine) { $line = $line.TrimStart([char]0xfeff) }
+        $line
+      } catch [Text.DecoderFallbackException] { $ReadFailed.Value = $true }
     }
   }
   finally { if ($null -ne $stream) { $stream.Dispose() } }
@@ -269,13 +315,15 @@ function Get-CodexSessionDirectories {
       $validTimedEvents = 0
       $fileFailed = $false
       try {
-        foreach ($line in (Read-CodexLinesBounded -Path $file.FullName -Coverage $Source.coverage -ReadFailed ([ref]$fileFailed))) {
-          if ([string]::IsNullOrWhiteSpace($line)) { continue }
+        # 逐行解析，避免 foreach(expression) 先把整個額度的行 materialize。
+        Read-CodexLinesBounded -Path $file.FullName -Coverage $Source.coverage -ReadFailed ([ref]$fileFailed) | ForEach-Object {
+          $line = $_
+          if ([string]::IsNullOrWhiteSpace($line)) { return }
           try {
             $event = $line | ConvertFrom-Json
             if ($null -eq $event -or -not (Get-ObjectPropertyValue $event 'type')) { throw 'Invalid event' }
           }
-          catch { $fileFailed = $true; continue }
+          catch { $fileFailed = $true; return }
           $type = [string](Get-ObjectPropertyValue $event 'type')
           $payload = Get-ObjectPropertyValue $event 'payload'
           if ($type -eq 'session_meta') {
@@ -294,15 +342,15 @@ function Get-CodexSessionDirectories {
           if ($type -in @('session_meta', 'turn_context')) {
             $path = [string](Get-ObjectPropertyValue $payload 'cwd')
             if ($path) { $cwd = $path }
-            continue
+            return
           }
           $rawTime = Get-ObjectPropertyValue $event 'timestamp'
           try {
             $time = if ($rawTime -is [datetime]) { [datetimeoffset]$rawTime } else { [datetimeoffset]::Parse([string]$rawTime, [System.Globalization.CultureInfo]::InvariantCulture) }
           }
-          catch { $fileFailed = $true; continue }
+          catch { $fileFailed = $true; return }
           $validTimedEvents++
-          if ($time -lt $FromRange -or $time -gt $ToRange) { continue }
+          if ($time -lt $FromRange -or $time -gt $ToRange) { return }
           $payloadType = [string](Get-ObjectPropertyValue $payload 'type')
           $text = $null
           $role = $null
@@ -312,7 +360,7 @@ function Get-CodexSessionDirectories {
           }
           elseif ($type -eq 'response_item' -and $payloadType -eq 'message') {
             $role = [string](Get-ObjectPropertyValue $payload 'role')
-            if ($role -notin @('user', 'assistant')) { continue }
+            if ($role -notin @('user', 'assistant')) { return }
             $text = (@(Get-ObjectPropertyValue $payload 'content') | ForEach-Object {
               [string](Get-ObjectPropertyValue $_ 'text')
             }) -join "`n"
@@ -321,8 +369,8 @@ function Get-CodexSessionDirectories {
             $text = 'tool: ' + [string](Get-ObjectPropertyValue $payload 'name')
             $role = 'tool'
           }
-          if (-not $cwd -or [string]::IsNullOrWhiteSpace($text)) { continue }
-          try { $path = [System.IO.Path]::GetFullPath($cwd) } catch { $fileFailed = $true; continue }
+          if (-not $cwd -or [string]::IsNullOrWhiteSpace($text)) { return }
+          try { $path = [System.IO.Path]::GetFullPath($cwd) } catch { $fileFailed = $true; return }
           $events.Add([pscustomobject]@{
             path = $path; sessionId = $sessionId; text = $text.Trim(); role = $role
             time = $time.ToString('o'); file = $file.FullName
@@ -340,7 +388,7 @@ function Get-CodexSessionDirectories {
 
   $failedCount += $Source.coverage.enumerationFailures
   if (@($Source.entries | Where-Object reason -eq 'unreadable-directory').Count -gt 0) { $failedCount++ }
-  Add-WarningMessage -List $Warnings -Message ('Codex bounded coverage: archive and outside-date partitions skipped; limits={0}; skipped={1}; enumerationFailures={2}; completeness is not guaranteed.' -f ($Source.coverage.limitHits -join ','), ($Source.coverage.skipped -join ','), $Source.coverage.enumerationFailures)
+  Add-WarningMessage -List $Warnings -Message ('Codex bounded coverage: archive and outside-date partitions skipped; limits={0}; skipped={1}; enumerationFailures={2}; stopReason={3}; unvisitedDays={4}; oversizedLines={5}; completeness is not guaranteed.' -f ($Source.coverage.limitHits -join ','), ($Source.coverage.skipped -join ','), $Source.coverage.enumerationFailures, $Source.coverage.stopReason, $Source.coverage.unvisitedDays.Count, $Source.coverage.oversizedLines)
 
   $groups = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::Ordinal)
   foreach ($event in $events) {
