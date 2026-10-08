@@ -4,7 +4,7 @@ description: 整理每日工作日誌或跨 repo 今日工作時使用。先探�
 license: MIT
 metadata:
   author: sevenflankse
-  version: 0.2.0
+  version: 0.3.0
 ---
 
 # Daily Work Log
@@ -45,7 +45,7 @@ Do not use this skill when:
    - The helper defaults to `Asia/Taipei`; override `From`, `To`, or `Timezone` when the user needs another range or timezone.
    - Allow overrides for `From`, `To`, repo source mode, or scan roots when the user asks.
    - Default repo source mode is `session`; fallback or broader discovery can use `scan` or `mixed`.
-   - OpenCode 內部先用 `opencode db --format json`；Codex 另從本機 session／archive 蒐集，兩者可用時一併納入。
+   - OpenCode 內部先用 `opencode db --format json`；Codex 另從本機日期分區有界蒐集，兩者可用時一併納入。
    - If the DB command is unavailable, fails, or returns invalid JSON, fallback order is DB, then `storage/directory-readme`, then OpenCode logs.
    - If the DB query succeeds and returns empty `[]`, treat that as authoritative for session discovery and do not fallback to file-based sources.
    - Default `authorScope` is `current`; broad identity matching uses current-user git config and GitHub viewer evidence when available.
@@ -63,8 +63,8 @@ Do not use this skill when:
    - Keep the script output pure JSON on `stdout`.
    - Do not append human text, markdown, or logging noise to `stdout`.
    - 使用與 probe 相同參數，移除 `-ProbeOnly`；若原先省略時間，將 probe 的 `meta.from`／`to` 明確傳入，固定本次日界線。兩來源皆可用時全數蒐集，正式 collector 自身會重新檢查來源並阻擋無來源／讀取全失敗的呼叫。
-   - Codex 入口為 `-CodexRoot`（否則 `CODEX_HOME`，再否則 `~/.codex`）底下的 `sessions` 與 `archived_sessions`；存在且可讀的入口都納入。
-   - Codex 以 JSONL 事件 `timestamp` 比對範圍，包含跨日續行；檔名日期、建立日或 mtime 不作排除條件。時間範圍含頭尾，預設今天依 `Timezone` 計算。
+   - Codex 入口為 `-CodexRoot`（否則 `CODEX_HOME`，再否則 `~/.codex`）；只直接定位 `sessions/yyyy/MM/dd` 日期分區，`archived_sessions` 僅 probe 可用性，正式蒐集略過並揭露缺口。具體界限與停止策略見下方「Codex 有界涵蓋」。
+   - 對選中並已讀取的 JSONL 事件，以 `timestamp` 比對含頭尾的指定範圍；預設今天依 `Timezone` 計算。選中檔的舊檔名或 mtime 不取代事件時間；日期分區之外的跨日續行可漏收，不宣稱完整涵蓋。
    - collector 合併 event／response 鏡像、同 session ID 續行及父子 session 的精確重播，保留 `sessionIds`／`files`／`timestamps`；不推測自然語意主題。
    - In `session` mode, treat session-derived repo discovery as including both session-start directories and touched external repo evidence that can be resolved to git repo or worktree roots from `permission=external_directory` or `permission=read` log entries.
    - In `session` mode, if a session path is a safe aggregate directory rather than a git repo, the collector expands nested git repos / worktrees using fast `.git` marker discovery.
@@ -76,6 +76,7 @@ Do not use this skill when:
 5. **Inspect collection gaps before writing the summary**
    - 先檢查 `errors`、`meta.canGenerateLog`、`meta.collectionStatus` 與各 `readStatus`。`no-sources`／`read-failed` 停止；`no-activity` 說明來源可讀但沒有當日證據，不能稱為讀取失敗或產生空白工作日誌。
    - `readStatus` 分別為 `unavailable`、`not-read`（probe）、`empty`、`success`、`partial`、`failed`。`partial`／`failed` 或略過來源要指出缺口；有其他成功來源可繼續，不宣稱資料完整。
+   - 檢查 Codex `coverage.complete=false`、`selectedDays`、`limitHits`、`skipped` 與實際訪問／讀取 counters；即使 `success` 或 `empty` 也只代表已選資料。有界空結果不能稱為「完整查過今天沒有工作」。
    - `canGenerateLog=false` 時只說明狀態與原因，不能憑記憶或額外掃描補成日誌。
    - Check `meta.ghAvailable` and `meta.ghViewer`.
    - If GitHub CLI is unavailable or not authenticated, stop before writing the daily log. Tell the user to install `gh` or run `gh auth login`, then rerun collection.
@@ -134,6 +135,20 @@ Treat collector JSON as source of truth:
 - `prs[]`: PR evidence tied to commit / branch / hash relevance; preserve PR and issue numbers when useful.
 - `sessionEvidence[]`：`agent` 區分 `opencode`／`codex`；OpenCode 保留 DB／fallback session 欄位；Codex 保留有限長度 `title`、`role`、`sessionId`、`sessionIds[]`、`files[]`、`timestamps[]`。repo 去重不刪不同 session 證據。
 
+## Codex 有界涵蓋
+
+**允許漏收，但所有首次、重跑與錯誤路徑都禁止全歷史列舉／讀取／解析，包括先全列再 filter。** 採無 cache 的直接日期定位；錯誤只回報缺口，不擴大搜尋。
+
+- 候選日期是起迄時間的 UTC 日期與 `Timezone` 日期之最小至最大值，升序最多 **32 日**；跨時區日界可多選一日。日期只定位目錄，已選事件仍以 timestamp 判範圍。
+- 每日只 lazy 列舉該分區第一層，跨日期共最多 **2,048 entries／128 JSONL 候選檔**。非 JSONL 與子目錄也計 entry；不排序、不展開子目錄，達限即 Dispose，不再呼叫 MoveNext。
+- 每檔最多實際讀 **2 MiB**，每次 collection 共 **16 MiB**；FileStream.Read 以 **4 KiB** chunks 讀入有限 buffer，不用無界 ReadLine。完整單行上限 **64 KiB**；超長行停止該檔後續解析，未讀完的尾行略過，完整且損壞的 JSON 仍是讀取失敗。達總 byte cap 停止後續候選搜尋。
+- 固定日期路徑最多檢查 **64 個 ancestor components**，拒絕 junction／reparse points；分區內巢狀目錄與 archive 都略過。檔案順序沿用 filesystem，不保證取到最新檔；恰好達 entries／files／totalBytes cap 也保守揭露限制。
+- `meta.sources.codex.coverage` 回報 `limits`、`daysConsidered`、`selectedDays`、`visitedEntries`、`candidateFiles`、`openedFiles`、`readBytes`、`enumerationFailures`、`limitHits`、`skipped`，固定 `complete=false`／`strategy=date-partitions-no-cache`／`archive=skipped`。Counters 是 application-level MoveNext 與實際 FileStream.Read bytes，不代表 OS metadata／prefetch I/O。
+- `probeWork` 分開記已知入口檢查數與成功 MoveNext 數；最多檢查兩入口、各消耗一 entry，`openedFiles=0`／`readBytes=0`。probe 沒有 collection coverage，不能推論當日活動。
+- 有事件且達限時為 `partial`；無事件且無損壞時保留 `empty`／`no-activity`；選中事件全失敗保留 `failed`／`read-failed`。Archive 被略過本身不算解析失敗，所有結果仍須說明不完整。
+
+這組保守上限保留一個月與日界範圍，限制大量候選及 transcript 記憶體負擔；合成 fixture 驗證 cap 與舊歷史增量的工作量不變。它們不是 latency SLA；量測與可測範圍見 [`README.md`](README.md#有界驗證與量測)。
+
 ## Optional evidence compaction
 
 For high-volume evidence, pipe collector JSON through `scripts/format-daily-work-log-evidence.ps1`. It reads collector JSON from stdin, emits pure JSON, preserves `meta`, `warnings`, `errors`, and returns compact repo evidence: `name`, `githubRepo`, `commitCount`, `shownCommits`, `prs`, `lowSignalPrRefs`, `sessionEvidence`, `warnings`.
@@ -154,7 +169,7 @@ When a repo has many commits, summarize themes instead of dumping commits. Use c
 - Helper script output is valid JSON only.
 - 正式蒐集前已完成 probe 與對話來源預告；無來源或讀取全失敗時停止，不產生日誌。
 - CLI 不存在但紀錄可讀仍可用；所有可用來源一併蒐集，partial coverage 明講缺口。
-- Codex session／archive 使用事件 timestamp；跨日、父子與續行去重保留證據；跨來源相同主題由 agent 合併。
+- Codex 使用有界日期分區，已選事件依 timestamp；archive／範圍外續行明確略過。已選父子／續行去重保留證據；跨來源相同主題由 agent 合併。
 - When the user does not provide a clear time range, the helper resolves the range to today in the configured timezone.
 - Git history collection uses `git log --all`; do not limit to current branch.
 - `scan` / `mixed` repo discovery must cover git worktrees as well as normal repos.

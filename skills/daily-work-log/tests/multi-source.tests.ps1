@@ -5,7 +5,7 @@ param([string]$Case = 'probe', [string]$EvidenceRoot)
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 if ($Case -eq 'all') {
-  foreach ($name in @('probe', 'guard', 'empty-failed', 'codex', 'partial', 'opencode', 'merge', 'formatter', 'read-failures', 'archive-only', 'db-fallback', 'source-isolation', 'timestamp-failure', 'valid-empty-events', 'timestamp-partial', 'empty-sibling-failures', 'all-empty-entries', 'opencode-empty-sibling-failures', 'opencode-empty-authority')) {
+  foreach ($name in @('bounded-scope', 'probe', 'guard', 'empty-failed', 'codex', 'partial', 'opencode', 'merge', 'formatter', 'read-failures', 'archive-only', 'selected-native-parent', 'db-fallback', 'source-isolation', 'timestamp-failure', 'valid-empty-events', 'timestamp-partial', 'empty-sibling-failures', 'all-empty-entries', 'opencode-empty-sibling-failures', 'opencode-empty-authority')) {
     & $PSCommandPath -Case $name -EvidenceRoot $EvidenceRoot
   }
   return
@@ -35,7 +35,7 @@ function Invoke-Json([switch]$Probe, [string]$Mode = 'session') {
   Assert (@($data.errors).Count -eq 0) ('collector errors: ' + ($data.errors -join '; '))
   return $data
 }
-function Add-Codex([string]$File = 'sessions\2020\old.jsonl', [string]$Id = 'parent', [string]$Parent = '', [string]$Time = '2026-05-29T02:00:00Z', [string]$Text = '修正合成登入流程') {
+function Add-Codex([string]$File = 'sessions\2026\05\29\old-name.jsonl', [string]$Id = 'parent', [string]$Parent = '', [string]$Time = '2026-05-29T02:00:00Z', [string]$Text = '修正合成登入流程') {
   $lines = @(
     @{timestamp='2020-01-01T00:00:00Z'; type='session_meta'; payload=@{id=$Id; cwd="$root\repo"; forked_from_id=$Parent}},
     @{timestamp=$Time; type='event_msg'; payload=@{type='user_message'; message=$Text}},
@@ -70,6 +70,16 @@ exit 1
   Write-Fixture "$root\bin\gh.ps1" $stub
 
   switch ($Case) {
+    'bounded-scope' {
+      Add-Codex -File 'sessions\2026\05\29\old-name.jsonl'
+      Add-Codex -File 'archived_sessions\child.jsonl' -Id child -Parent parent
+      $data = Invoke-Json
+      Assert ($null -ne $data.meta.sources.codex.PSObject.Properties['coverage']) 'bounded coverage missing'
+      Assert (-not $data.meta.sources.codex.coverage.complete) 'bounded source claimed complete'
+      Assert ($data.meta.sources.codex.coverage.archive -eq 'skipped') 'archive not explicitly skipped'
+      Assert ($data.meta.sources.codex.coverage.visitedEntries -eq 1) 'archive or other history enumerated'
+      Assert (@($data.repos[0].sessionEvidence[0].files).Count -eq 1) 'unselected archive included'
+    }
     'probe' {
       foreach ($combination in @('none', 'opencode', 'codex', 'both')) {
         if ($combination -in @('opencode', 'both')) { $null = [IO.Directory]::CreateDirectory("$root\logs") }
@@ -106,7 +116,7 @@ exit 1
       $data = Invoke-Json
       Assert ($data.meta.sources.codex.readStatus -eq 'empty') 'empty source classified as failure'
       Assert ($data.meta.collectionStatus -eq 'no-activity') 'empty activity status missing'
-      Write-Fixture "$root\codex\sessions\bad.jsonl" '{broken'
+      Write-Fixture "$root\codex\sessions\2026\05\29\bad.jsonl" '{broken'
       $data = Invoke-Json -Mode mixed
       Assert ($data.meta.sources.codex.readStatus -eq 'failed') 'malformed source classified as empty'
       Assert ($data.meta.collectionStatus -eq 'read-failed') 'all read failures must stop'
@@ -115,17 +125,17 @@ exit 1
     }
     'codex' {
       Add-Codex
-      Add-Codex -File 'archived_sessions\child.jsonl' -Id child -Parent parent
-      Add-Codex -File 'sessions\resume.jsonl'
-      Add-Codex -File 'sessions\outside.jsonl' -Id outside -Time '2026-05-28T15:59:59Z'
-      Add-Codex -File 'sessions\tomorrow.jsonl' -Id tomorrow -Time '2026-05-29T16:00:00Z'
+      Add-Codex -File 'sessions\2026\05\28\child.jsonl' -Id child -Parent parent
+      Add-Codex -File 'sessions\2026\05\29\resume.jsonl'
+      Add-Codex -File 'sessions\2026\05\29\outside.jsonl' -Id outside -Time '2026-05-28T15:59:59Z'
+      Add-Codex -File 'sessions\2026\05\29\tomorrow.jsonl' -Id tomorrow -Time '2026-05-29T16:00:00Z'
       $data = Invoke-Json
       Assert ($data.meta.sources.codex.readStatus -eq 'success') 'Codex not collected'
       Assert (@($data.repos).Count -eq 1) 'repo not deduplicated'
       $evidence = @($data.repos[0].sessionEvidence)
       Assert ($evidence.Count -eq 1) 'parent/continuation duplicate topic'
       Assert (@($evidence[0].sessionIds).Count -eq 2) 'parent/child evidence lost'
-      Assert (@($evidence[0].files).Count -eq 3) 'archive/resume evidence lost'
+      Assert (@($evidence[0].files).Count -eq 3) 'selected parent/resume evidence lost'
       Assert ($evidence[0].title -eq '修正合成登入流程') 'topic evidence missing'
       $compact = (($data | ConvertTo-Json -Depth 12) | & $pwsh -NoProfile -File $formatter) | ConvertFrom-Json
       Assert (@($compact.errors).Count -eq 0) 'formatter incompatible'
@@ -133,7 +143,7 @@ exit 1
     }
     'partial' {
       Add-Codex
-      Write-Fixture "$root\codex\archived_sessions\bad.jsonl" '{broken'
+      Write-Fixture "$root\codex\sessions\2026\05\29\bad.jsonl" '{broken'
       Add-OpenCode -Fail
       $data = Invoke-Json
       Assert ($data.meta.sources.opencode.readStatus -eq 'failed') 'OpenCode failure missing'
@@ -177,7 +187,7 @@ exit 1
     }
     'read-failures' {
       Add-Codex
-      $locked = [IO.File]::Open("$root\codex\sessions\2020\old.jsonl", 'Open', 'ReadWrite', 'None')
+      $locked = [IO.File]::Open("$root\codex\sessions\2026\05\29\old-name.jsonl", 'Open', 'ReadWrite', 'None')
       try {
         $probe = Invoke-Json -Probe
         Assert ($probe.meta.sources.codex.available) 'probe attempted to read locked transcripts'
@@ -198,8 +208,15 @@ exit 1
     }
     'archive-only' {
       Add-Codex -File 'archived_sessions\only.jsonl' -Id child -Parent parent -Time '2026-05-28T16:00:00Z'
-      Add-Codex -File 'archived_sessions\native-child.jsonl' -Id native -Time '2026-05-29T15:59:59Z'
-      $nativeFile = "$root\codex\archived_sessions\native-child.jsonl"
+      $data = Invoke-Json
+      Assert ($data.meta.sources.codex.available -and $data.meta.sources.codex.readStatus -eq 'empty') 'archive-only probe/empty distinction lost'
+      Assert ($data.meta.sources.codex.coverage.archive -eq 'skipped' -and $data.meta.sources.codex.coverage.openedFiles -eq 0) 'archive gap not bounded'
+      Assert (-not $data.meta.canGenerateLog -and -not (Test-Path "$root\calls.txt")) 'archive-only invented work or scanned Git/gh'
+    }
+    'selected-native-parent' {
+      Add-Codex -File 'sessions\2026\05\28\only.jsonl' -Id child -Parent parent -Time '2026-05-28T16:00:00Z'
+      Add-Codex -File 'sessions\2026\05\29\native-child.jsonl' -Id native -Time '2026-05-29T15:59:59Z'
+      $nativeFile = "$root\codex\sessions\2026\05\29\native-child.jsonl"
       $lines = [IO.File]::ReadAllLines($nativeFile)
       $meta = $lines[0] | ConvertFrom-Json
       $meta.payload | Add-Member -NotePropertyName source -NotePropertyValue @{subagent=@{thread_spawn=@{parent_thread_id='parent'}}}
@@ -209,7 +226,7 @@ exit 1
       Assert ($data.meta.sources.codex.available) 'archive-only unavailable'
       Assert (@($data.repos[0].sessionEvidence).Count -eq 1) 'native parent metadata not deduplicated'
       Assert (@($data.repos[0].sessionEvidence[0].timestamps).Count -eq 2) 'inclusive timezone boundaries lost'
-      Assert (@($data.repos[0].sessionEvidence[0].sessionIds).Count -eq 2) 'archive parent evidence lost'
+      Assert (@($data.repos[0].sessionEvidence[0].sessionIds).Count -eq 2) 'selected native parent evidence lost'
     }
     'db-fallback' {
       Write-Fixture "$root\logs\fallback.log" "INFO  2026-05-29T10:00:00 +1ms service=default directory=$root\repo creating instance"
@@ -243,7 +260,7 @@ exit 1
           $lines += (@{timestamp='2026-05-29T02:00:00Z'; type='session_meta'; payload=@{id='synthetic'; cwd="$root\repo"}} | ConvertTo-Json -Depth 5 -Compress)
         }
         $lines += $badEvent
-        Write-Fixture "$root\codex\sessions\bad-time.jsonl" ($lines -join "`n")
+        Write-Fixture "$root\codex\sessions\2026\05\29\bad-time.jsonl" ($lines -join "`n")
         foreach ($mode in @('scan', 'mixed', 'session')) {
           $data = Invoke-Json -Mode $mode
           Assert ($data.meta.sources.codex.readStatus -eq 'failed') "bad activity timestamp escaped failure (metadata=$withMetadata, mode=$mode)"
@@ -259,7 +276,7 @@ exit 1
       $context = @{timestamp='2026-05-29T02:00:00Z'; type='turn_context'; payload=@{cwd="$root\repo"}} | ConvertTo-Json -Depth 5 -Compress
       $telemetry = @{timestamp='2026-05-29T02:00:00Z'; type='event_msg'; payload=@{type='token_count'; info=@{total_token_usage=@{input_tokens=10}}}} | ConvertTo-Json -Depth 6 -Compress
       foreach ($content in @('', $meta, ($meta + "`n" + $context), ($meta + "`n" + $telemetry))) {
-        Write-Fixture "$root\codex\sessions\empty-session.jsonl" $content
+        Write-Fixture "$root\codex\sessions\2026\05\29\empty-session.jsonl" $content
         $data = Invoke-Json
         Assert ($data.meta.sources.codex.readStatus -eq 'empty') 'valid empty/metadata/non-activity session treated as failure'
         Assert ($data.meta.collectionStatus -eq 'no-activity') 'valid empty session lost no-activity status'
@@ -270,7 +287,7 @@ exit 1
     'timestamp-partial' {
       Add-Codex -Time broken
       $validEvent = @{timestamp='2026-05-29T02:00:00Z'; type='event_msg'; payload=@{type='agent_message'; message='已完成合成修正'}} | ConvertTo-Json -Depth 5 -Compress
-      [IO.File]::AppendAllText("$root\codex\sessions\2020\old.jsonl", "`n" + $validEvent)
+      [IO.File]::AppendAllText("$root\codex\sessions\2026\05\29\old-name.jsonl", "`n" + $validEvent)
       $data = Invoke-Json
       Assert ($data.meta.sources.codex.readStatus -eq 'partial') 'valid different event could not preserve partial result'
       Assert ($data.meta.canGenerateLog) 'valid activity blocked by bad sibling timestamp'
@@ -283,8 +300,8 @@ exit 1
     }
     'empty-sibling-failures' {
       $meta = @{timestamp='2026-05-29T02:00:00Z'; type='session_meta'; payload=@{id='empty'; cwd="$root\repo"}} | ConvertTo-Json -Depth 5 -Compress
-      foreach ($failedEntry in @('sessions', 'archived_sessions')) {
-        $emptyEntry = if ($failedEntry -eq 'sessions') { 'archived_sessions' } else { 'sessions' }
+      foreach ($failedEntry in @('sessions\2026\05\28', 'sessions\2026\05\29')) {
+        $emptyEntry = if ($failedEntry -eq 'sessions\2026\05\28') { 'sessions\2026\05\29' } else { 'sessions\2026\05\28' }
         foreach ($failure in @('bad', 'locked')) {
           foreach ($sibling in @('directory', 'file', 'metadata')) {
             if (Test-Path "$root\codex") { [IO.Directory]::Delete("$root\codex", $true) }
@@ -316,7 +333,7 @@ exit 1
         $null = [IO.Directory]::CreateDirectory("$root\codex\sessions")
         $null = [IO.Directory]::CreateDirectory("$root\codex\archived_sessions")
         if ($content -ne 'directory') {
-          Write-Fixture "$root\codex\sessions\empty.jsonl" $(if ($content -eq 'metadata') { $meta } else { '' })
+          Write-Fixture "$root\codex\sessions\2026\05\29\empty.jsonl" $(if ($content -eq 'metadata') { $meta } else { '' })
           Write-Fixture "$root\codex\archived_sessions\empty.jsonl" ''
         }
         $data = Invoke-Json
