@@ -4,7 +4,7 @@
     {
       "id": 1,
       "prompt": "幫我整理今天的工作日誌。來源請從 OpenCode session 實際進過的 repo 開始，commit 不要限制 branch，再用 gh 補 PR 跟 closing issue，最後優先按 GitHub repo name 分組，每條盡量 30 字內。",
-      "expected_output": "先要求使用 PowerShell helper 產出 pure JSON，再依 JSON 結果優先輸出按 GitHub repo name 分組的工作日誌；缺少 githubRepo 時才 fallback 到 repo folder name，並明確要求 git log --all 與 gh 補 PR / issue 關聯。",
+      "expected_output": "先以 PowerShell helper -ProbeOnly 產出 pure JSON，向使用者預告來源與略過理由後正式蒐集，再依 JSON 優先按 GitHub repo name 分組；保留 git log --all 與相關 gh PR／issue 補證。",
       "files": [],
       "expectations": [
         "使用 skill 內的 PowerShell helper，而不是手動拼湊資料來源。",
@@ -297,6 +297,63 @@
         "Repos with session evidence but no current-user commits are summarized as one short work-log bullet when evidence is sufficient.",
         "The response does not claim that the collector generated the natural-language summary."
       ]
+    },
+    {
+      "id": 17,
+      "prompt": "幫我整理今天工作日誌。OpenCode 與 Codex CLI 都沒有安裝，但 OpenCode log 和 Codex sessions 可讀。兩邊都記錄了同 repo 的登入修正。",
+      "expected_output": "先執行同一 collector -ProbeOnly，再向使用者預告兩來源都可用，即使沒有 CLI 也會合併本機紀錄；正式 collection 後同 repo／工作主題只寫一條，保留兩來源證據。",
+      "files": [],
+      "expectations": [
+        "先 probe → 在對話預告 → 正式 collect，stdout 保持純 JSON。",
+        "CLI 不存在但本機紀錄可讀時仍使用該來源，兩來源均可用就合併。",
+        "相同 repo／工作主題跨來源只輸出一條，保留各來源證據。",
+        "不自動安裝或登入 CLI、不讀 auth／config 或完整私人對話作公開內容。"
+      ],
+      "assertions": [
+        "正式 collection 發生於來源預告之後。",
+        "合併使用 OpenCode 與 Codex，而非固定選其中一個來源。",
+        "同一主題沒有重複工作 bullet，沒有虛構 NLP collector。"
+      ]
+    },
+    {
+      "id": 18,
+      "prompt": "OpenCode 與 Codex 都沒有可讀紀錄，CLI 也不存在。我有一些 repo 在專案根目錄，請整理今天工作日誌。",
+      "expected_output": "probe 後說明兩來源不可用原因並停止；不掃 Git／GitHub 補成日誌，不產生日誌。直接呼叫正式 collector 也受無來源 guard 保護。",
+      "files": [],
+      "expectations": ["說明各來源略過理由。", "沒有來源時不執行 Git／GitHub 掃描或額外來源。"],
+      "assertions": ["沒有工作日誌 bullets。", "不把 repo 存在當成來源可用，也不自動安裝或登入。"]
+    },
+    {
+      "id": 19,
+      "prompt": "Probe 顯示 Codex sessions 入口可讀，正式讀取時所有檔案都損壞或鎖住；OpenCode 不可用。請整理今天工作日誌。",
+      "expected_output": "區分入口可用性與正式 read-failed，停止並說明原因；不能當成沒有今日活動，也不能繼續 Git／GitHub 湊日誌。",
+      "files": [],
+      "expectations": ["正式 collection 自身 guard，不能只依 probe 推論成功。", "讀取全失敗與 empty／no-activity 明確區分。"],
+      "assertions": ["不產生日誌、不掃 Git／GitHub。", "使用者知道來源入口可用但讀取失敗。"]
+    },
+    {
+      "id": 20,
+      "prompt": "Codex 今天有一份昨天開啟、mtime 也是昨天的 session，事件 timestamp 落在今日台北時區；archived_sessions 裡有父子重播及同 ID 續行。請整理日誌。",
+      "expected_output": "正式蒐集包含 sessions 與 archived_sessions，依事件 timestamp／指定時區範圍納入跨日續行，不以檔名或 mtime 排除；父子／續行去重並保留 sessionIds、files 與 timestamps。",
+      "files": [],
+      "expectations": ["存在且可讀的 session／archive 都納入。", "事件 timestamp 是範圍判斷依據。", "去重不刪父子／續行來源證據。"],
+      "assertions": ["昨日檔名／mtime 不導致漏掉今日事件。", "相同工作不重複列出，範圍外事件不納入。"]
+    },
+    {
+      "id": 21,
+      "prompt": "OpenCode DB 失敗且所有 fallback 讀不到；Codex 有可讀當日活動，但 archive 有一份壞檔。請整理日誌並明講缺口。",
+      "expected_output": "正式 collection 使用 Codex 成功部分，揭露 OpenCode failed 與 Codex partial 的缺口；不宣稱完整。formatter 保留來源 metadata 與所有 session 證據，gh 預設停止／降級契約仍適用。",
+      "files": [],
+      "expectations": ["使用其他已驗證的來源，不因單一來源失敗停止所有蒐集。", "說明哪個來源 failed／partial，而非籠統稱沒有活動。"],
+      "assertions": ["日誌只引用成功讀取的證據。", "缺口明確且沒有宣稱資料完整。"]
+    },
+    {
+      "id": 22,
+      "prompt": "OpenCode DB 成功回 []，Codex 可讀但指定範圍內也沒有事件；舊 logs 有其他 repo 線索。請整理日誌。",
+      "expected_output": "保留 OpenCode DB 成功空 [] 不 fallback；Codex 為 empty，正式 collection 為 no-activity，說明可讀但無範圍內活動，不宣稱來源失敗或用舊 log／GitHub 湊日誌。",
+      "files": [],
+      "expectations": ["DB 空結果仍具權威性。", "來源可用與當日有活動分開表達。"],
+      "assertions": ["沒有來源失敗的錯誤宣稱。", "不使用舊 log 湊 repo 或產生工作日誌。"]
     }
   ]
 }

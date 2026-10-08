@@ -1,22 +1,22 @@
 ---
 name: daily-work-log
-description: Use when the user wants a daily work log, wants today's work summarized from OpenCode sessions, git commits, PRs, or issues, or asks what was worked on across repos in Windows/OpenCode. Helps agents collect session-derived repos, gather cross-branch git history, supplement PR and closing-issue context with GitHub CLI, then compress everything into grouped daily log bullets.
+description: 整理每日工作日誌或跨 repo 今日工作時使用。先探測 OpenCode／Codex 可用來源並預告，再合併本機 session、跨 branch Git 與相關 GitHub PR／issue 證據，輸出主題分組日誌。
 license: MIT
 metadata:
   author: sevenflankse
-  version: 0.1.4
+  version: 0.2.0
 ---
 
 # Daily Work Log
 
-This skill turns local OpenCode activity, cross-branch git history, and GitHub PR context into a concise daily work log. Keep collection deterministic: use the bundled PowerShell helper to emit pure JSON first, then convert that JSON into the final human-readable log.
+將本機 OpenCode／Codex 活動、跨 branch Git 與 GitHub PR 證據整理成精簡日誌。同一 PowerShell collector 先輸出 probe JSON，再輸出 collection JSON；來源預告與最終摘要由 agent 在對話提供。
 
 ## When to use
 
 Use this skill when:
 
 - The user asks for a daily work log, work journal, standup summary, or asks what was done today.
-- The user wants work summarized from OpenCode sessions, git commits, PRs, or issues.
+- 使用者希望從 OpenCode 或 Codex sessions、git commits、PRs 或 issues 整理工作。
 - The user needs repo-grouped bullets such as `owner/repo`, `repo-a`, or similar repository sections.
 - The environment is Windows / PowerShell / OpenCode and repeatable local evidence collection matters.
 
@@ -28,7 +28,7 @@ Do not use this skill when:
 
 ## Core rule
 
-Do not hand-assemble repo, commit, or PR data from memory. Run the helper script first and treat its JSON as the source of truth. In `session` source mode, repo discovery queries `opencode db --format json` for session evidence first. If GitHub CLI is unavailable or unauthenticated, stop and recommend installing or logging into `gh` unless the user strongly insists on degraded output. If repo discovery is partial, report the gap explicitly instead of guessing.
+以 collector JSON 作為證據，先 probe → 向使用者預告來源與略過原因 → 正式 collect。OpenCode 與 Codex 都可用時兩者合併，沒有來源優先順序。來源皆不可用或正式讀取皆失敗時停止，說明原因；不掃 Git／GitHub 湊日誌，也不輸出工作日誌。若 GitHub CLI 不可用或未認證，沿用既有預設停止規則；使用者強烈要求降級時才繼續並說明補證缺口。CLI 安裝或登入只能建議，不自動執行。
 
 ## Workflow
 
@@ -45,16 +45,27 @@ Do not hand-assemble repo, commit, or PR data from memory. Run the helper script
    - The helper defaults to `Asia/Taipei`; override `From`, `To`, or `Timezone` when the user needs another range or timezone.
    - Allow overrides for `From`, `To`, repo source mode, or scan roots when the user asks.
    - Default repo source mode is `session`; fallback or broader discovery can use `scan` or `mixed`.
-   - In `session` mode, the helper asks `opencode db --format json` for session evidence before reading any file-based OpenCode sources.
+   - OpenCode 內部先用 `opencode db --format json`；Codex 另從本機 session／archive 蒐集，兩者可用時一併納入。
    - If the DB command is unavailable, fails, or returns invalid JSON, fallback order is DB, then `storage/directory-readme`, then OpenCode logs.
    - If the DB query succeeds and returns empty `[]`, treat that as authoritative for session discovery and do not fallback to file-based sources.
    - Default `authorScope` is `current`; broad identity matching uses current-user git config and GitHub viewer evidence when available.
    - If the current identity cannot be resolved, the helper warns and falls back to all authors instead of silently pretending current-user filtering happened.
 
-3. **Run the bundled collector**
+3. **先 probe 並預告來源**
+   - 使用 `scripts/collect-daily-work-log.ps1 -ProbeOnly`，傳入本次相同 `From`／`To`／`Timezone`、來源入口覆寫與 repo mode。
+   - 讀取 `meta.sources.opencode`／`codex` 的 `available`、`cliAvailable`、`reason`、`entries`，在對話先預告本次使用的來源與每個略過理由，例如：「本次合併 OpenCode 與 Codex；Codex CLI 不存在，但本機紀錄可讀。」
+   - probe 只檢查已知紀錄入口與 command 存在；不掃完整歷史、不啟動 CLI、不讀 auth、config 或 secrets。入口可讀不代表有當日活動，也不保證正式讀取成功。
+   - 任一來源有可讀本機紀錄，即使沒有 CLI 也可使用。OpenCode CLI 可供非互動式 DB 查詢；Codex 只有 CLI、沒有可讀紀錄時略過。
+   - 若兩者 `available=false`，說明各來源原因後結束。即使使用者要求 `scan`／`mixed` 也遵守此停止條件。
+
+4. **Run the bundled collector**
    - Use `skills/daily-work-log/scripts/collect-daily-work-log.ps1`.
    - Keep the script output pure JSON on `stdout`.
    - Do not append human text, markdown, or logging noise to `stdout`.
+   - 使用與 probe 相同參數，移除 `-ProbeOnly`；若原先省略時間，將 probe 的 `meta.from`／`to` 明確傳入，固定本次日界線。兩來源皆可用時全數蒐集，正式 collector 自身會重新檢查來源並阻擋無來源／讀取全失敗的呼叫。
+   - Codex 入口為 `-CodexRoot`（否則 `CODEX_HOME`，再否則 `~/.codex`）底下的 `sessions` 與 `archived_sessions`；存在且可讀的入口都納入。
+   - Codex 以 JSONL 事件 `timestamp` 比對範圍，包含跨日續行；檔名日期、建立日或 mtime 不作排除條件。時間範圍含頭尾，預設今天依 `Timezone` 計算。
+   - collector 合併 event／response 鏡像、同 session ID 續行及父子 session 的精確重播，保留 `sessionIds`／`files`／`timestamps`；不推測自然語意主題。
    - In `session` mode, treat session-derived repo discovery as including both session-start directories and touched external repo evidence that can be resolved to git repo or worktree roots from `permission=external_directory` or `permission=read` log entries.
    - In `session` mode, if a session path is a safe aggregate directory rather than a git repo, the collector expands nested git repos / worktrees using fast `.git` marker discovery.
    - The default author scope is the current user. Commits and PRs from other authors are excluded unless they are release / deploy bot commits with PR-chain evidence back to current-user work.
@@ -62,7 +73,10 @@ Do not hand-assemble repo, commit, or PR data from memory. Run the helper script
    - The collector preserves session-derived evidence with source `session-expanded` when a safe aggregate directory contributes nested repo / worktree matches.
    - The PowerShell collector does not generate natural-language summaries. The agent writes any one-line session summary from `sessionEvidence`.
 
-4. **Inspect collection gaps before writing the summary**
+5. **Inspect collection gaps before writing the summary**
+   - 先檢查 `errors`、`meta.canGenerateLog`、`meta.collectionStatus` 與各 `readStatus`。`no-sources`／`read-failed` 停止；`no-activity` 說明來源可讀但沒有當日證據，不能稱為讀取失敗或產生空白工作日誌。
+   - `readStatus` 分別為 `unavailable`、`not-read`（probe）、`empty`、`success`、`partial`、`failed`。`partial`／`failed` 或略過來源要指出缺口；有其他成功來源可繼續，不宣稱資料完整。
+   - `canGenerateLog=false` 時只說明狀態與原因，不能憑記憶或額外掃描補成日誌。
    - Check `meta.ghAvailable` and `meta.ghViewer`.
    - If GitHub CLI is unavailable or not authenticated, stop before writing the daily log. Tell the user to install `gh` or run `gh auth login`, then rerun collection.
    - Continue without GitHub evidence only when the user strongly insists on a degraded report. In that case, state the PR / issue supplement gap explicitly in the final notes.
@@ -71,7 +85,7 @@ Do not hand-assemble repo, commit, or PR data from memory. Run the helper script
    - Only include paths that resolve to git repo or worktree roots. Surface skipped or unresolved paths through warnings or final notes.
    - Treat PR supplement as relevant only when it can be tied back to the day's commit / branch / hash evidence; do not attach every updated PR from the same repo.
 
-5. **Summarize by GitHub repo name**
+6. **Summarize by GitHub repo name**
    - Group by GitHub repo name from `repos[].githubRepo` first, such as `owner/repo`.
    - If `githubRepo` is unavailable for a repo, fall back to `repos[].name` repo folder name.
    - Never use absolute paths as final group headings.
@@ -81,8 +95,10 @@ Do not hand-assemble repo, commit, or PR data from memory. Run the helper script
    - Each bullet should be understandable on its own. A reader should understand what changed without needing the previous bullet as context.
    - If a bullet only makes sense together with neighboring bullets, merge them into one clearer sentence or drop the weaker fragment.
    - Keep separate bullets when two changes are materially different.
+   - 同 repo／worktree 的相同工作主題跨 OpenCode、Codex、父子或續行只寫一條，將對應 `sessionEvidence`、commit 與 PR 一起作為證據；不同實質工作仍分開。語意合併由 agent 判斷，不要求 collector 做 NLP。
+   - 不公開完整私人對話、內部路徑或 secrets；只用必要的工作主題與可公開 PR／issue 編號。
 
-6. **State data gaps honestly**
+7. **State data gaps honestly**
    - If the user strongly insisted on continuing without available/authenticated `gh`, explicitly say PR / issue links were not supplemented.
    - If a repo had session activity but no commits, say so.
    - If a directory is not a git repo, say so instead of dropping it silently.
@@ -92,6 +108,8 @@ Do not hand-assemble repo, commit, or PR data from memory. Run the helper script
 Use PowerShell 7+ and pass an explicit script path. Examples:
 
 ```powershell
+pwsh -NoProfile -File "<path-to-skill>\scripts\collect-daily-work-log.ps1" -ProbeOnly
+# 向使用者預告 JSON 中的來源與略過原因後，再使用同一範圍正式蒐集。
 pwsh -NoProfile -File "<path-to-skill>\scripts\collect-daily-work-log.ps1"
 ```
 
@@ -109,15 +127,18 @@ pwsh -NoProfile -File "<path-to-skill>\scripts\collect-daily-work-log.ps1" `
 
 Treat collector JSON as source of truth:
 
-- `meta`: `generatedAt`, `timezone`, `from`, `to`, `sourceMode`, `scanRoots`, `ghAvailable`, `ghViewer`, `authorScope`, `currentIdentity`.
+- `meta`: `generatedAt`, `timezone`, `from`, `to`, `sourceMode`, `scanRoots`, `probeOnly`, `sources`, `canGenerateLog`；正式 collection 另有 `collectionStatus`，進入 Git／GitHub 補證時保留 `ghAvailable`、`ghViewer`、`authorScope`、`currentIdentity`。
 - `warnings` / `errors`: global evidence gaps or failures.
 - `repos[]`: `name`, `path`, `source`, `isGitRepo`, optional `githubRepo`, optional `sessionEvidence`, `commits[]`, `prs[]`, `warnings[]`.
 - `commits[]`: commit evidence from `git log --all`, including `authorEmail`; ignore stash noise before summarizing.
 - `prs[]`: PR evidence tied to commit / branch / hash relevance; preserve PR and issue numbers when useful.
+- `sessionEvidence[]`：`agent` 區分 `opencode`／`codex`；OpenCode 保留 DB／fallback session 欄位；Codex 保留有限長度 `title`、`role`、`sessionId`、`sessionIds[]`、`files[]`、`timestamps[]`。repo 去重不刪不同 session 證據。
 
 ## Optional evidence compaction
 
 For high-volume evidence, pipe collector JSON through `scripts/format-daily-work-log-evidence.ps1`. It reads collector JSON from stdin, emits pure JSON, preserves `meta`, `warnings`, `errors`, and returns compact repo evidence: `name`, `githubRepo`, `commitCount`, `shownCommits`, `prs`, `lowSignalPrRefs`, `sessionEvidence`, `warnings`.
+
+formatter 只限制 shown commits；完整保留 session 證據，避免截斷掉第二來源或續行。管線前仍必須完成 probe 與來源預告。
 
 ```powershell
 pwsh -NoProfile -File "<path-to-skill>\scripts\collect-daily-work-log.ps1" |
@@ -131,6 +152,9 @@ When a repo has many commits, summarize themes instead of dumping commits. Use c
 ## Required checks
 
 - Helper script output is valid JSON only.
+- 正式蒐集前已完成 probe 與對話來源預告；無來源或讀取全失敗時停止，不產生日誌。
+- CLI 不存在但紀錄可讀仍可用；所有可用來源一併蒐集，partial coverage 明講缺口。
+- Codex session／archive 使用事件 timestamp；跨日、父子與續行去重保留證據；跨來源相同主題由 agent 合併。
 - When the user does not provide a clear time range, the helper resolves the range to today in the configured timezone.
 - Git history collection uses `git log --all`; do not limit to current branch.
 - `scan` / `mixed` repo discovery must cover git worktrees as well as normal repos.
