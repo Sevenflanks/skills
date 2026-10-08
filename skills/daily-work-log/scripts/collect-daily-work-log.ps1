@@ -156,6 +156,11 @@ function Get-CodexFilesBounded {
     enumerationFailures = 0; selectedDays = [System.Collections.Generic.List[string]]::new()
     candidateDays = @(); visitedDays = [System.Collections.Generic.List[string]]::new(); unvisitedDays = @()
     stopReason = 'candidate-days-exhausted'; oversizedLines = 0
+    fileCapStops = 0; oversizedDiscardBytes = [long]0; filesWithRangeEvents = 0
+    readBytesDistribution = [pscustomobject][ordered]@{
+      count = 0; totalBytes = [long]0; minBytes = $null; maxBytes = $null
+      buckets = [pscustomobject][ordered]@{ zero = 0; upTo256KiB = 0; upTo1MiB = 0; upTo8MiB = 0; over8MiB = 0 }
+    }
     limitHits = [System.Collections.Generic.HashSet[string]]::new()
     skipped = [System.Collections.Generic.HashSet[string]]::new([string[]]@('archive', 'outside-date-partitions'))
   }
@@ -241,13 +246,14 @@ function Read-CodexLinesBounded {
   $budget = [long][Math]::Min($Coverage.limits.fileBytes, $Coverage.limits.totalBytes - $Coverage.readBytes)
   if ($budget -le 0) { return }
   $stream = $null
+  $fileRead = [long]0
   try {
     # buffer 與 byte 額度分離：提高額度仍只保留一個 chunk 與一個有限長度行。
     $stream = [IO.FileStream]::new($Path, 'Open', 'Read', ([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete), 1)
     $Coverage.openedFiles++
     $chunk = [byte[]]::new(4096)
     $lineBuffer = [byte[]]::new($Coverage.limits.lineBytes)
-    $lineCount = 0; $fileRead = [long]0; $discard = $false; $firstLine = $true
+    $lineCount = 0; $discard = $false; $firstLine = $true
     $utf8 = [Text.UTF8Encoding]::new($false, $true)
     while ($fileRead -lt $budget) {
       $read = $stream.Read($chunk, 0, [int][Math]::Min([long]$chunk.Length, $budget - $fileRead))
@@ -262,6 +268,8 @@ function Read-CodexLinesBounded {
         $length = $end - $start
         if (-not $discard) {
           if ($lineCount + $length -gt $lineBuffer.Length) {
+            # Issue #32：確認超長時才追計先前 buffer 的 prefix，避免把 capped 未完整尾行誤算為超長。
+            $Coverage.oversizedDiscardBytes += $lineCount
             $discard = $true; $lineCount = 0; $Coverage.oversizedLines++
             $null = $Coverage.limitHits.Add('lineBytes')
           } else {
@@ -269,6 +277,7 @@ function Read-CodexLinesBounded {
             $lineCount += $length
           }
         }
+        if ($discard) { $Coverage.oversizedDiscardBytes += $length + [int]$hasNewline }
         if ($hasNewline) {
           if (-not $discard) {
             try {
@@ -286,7 +295,10 @@ function Read-CodexLinesBounded {
     $truncated = $stream.Position -lt $stream.Length
     if ($fileRead -ge $budget) {
       if ($Coverage.readBytes -ge $Coverage.limits.totalBytes) { $null = $Coverage.limitHits.Add('totalBytes') }
-      if ($fileRead -ge $Coverage.limits.fileBytes -and $truncated) { $null = $Coverage.limitHits.Add('fileBytes') }
+      if ($fileRead -ge $Coverage.limits.fileBytes -and $truncated) {
+        $null = $Coverage.limitHits.Add('fileBytes')
+        $Coverage.fileCapStops++
+      }
     }
     if (-not $truncated -and -not $discard -and $lineCount -gt 0) {
       try {
@@ -296,7 +308,19 @@ function Read-CodexLinesBounded {
       } catch [Text.DecoderFallbackException] { $ReadFailed.Value = $true }
     }
   }
-  finally { if ($null -ne $stream) { $stream.Dispose() } }
+  finally {
+    if ($null -ne $stream) {
+      # 成功 open 為統計母體；空檔與中途失敗也保留所有成功 Read 回傳的 bytes。
+      $distribution = $Coverage.readBytesDistribution
+      $distribution.count++; $distribution.totalBytes += $fileRead
+      if ($null -eq $distribution.minBytes -or $fileRead -lt $distribution.minBytes) { $distribution.minBytes = $fileRead }
+      if ($null -eq $distribution.maxBytes -or $fileRead -gt $distribution.maxBytes) { $distribution.maxBytes = $fileRead }
+      $bucket = if ($fileRead -eq 0) { 'zero' } elseif ($fileRead -le 256KB) { 'upTo256KiB' }
+        elseif ($fileRead -le 1MB) { 'upTo1MiB' } elseif ($fileRead -le 8MB) { 'upTo8MiB' } else { 'over8MiB' }
+      $distribution.buckets.$bucket++
+      $stream.Dispose()
+    }
+  }
 }
 
 function Get-CodexSessionDirectories {
@@ -314,6 +338,7 @@ function Get-CodexSessionDirectories {
       $cwd = $null
       $validTimedEvents = 0
       $fileFailed = $false
+      $hasRangeEvent = $false
       try {
         # 逐行解析，避免 foreach(expression) 先把整個額度的行 materialize。
         Read-CodexLinesBounded -Path $file.FullName -Coverage $Source.coverage -ReadFailed ([ref]$fileFailed) | ForEach-Object {
@@ -375,11 +400,16 @@ function Get-CodexSessionDirectories {
             path = $path; sessionId = $sessionId; text = $text.Trim(); role = $role
             time = $time.ToString('o'); file = $file.FullName
           })
+          $hasRangeEvent = $true
         }
         # 空入口／空檔／metadata-only 不算事件讀取成功，避免掩蓋另一入口的全部檔案失敗。
         if ($validTimedEvents -gt 0) { $readCount++ }
       }
       catch { $fileFailed = $true }
+      finally {
+        # 去重前逐檔計一次；解析／讀取後段失敗不撤銷已保留的範圍內事件。
+        if ($hasRangeEvent) { $Source.coverage.filesWithRangeEvents++ }
+      }
       if ($fileFailed) {
         $failedCount++
         Add-WarningMessage -List $Warnings -Message ('Some Codex events could not be read or parsed: {0}' -f $file.FullName)

@@ -4,7 +4,7 @@ description: 整理每日工作日誌或跨 repo 今日工作時使用。先探�
 license: MIT
 metadata:
   author: sevenflankse
-  version: 0.4.0
+  version: 0.5.0
 ---
 
 # Daily Work Log
@@ -76,7 +76,7 @@ Do not use this skill when:
 5. **Inspect collection gaps before writing the summary**
    - 先檢查 `errors`、`meta.canGenerateLog`、`meta.collectionStatus` 與各 `readStatus`。`no-sources`／`read-failed` 停止；`no-activity` 說明來源可讀但沒有當日證據，不能稱為讀取失敗或產生空白工作日誌。
    - `readStatus` 分別為 `unavailable`、`not-read`（probe）、`empty`、`success`、`partial`、`failed`。`partial`／`failed` 或略過來源要指出缺口；有其他成功來源可繼續，不宣稱資料完整。
-    - 檢查 Codex `coverage.complete=false`、`candidateDays`／`visitedDays`／`unvisitedDays`、`stopReason`、`oversizedLines`、`limitHits`、`skipped` 與實際訪問／讀取 counters；即使 `success`、`empty` 或沒有未訪問日期，也只代表已選資料。有界空結果不能稱為「完整查過今天沒有工作」。
+    - 檢查 Codex `coverage.complete=false`、日期／停止欄位、`limitHits`／`skipped` 與下方 aggregate 診斷；即使 `success`、`empty` 或沒有未訪問日期，也只代表已選資料。有界空結果不能稱為「完整查過今天沒有工作」。
    - `canGenerateLog=false` 時只說明狀態與原因，不能憑記憶或額外掃描補成日誌。
    - Check `meta.ghAvailable` and `meta.ghViewer`.
    - If GitHub CLI is unavailable or not authenticated, stop before writing the daily log. Tell the user to install `gh` or run `gh auth login`, then rerun collection.
@@ -96,7 +96,10 @@ Do not use this skill when:
    - Each bullet should be understandable on its own. A reader should understand what changed without needing the previous bullet as context.
    - If a bullet only makes sense together with neighboring bullets, merge them into one clearer sentence or drop the weaker fragment.
    - Keep separate bullets when two changes are materially different.
-   - 同 repo／worktree 的相同工作主題跨 OpenCode、Codex、父子或續行只寫一條，將對應 `sessionEvidence`、commit 與 PR 一起作為證據；不同實質工作仍分開。語意合併由 agent 判斷，不要求 collector 做 NLP。
+    - 同 repo／worktree 的相同工作主題跨 OpenCode、Codex、父子或續行只寫一條，將對應 `sessionEvidence`、commit 與 PR 一起作為證據；不同實質工作仍分開。語意合併由 agent 判斷，不要求 collector 做 NLP。
+    - 先依證據辨識交付狀態，再壓縮文字：`MERGED` 才寫「已合併」；`OPEN` 寫「待合併」，已知 `isDraft=true` 再標「Draft」。`CLOSED` 且無 merge 證據只寫「已關閉、未合併」；狀態不明明講待確認。Commit 本身不證明 PR 已合併。
+    - 同主題優先保留已交付成果與待完成部分，例如「登入修正已合併 #31；續作待合併 #33（Draft）」；不能用其中一個 merged PR 把整個主題或另一個 PR 宣稱完成。Formatter 的 `[OPEN]` 不證明 ready，未保留 Draft 資訊時維持「待合併」。
+    - 只有 session 標題或未補 Git／PR 證據時，標示「session-only／僅 session 證據」，用「討論／處理／驗證中」等符合證據的用語。標題即使寫「驗收通過／部署成功」，也不是實際驗收、部署或合併證據；這些成果須有對應結果補證才可宣稱。保留有意義的待辦，不把標題當已完成清單。
    - 不公開完整私人對話、內部路徑或 secrets；只用必要的工作主題與可公開 PR／issue 編號。
 
 7. **State data gaps honestly**
@@ -148,6 +151,20 @@ Treat collector JSON as source of truth:
 - `stopReason` 只描述全域 traversal 終點：同時達限依 `totalBytes` → `entries` → `files` 優先，再為尚有未訪問候選的 `days`，否則 `candidate-days-exhausted`。局部 `fileBytes`／`lineBytes`／`pathComponents` 只在 `limitHits`；缺失目錄／列舉失敗看 `visitedDays`／`enumerationFailures`。固定 `complete=false`／`strategy=date-partitions-no-cache`／`archive=skipped`。Counters 是 application-level MoveNext 與實際 FileStream.Read bytes，不代表 OS metadata／prefetch I/O。
 - `probeWork` 分開記已知入口檢查數與成功 MoveNext 數；最多檢查兩入口、各消耗一 entry，`openedFiles=0`／`readBytes=0`。probe 沒有 collection coverage，不能推論當日活動。
 - 有事件且達限時為 `partial`；無事件且無損壞時保留 `empty`／`no-activity`；選中事件全失敗保留 `failed`／`read-failed`。Archive 被略過本身不算解析失敗，所有結果仍須說明不完整。
+
+### Aggregate 診斷的計帳契約
+
+以下 additive 欄位只存在於正式、可用 Codex 來源的 `coverage`；probe 及正式 `unavailable` 來源沿用「沒有 collection coverage」契約，而不是虛構已蒐集的零結果。可用但無候選／無事件時仍初始化欄位。全為 aggregate scalar 與固定五個 buckets，不新增逐檔路徑、內容或排序清單；formatter 完整保留 `meta`。
+
+| 欄位 | 統計母體與邊界 |
+| --- | --- |
+| `fileCapStops` | 選中檔因單檔 byte cap 停止，且當次 `Position < Length` 確認尚有未讀 bytes，逐檔一次。單檔與全域同時達限、仍有尾部時也計一次（兩個 `limitHits`，全域 `stopReason=totalBytes`）；只有全域先達限不計。真正 EOF 恰好到 file cap 不計，即使 total cap 同時到仍保守記 `totalBytes`。讀取／metadata／處理失敗未確認此停止條件時不憑 size 或已讀量推測停止。 |
+| `readBytesDistribution` | 成功開啟的每檔實讀量：`count=openedFiles`，`totalBytes=coverage.readBytes`，`minBytes`／`maxBytes` 為極值，無成功 open 時皆為 `null`（count／total／buckets 為 0）。空檔與 open 成功後失敗的檔案仍計，open 失敗不計；所有成功 `Read` 回傳 bytes 在 `finally` 入帳，包含丟棄／截斷／壞行與尚未解析的 chunk。不是檔案大小、session 數或 parsed JSON 行數。 |
+| `readBytesDistribution.buckets` | 互斥固定桶：`zero` = 0；`upTo256KiB` = (0, 256 KiB]；`upTo1MiB` = (256 KiB, 1 MiB]；`upTo8MiB` = (1 MiB, 8 MiB]；`over8MiB` = > 8 MiB。桶數總和等於 count，明確提高 file cap 時仍用同一桶界。平均量可由 total／count 算，不累積樣本或 percentile。 |
+| `oversizedDiscardBytes` | 已確認超過 line cap 的行中，已讀且經 reader 判定丟棄的原始 bytes，是 `readBytes` 的子集，不加算預算。跨 chunk 首次確認超長時追計 buffer prefix，再計後續已讀 segments；包含 BOM／CR 與已讀 LF。64 KiB prefix 加 LF 是合法邊界、不算超長；64 KiB prefix 加 CRLF 因 CR 超限，全部 65,538 bytes 算丟棄。EOF／cap／Read 失敗中止時只計實際判定的部分，不推估未讀尾部或中斷後未處理的 chunk。尚未讀到超過 64 KiB 的 capped 尾行不算超長。每個超長行的 `oversizedLines` 仍只計一次。 |
+| `filesWithRangeEvents` | 每個候選檔保留至少一筆符合既有 parser 的範圍內事件才計一次，發生於鏡像／父子／續行去重之前。須 timestamp 在 inclusive From/To 範圍、可用 cwd 與有效非空文字／tool evidence；metadata-only、telemetry、範圍外事件、無 cwd、壞／丟棄行不計。多筆／重複事件同檔仍一次，不同檔貢獻相同去重事件各計一次；後段讀取／解析失敗不撤銷已保留事件。此 counter 不改 `readStatus` 或來源 guard，也不代表 unique sessions／repo 或最終證據列數。 |
+
+解讀時把單檔停止、讀取量分布、超長行消耗占比與產出事件的檔數一起看，並保留達限、未訪問、archive、範圍外續行及失敗缺口。不能從達限本身判斷額度太小、從桶推算遺漏事件數，或把「成功 JSON 行／證據列／有事件檔／session」互換。既有日期、source 優先、Read 與事件收集策略不因診斷改變。
 
 這組上限限制 filesystem 訪問與 transcript 讀取；日期候選陣列仍隨要求範圍成長，reader buffers 不隨 byte 額度成長，但不限制事件清單或整個 PowerShell process 記憶體。64／8 MiB 是已確認預設，不是最佳門檻或 latency SLA；合成量測界線見 [`README.md`](README.md#有界驗證與量測)。
 
