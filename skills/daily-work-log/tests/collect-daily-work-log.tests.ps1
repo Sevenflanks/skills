@@ -424,7 +424,8 @@ function Invoke-CollectorJson {
       '-File', $script:HelperPath,
       '-SourceMode', $SourceMode,
       '-OpenCodeLogRoot', $TestRoot.LogRoot,
-      '-OpenCodeStorageRoot', $TestRoot.StorageRoot
+      '-OpenCodeStorageRoot', $TestRoot.StorageRoot,
+      '-CodexRoot', (Join-Path $TestRoot.Root 'codex')
     )
     if (-not $UseDefaultRange) {
       $collectorArgs += @('-From', '2026-05-29T00:00:00+08:00', '-To', '2026-05-29T23:59:59+08:00')
@@ -1078,7 +1079,8 @@ Describe 'format-daily-work-log-evidence compaction' {
     (@($output.warnings) -contains 'collector warning') | Should Be $true
 
     $sessionRepo = @($output.repos | Where-Object { $_.name -eq 'no-commit-session-repo' })[0]
-    @($sessionRepo.sessionEvidence).Count | Should Be 5
+    @($sessionRepo.sessionEvidence).Count | Should Be 6
     $sessionRepo.sessionEvidence[0].title | Should Be 'Investigate no commit repo'
+    $sessionRepo.sessionEvidence[5].title | Should Be 'Sixth'
   }
 }

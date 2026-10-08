@@ -7,7 +7,9 @@ param(
   [string[]]$ScanRoots = @(),
   [string]$Timezone = 'Asia/Taipei',
   [string]$OpenCodeLogRoot,
-  [string]$OpenCodeStorageRoot
+  [string]$OpenCodeStorageRoot,
+  [string]$CodexRoot,
+  [switch]$ProbeOnly
 )
 
 Set-StrictMode -Version Latest
@@ -76,6 +78,201 @@ function Get-ObjectPropertyValue {
   return $property.Value
 }
 
+function Test-RecordDirectory {
+  param([string]$Path)
+
+  # Probe 僅開啟已知入口的第一個 directory entry，不遞迴、不讀紀錄內容。
+  $entry = [ordered]@{ path = $Path; available = $false; reason = 'not-found' }
+  $enumerator = $null
+  try {
+    if ([System.IO.Directory]::Exists($Path)) {
+      $enumerator = [System.IO.Directory]::EnumerateFileSystemEntries($Path).GetEnumerator()
+      $null = $enumerator.MoveNext()
+      $entry.available = $true
+      $entry.reason = 'readable-directory'
+    }
+  }
+  catch { $entry.reason = 'unreadable-directory' }
+  finally { if ($null -ne $enumerator) { $enumerator.Dispose() } }
+  return [pscustomobject]$entry
+}
+
+function Get-SourceProbe {
+  $homePath = [Environment]::GetFolderPath('UserProfile')
+  $logPath = if ($OpenCodeLogRoot) { $OpenCodeLogRoot } else { Join-Path $homePath '.local\share\opencode\log' }
+  $storagePath = if ($OpenCodeStorageRoot) { $OpenCodeStorageRoot } else { Join-Path $homePath '.local\share\opencode\storage' }
+  $codexPath = if ($CodexRoot) { $CodexRoot } elseif ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $homePath '.codex' }
+  $sources = [ordered]@{}
+  foreach ($name in @('opencode', 'codex')) {
+    $entries = if ($name -eq 'opencode') {
+      @((Test-RecordDirectory $logPath), (Test-RecordDirectory (Join-Path $storagePath 'directory-readme')))
+    } else {
+      @((Test-RecordDirectory (Join-Path $codexPath 'sessions')), (Test-RecordDirectory (Join-Path $codexPath 'archived_sessions')))
+    }
+    $cliAvailable = $null -ne (Get-Command $name -ErrorAction SilentlyContinue)
+    # Codex CLI 不提供本 collector 所需的非互動式歷史介面；僅紀錄入口能供 collection。
+    $available = (@($entries | Where-Object available).Count -gt 0) -or ($name -eq 'opencode' -and $cliAvailable)
+    $sources[$name] = [pscustomobject][ordered]@{
+      available = $available
+      cliAvailable = $cliAvailable
+      reason = if (@($entries | Where-Object available).Count -gt 0) { 'local-records-readable' } elseif ($available) { 'db-cli-available' } else { 'no-readable-records' }
+      entries = $entries
+      readStatus = if ($available) { 'not-read' } else { 'unavailable' }
+    }
+  }
+  return $sources
+}
+
+function Write-CollectionState {
+  param([string]$Status, [object]$Sources)
+  [ordered]@{
+    meta = [ordered]@{
+      generatedAt = [datetimeoffset]::Now.ToString('o'); timezone = $Timezone
+      from = $resolvedFrom.ToString('o'); to = $resolvedTo.ToString('o')
+      sourceMode = $SourceMode; scanRoots = $ScanRoots; probeOnly = $false
+      sources = $Sources; collectionStatus = $Status; canGenerateLog = $false
+      ghAvailable = $false; ghViewer = $null
+    }
+    repos = @(); warnings = @($warnings); errors = @($errors)
+  } | ConvertTo-Json -Depth 10
+}
+
+function Get-CodexSessionDirectories {
+  param([object]$Source, [datetimeoffset]$FromRange, [datetimeoffset]$ToRange,
+    [System.Collections.Generic.List[string]]$Warnings)
+
+  $events = [System.Collections.Generic.List[object]]::new()
+  $parents = @{}
+  $readCount = 0
+  $failedCount = 0
+  foreach ($entry in $Source.entries) {
+    if (-not $entry.available) {
+      if ($entry.reason -eq 'unreadable-directory') {
+        $failedCount++
+        Add-WarningMessage -List $Warnings -Message ('Codex record directory unreadable: {0}' -f $entry.path)
+      }
+      continue
+    }
+    try {
+      # 必須讀取事件：舊檔名、建立日及 mtime 都不能排除跨日續行。
+      $files = @(Get-ChildItem -LiteralPath $entry.path -Recurse -File -Filter '*.jsonl' -ErrorAction Stop)
+      if ($files.Count -eq 0) { $readCount++ }
+    }
+    catch {
+      $failedCount++
+      Add-WarningMessage -List $Warnings -Message ('Codex record enumeration failed: {0}' -f $entry.path)
+      continue
+    }
+    foreach ($file in $files) {
+      $reader = $null
+      $sessionId = $file.FullName
+      $cwd = $null
+      $validLines = 0
+      $fileFailed = $false
+      try {
+        $stream = [System.IO.FileStream]::new($file.FullName, 'Open', 'Read', ([System.IO.FileShare]::ReadWrite -bor [System.IO.FileShare]::Delete))
+        $reader = [System.IO.StreamReader]::new($stream)
+        while ($null -ne ($line = $reader.ReadLine())) {
+          if ([string]::IsNullOrWhiteSpace($line)) { continue }
+          try {
+            $event = $line | ConvertFrom-Json
+            if ($null -eq $event -or -not (Get-ObjectPropertyValue $event 'type')) { throw 'Invalid event' }
+          }
+          catch { $fileFailed = $true; continue }
+          $validLines++
+          $type = [string](Get-ObjectPropertyValue $event 'type')
+          $payload = Get-ObjectPropertyValue $event 'payload'
+          if ($type -eq 'session_meta') {
+            $id = [string](Get-ObjectPropertyValue $payload 'id')
+            if ($id) { $sessionId = $id }
+            foreach ($name in @('forked_from_id', 'parent_session_id', 'previous_session_id')) {
+              $parent = [string](Get-ObjectPropertyValue $payload $name)
+              if ($parent) { $parents[$sessionId] = $parent; break }
+            }
+            $sourceMetadata = Get-ObjectPropertyValue $payload 'source'
+            $subagent = Get-ObjectPropertyValue $sourceMetadata 'subagent'
+            $spawn = Get-ObjectPropertyValue $subagent 'thread_spawn'
+            $spawnParent = [string](Get-ObjectPropertyValue $spawn 'parent_thread_id')
+            if ($spawnParent) { $parents[$sessionId] = $spawnParent }
+          }
+          if ($type -in @('session_meta', 'turn_context')) {
+            $path = [string](Get-ObjectPropertyValue $payload 'cwd')
+            if ($path) { $cwd = $path }
+            continue
+          }
+          $rawTime = Get-ObjectPropertyValue $event 'timestamp'
+          try {
+            $time = if ($rawTime -is [datetime]) { [datetimeoffset]$rawTime } else { [datetimeoffset]::Parse([string]$rawTime, [System.Globalization.CultureInfo]::InvariantCulture) }
+          }
+          catch { $fileFailed = $true; continue }
+          if ($time -lt $FromRange -or $time -gt $ToRange) { continue }
+          $payloadType = [string](Get-ObjectPropertyValue $payload 'type')
+          $text = $null
+          $role = $null
+          if ($type -eq 'event_msg' -and $payloadType -in @('user_message', 'agent_message')) {
+            $text = [string](Get-ObjectPropertyValue $payload 'message')
+            $role = if ($payloadType -eq 'user_message') { 'user' } else { 'assistant' }
+          }
+          elseif ($type -eq 'response_item' -and $payloadType -eq 'message') {
+            $role = [string](Get-ObjectPropertyValue $payload 'role')
+            if ($role -notin @('user', 'assistant')) { continue }
+            $text = (@(Get-ObjectPropertyValue $payload 'content') | ForEach-Object {
+              [string](Get-ObjectPropertyValue $_ 'text')
+            }) -join "`n"
+          }
+          elseif ($type -eq 'response_item' -and $payloadType -in @('function_call', 'custom_tool_call')) {
+            $text = 'tool: ' + [string](Get-ObjectPropertyValue $payload 'name')
+            $role = 'tool'
+          }
+          if (-not $cwd -or [string]::IsNullOrWhiteSpace($text)) { continue }
+          try { $path = [System.IO.Path]::GetFullPath($cwd) } catch { $fileFailed = $true; continue }
+          $events.Add([pscustomobject]@{
+            path = $path; sessionId = $sessionId; text = $text.Trim(); role = $role
+            time = $time.ToString('o'); file = $file.FullName
+          })
+        }
+        # 真正空檔是可讀的空紀錄；只有損壞行時不是「無活動」。
+        if ($validLines -gt 0 -or -not $fileFailed) { $readCount++ }
+      }
+      catch { $fileFailed = $true }
+      finally { if ($null -ne $reader) { $reader.Dispose() } }
+      if ($fileFailed) {
+        $failedCount++
+        Add-WarningMessage -List $Warnings -Message ('Some Codex events could not be read or parsed: {0}' -f $file.FullName)
+      }
+    }
+  }
+
+  $groups = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::Ordinal)
+  foreach ($event in $events) {
+    $family = $event.sessionId
+    $visited = [System.Collections.Generic.HashSet[string]]::new()
+    while ($parents.ContainsKey($family) -and $visited.Add($family)) { $family = $parents[$family] }
+    # 精確文字去重涵蓋 event/response 鏡像、父子重播及同 ID 續行；語意主題由 skill 合併。
+    $key = (@($event.path.ToUpperInvariant(), $family, $event.role, $event.text) | ConvertTo-Json -Compress)
+    if (-not $groups.ContainsKey($key)) {
+      $groups[$key] = [ordered]@{
+        source = 'codex'; agent = 'codex'; path = $event.path; sessionId = $family
+        title = $event.text.Substring(0, [Math]::Min(240, $event.text.Length)); role = $event.role
+        sessionIds = [System.Collections.Generic.HashSet[string]]::new()
+        files = [System.Collections.Generic.HashSet[string]]::new()
+        timestamps = [System.Collections.Generic.HashSet[string]]::new()
+      }
+    }
+    $group = $groups[$key]
+    $null = $group.sessionIds.Add($event.sessionId)
+    $null = $group.files.Add($event.file)
+    $null = $group.timestamps.Add($event.time)
+  }
+  $Source.readStatus = if ($readCount -eq 0) { 'failed' } elseif ($failedCount -gt 0) { 'partial' } elseif ($events.Count -gt 0) { 'success' } else { 'empty' }
+  foreach ($group in $groups.Values) {
+    $group.sessionIds = @($group.sessionIds | Sort-Object)
+    $group.files = @($group.files | Sort-Object)
+    $group.timestamps = @($group.timestamps | Sort-Object)
+    New-SessionCandidate -Path $group.path -Evidence ([pscustomobject]$group)
+  }
+}
+
 function New-SessionCandidate {
   param(
     [string]$Path,
@@ -97,6 +294,8 @@ function New-SessionEvidence {
 
   $evidence = [ordered]@{
     source = $Source
+    agent = 'opencode'
+    discoverySource = $Source
     path = $Path
   }
 
@@ -383,8 +582,13 @@ function Get-OpenCodeSessionRowsFromDb {
   }
 
   try {
-    $rows = $result.StdOut | ConvertFrom-Json
+    $rows = $result.StdOut | ConvertFrom-Json -NoEnumerate
+    # 保留既有 single-row JSON 相容性；成功 [] 仍是權威空結果。
+    if ($rows -isnot [array] -and $rows -isnot [pscustomobject]) { throw 'Expected session rows' }
+    $rows = @($rows)
     $Succeeded.Value = $true
+    $script:OpenCodeReadSucceeded = $true
+    $script:OpenCodeActivityCount += $rows.Count
     return @($rows)
   }
   catch {
@@ -410,7 +614,6 @@ function Get-SessionDirectoriesFromDb {
   }
 
   $paths = [System.Collections.Generic.List[object]]::new()
-  $seen = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
   $seenCandidates = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
   $unresolvedCount = 0
 
@@ -419,6 +622,7 @@ function Get-SessionDirectoriesFromDb {
   }
 
   foreach ($row in @($rows)) {
+    $seenCandidates.Clear()
     foreach ($propertyName in @('directory', 'path')) {
       $property = $row.PSObject.Properties[$propertyName]
       if (-not $property) {
@@ -443,11 +647,11 @@ function Get-SessionDirectoriesFromDb {
       }
 
       $repoRoot = Resolve-GitRepoRootFromPath -Path $candidatePath
-      if ($repoRoot -and $seen.Add($repoRoot)) {
+      if ($repoRoot) {
         $paths.Add((New-SessionCandidate -Path $repoRoot -Evidence (New-SessionEvidence -Source 'session' -Path $candidatePath -Session $row)))
       }
       elseif (-not $repoRoot) {
-        if ((Test-Path -LiteralPath $candidatePath -PathType Container) -and $seen.Add($candidatePath)) {
+        if (Test-Path -LiteralPath $candidatePath -PathType Container) {
           $paths.Add((New-SessionCandidate -Path $candidatePath -Evidence (New-SessionEvidence -Source 'session' -Path $candidatePath -Session $row)))
         }
         else {
@@ -520,9 +724,11 @@ function Get-SessionDirectoriesFromDirectoryReadme {
   $unresolvedCount = 0
 
   try {
-    $files = Get-ChildItem -LiteralPath $directoryReadmeRoot -File -Filter '*.json' | Sort-Object Name
+    $files = @(Get-ChildItem -LiteralPath $directoryReadmeRoot -File -Filter '*.json' -ErrorAction Stop | Sort-Object Name)
+    if ($files.Count -eq 0) { $script:OpenCodeReadSucceeded = $true }
   }
   catch {
+    $script:OpenCodeReadFailures++
     Add-WarningMessage -List $Warnings -Message 'OpenCode directory-readme discovery unavailable; falling back to log session discovery.'
     return @()
   }
@@ -533,13 +739,18 @@ function Get-SessionDirectoriesFromDirectoryReadme {
     }
     catch {
       $hadParseFailure = $true
+      $script:OpenCodeReadFailures++
       continue
     }
 
     if ($null -eq $session) {
       $hadParseFailure = $true
+      $script:OpenCodeReadFailures++
       continue
     }
+
+    $script:OpenCodeReadSucceeded = $true
+    $seen.Clear()
 
     $updatedAtProperty = $session.PSObject.Properties['updatedAt']
     if (-not $updatedAtProperty) {
@@ -556,6 +767,8 @@ function Get-SessionDirectoriesFromDirectoryReadme {
     if ($updatedAtMilliseconds -lt $fromMilliseconds -or $updatedAtMilliseconds -gt $toMilliseconds) {
       continue
     }
+
+    $script:OpenCodeActivityCount++
 
     $injectedPathsProperty = $session.PSObject.Properties['injectedPaths']
     if (-not $injectedPathsProperty) {
@@ -626,7 +839,15 @@ function Get-SessionDirectoriesFromLogs {
   $paths = [System.Collections.Generic.List[object]]::new()
   $seen = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
   $unresolvedCount = 0
-  $logFiles = Get-ChildItem -LiteralPath $logRoot -File -Filter '*.log' | Sort-Object Name
+  try {
+    $logFiles = @(Get-ChildItem -LiteralPath $logRoot -File -Filter '*.log' -ErrorAction Stop | Sort-Object Name)
+    if ($logFiles.Count -eq 0) { $script:OpenCodeReadSucceeded = $true }
+  }
+  catch {
+    $script:OpenCodeReadFailures++
+    Add-WarningMessage -List $Warnings -Message ('Failed to enumerate OpenCode logs: {0}' -f $logRoot)
+    return @()
+  }
   foreach ($file in $logFiles) {
     $reader = $null
     try {
@@ -653,6 +874,7 @@ function Get-SessionDirectoriesFromLogs {
           continue
         }
 
+        $script:OpenCodeActivityCount++
         $repoRoot = Resolve-GitRepoRootFromPath -Path $candidate
         if ($repoRoot -and $seen.Add($repoRoot)) {
           $paths.Add((New-SessionCandidate -Path $repoRoot -Evidence (New-SessionEvidence -Source 'log' -Path $candidate)))
@@ -677,8 +899,10 @@ function Get-SessionDirectoriesFromLogs {
           $unresolvedCount += 1
         }
       }
+      $script:OpenCodeReadSucceeded = $true
     }
     catch {
+      $script:OpenCodeReadFailures++
       Add-WarningMessage -List $Warnings -Message ("Failed to read OpenCode log: {0}" -f $file.FullName)
       continue
     }
@@ -1461,15 +1685,81 @@ function Get-GhContext {
 $warnings = [System.Collections.Generic.List[string]]::new()
 $errors = [System.Collections.Generic.List[string]]::new()
 $repoMap = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+$sources = $null
 
 try {
   $range = Resolve-DateRange -FromInput $From -ToInput $To -TimezoneId $Timezone
   $resolvedFrom = $range.From
   $resolvedTo = $range.To
 
+  $sources = Get-SourceProbe
+  if ($ProbeOnly) {
+    [ordered]@{
+      meta = [ordered]@{
+        generatedAt = [datetimeoffset]::Now.ToString('o'); timezone = $Timezone
+        from = $resolvedFrom.ToString('o'); to = $resolvedTo.ToString('o')
+        sourceMode = $SourceMode; scanRoots = $ScanRoots; probeOnly = $true
+        sources = $sources; canGenerateLog = $false
+      }
+      repos = @(); warnings = @(); errors = @()
+    } | ConvertTo-Json -Depth 10
+    return
+  }
+
+  if (-not $sources.opencode.available -and -not $sources.codex.available) {
+    Add-WarningMessage -List $warnings -Message 'No usable agent sources; collection stopped before Git / GitHub discovery.'
+    Write-CollectionState -Status 'no-sources' -Sources $sources
+    return
+  }
+
+  $sessionCandidates = [System.Collections.Generic.List[object]]::new()
+  if ($sources.opencode.available) {
+    $script:OpenCodeReadSucceeded = $false
+    $script:OpenCodeReadFailures = 0
+    $script:OpenCodeActivityCount = 0
+    try {
+      foreach ($candidate in @(Get-SessionDirectories -FromRange $resolvedFrom -ToRange $resolvedTo -TimezoneId $Timezone -OverrideLogRoot $OpenCodeLogRoot -OverrideStorageRoot $OpenCodeStorageRoot -Warnings $warnings)) {
+        $sessionCandidates.Add($candidate)
+      }
+      $sources.opencode.readStatus = if (-not $script:OpenCodeReadSucceeded) { 'failed' } elseif ($script:OpenCodeReadFailures -gt 0) { 'partial' } elseif ($script:OpenCodeActivityCount -gt 0) { 'success' } else { 'empty' }
+    }
+    catch {
+      $sources.opencode.readStatus = 'failed'
+      Add-WarningMessage -List $warnings -Message ('OpenCode session reader failed: {0}' -f $_.Exception.Message)
+    }
+  }
+  if ($sources.codex.available) {
+    # 各來源自行承擔讀取失敗，避免一個 reader 的例外阻斷另一個可用來源。
+    try {
+      foreach ($candidate in @(Get-CodexSessionDirectories -Source $sources.codex -FromRange $resolvedFrom -ToRange $resolvedTo -Warnings $warnings)) {
+        $sessionCandidates.Add($candidate)
+      }
+    }
+    catch {
+      $sources.codex.readStatus = 'failed'
+      Add-WarningMessage -List $warnings -Message ('Codex session reader failed: {0}' -f $_.Exception.Message)
+    }
+  }
+  $readableSources = @($sources.Values | Where-Object { $_.readStatus -in @('success', 'partial', 'empty') })
+  if ($readableSources.Count -eq 0) {
+    Add-WarningMessage -List $warnings -Message 'All available agent sources failed to read; collection stopped before Git / GitHub discovery.'
+    Write-CollectionState -Status 'read-failed' -Sources $sources
+    return
+  }
+  $hasGap = @($sources.Values | Where-Object { $_.readStatus -in @('failed', 'partial') -or @($_.entries | Where-Object reason -eq 'unreadable-directory').Count -gt 0 }).Count -gt 0
+  $collectionStatus = if ($hasGap) { 'partial' } else { 'success' }
+  foreach ($name in $sources.Keys) {
+    if ($sources[$name].readStatus -in @('unavailable', 'failed', 'partial')) {
+      Add-WarningMessage -List $warnings -Message ('{0} source: {1} ({2}); coverage is incomplete.' -f $name, $sources[$name].readStatus, $sources[$name].reason)
+    }
+  }
+  if ($SourceMode -eq 'session' -and $sessionCandidates.Count -eq 0) {
+    Write-CollectionState -Status $(if ($hasGap) { 'partial' } else { 'no-activity' }) -Sources $sources
+    return
+  }
   if ($SourceMode -in @('session', 'mixed')) {
     $unresolvedSessionPathCount = 0
-    foreach ($sessionCandidate in Get-SessionDirectories -FromRange $resolvedFrom -ToRange $resolvedTo -TimezoneId $Timezone -OverrideLogRoot $OpenCodeLogRoot -OverrideStorageRoot $OpenCodeStorageRoot -Warnings $warnings) {
+    foreach ($sessionCandidate in $sessionCandidates) {
       $path = [string]$sessionCandidate.path
       $resolvedItems = @(Resolve-SessionCandidatePaths -Path $path -Warnings $warnings)
       if (@($resolvedItems).Count -eq 0) {
@@ -1478,7 +1768,8 @@ try {
       }
 
       foreach ($item in $resolvedItems) {
-        Add-PathItem -Map $repoMap -Path $item.path -Source $item.source -SessionEvidence (Copy-SessionEvidenceForSource -Evidence $sessionCandidate.evidence -Source $item.source)
+        $repoSource = if ($sessionCandidate.evidence.agent -eq 'codex') { 'codex' } else { $item.source }
+        Add-PathItem -Map $repoMap -Path $item.path -Source $repoSource -SessionEvidence (Copy-SessionEvidenceForSource -Evidence $sessionCandidate.evidence -Source $repoSource)
       }
     }
     if ($unresolvedSessionPathCount -gt 0) {
@@ -1522,7 +1813,7 @@ try {
   $repos = [System.Collections.Generic.List[object]]::new()
   foreach ($item in $repoMap.Values | Sort-Object path) {
     $repoPath = $item.path
-    $sources = @($item.source | Sort-Object)
+    $repoSources = @($item.source | Sort-Object)
     $repoWarnings = [System.Collections.Generic.List[string]]::new()
     $repoName = Split-Path -Path $repoPath -Leaf
     $isGitRepo = Test-GitRepo -RepositoryPath $repoPath
@@ -1530,7 +1821,7 @@ try {
       $repos.Add([ordered]@{
         name = $repoName
         path = $repoPath
-        source = $sources
+        source = $repoSources
         isGitRepo = $false
         commits = @()
         prs = @()
@@ -1562,7 +1853,7 @@ try {
       $repos.Add([ordered]@{
         name = $repoName
         path = $repoPath
-        source = $sources
+        source = $repoSources
         isGitRepo = $true
         githubRepo = $null
         commits = @($commits)
@@ -1585,7 +1876,7 @@ try {
     $repos.Add([ordered]@{
       name = $repoName
       path = $repoPath
-      source = $sources
+      source = $repoSources
       isGitRepo = $true
       githubRepo = $githubRepo
       commits = @($commits)
@@ -1602,6 +1893,10 @@ try {
       from = $resolvedFrom.ToString('o')
       to = $resolvedTo.ToString('o')
       sourceMode = $SourceMode
+      probeOnly = $false
+      sources = $sources
+      collectionStatus = $collectionStatus
+      canGenerateLog = $repos.Count -gt 0
       scanRoots = $ScanRoots
       ghAvailable = $ghAvailable
       ghViewer = $ghViewer
@@ -1630,6 +1925,10 @@ catch {
       to = if ($To) { $To.ToString('o') } else { $null }
       sourceMode = $SourceMode
       scanRoots = $ScanRoots
+      probeOnly = [bool]$ProbeOnly
+      sources = $sources
+      collectionStatus = 'error'
+      canGenerateLog = $false
       ghAvailable = $false
       ghViewer = $null
       authorScope = 'all'

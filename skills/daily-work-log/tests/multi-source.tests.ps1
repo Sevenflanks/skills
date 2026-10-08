@@ -1,0 +1,245 @@
+[CmdletBinding()]
+param([string]$Case = 'probe', [string]$EvidenceRoot)
+
+# 僅合成資料；PATH 與全部紀錄入口隔離，絕不讀取使用者的 transcripts。
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+if ($Case -eq 'all') {
+  foreach ($name in @('probe', 'guard', 'empty-failed', 'codex', 'partial', 'opencode', 'merge', 'formatter', 'read-failures', 'archive-only', 'db-fallback', 'source-isolation')) {
+    & $PSCommandPath -Case $name -EvidenceRoot $EvidenceRoot
+  }
+  return
+}
+$collector = Join-Path $PSScriptRoot '..\scripts\collect-daily-work-log.ps1'
+$formatter = Join-Path $PSScriptRoot '..\scripts\format-daily-work-log-evidence.ps1'
+$pwsh = (Get-Command pwsh).Source
+$root = Join-Path ([IO.Path]::GetTempPath()) ('dwl-synthetic-' + [guid]::NewGuid().ToString('N'))
+$oldPath = $env:PATH
+
+function Assert($Condition, [string]$Message) {
+  if (-not $Condition) { throw $Message }
+}
+function Write-Fixture([string]$Path, [string]$Content) {
+  $null = [IO.Directory]::CreateDirectory((Split-Path -Parent $Path))
+  [IO.File]::WriteAllText($Path, $Content)
+}
+function Invoke-Json([switch]$Probe, [string]$Mode = 'session') {
+  $args = @('-NoProfile', '-File', $collector, '-From', '2026-05-29T00:00:00+08:00', '-To', '2026-05-29T23:59:59+08:00',
+    '-OpenCodeLogRoot', "$root\logs", '-OpenCodeStorageRoot', "$root\storage", '-CodexRoot', "$root\codex", '-SourceMode', $Mode,
+    '-ScanRoots', "$root\repo")
+  if ($Probe) { $args += '-ProbeOnly' }
+  $raw = & $pwsh @args
+  Assert ($LASTEXITCODE -eq 0) 'collector process failed'
+  $data = ($raw -join "`n") | ConvertFrom-Json
+  if ($EvidenceRoot) { Write-Fixture "$EvidenceRoot\$Case-$(if ($Probe) {'probe'} else {'collection'}).json" ($raw -join "`n") }
+  Assert (@($data.errors).Count -eq 0) ('collector errors: ' + ($data.errors -join '; '))
+  return $data
+}
+function Add-Codex([string]$File = 'sessions\2020\old.jsonl', [string]$Id = 'parent', [string]$Parent = '', [string]$Time = '2026-05-29T02:00:00Z', [string]$Text = '修正合成登入流程') {
+  $lines = @(
+    @{timestamp='2020-01-01T00:00:00Z'; type='session_meta'; payload=@{id=$Id; cwd="$root\repo"; forked_from_id=$Parent}},
+    @{timestamp=$Time; type='event_msg'; payload=@{type='user_message'; message=$Text}},
+    @{timestamp=$Time; type='response_item'; payload=@{type='message'; role='user'; content=@(@{type='input_text'; text=$Text})}}
+  ) | ForEach-Object { $_ | ConvertTo-Json -Depth 8 -Compress }
+  $path = "$root\codex\$File"
+  Write-Fixture $path ($lines -join "`n")
+  [IO.File]::SetLastWriteTime($path, [datetime]'2026-05-28T00:00:00')
+}
+function Add-OpenCode([string]$Result = '[]', [switch]$Fail) {
+  $body = if ($Fail) { 'exit 1' } else { "'$($Result.Replace("'", "''"))'; exit 0" }
+  Write-Fixture "$root\bin\opencode.ps1" ("param([Parameter(ValueFromRemainingArguments=`$true)][string[]]`$Arguments)`n" + $body)
+}
+
+try {
+  $null = [IO.Directory]::CreateDirectory("$root\bin")
+  $null = [IO.Directory]::CreateDirectory("$root\repo")
+  $env:PATH = "$root\bin;$(Split-Path -Parent $pwsh)"
+  # git/gh 公開邊界 stub 記錄所有呼叫，讓 no-source guard 可觀察。
+  $stub = @'
+param([Parameter(ValueFromRemainingArguments=$true)][string[]]$Arguments)
+[IO.File]::AppendAllText('__CALLS__', ($Arguments -join ' ') + "`n")
+if ($Arguments[0] -eq 'rev-parse') {
+  if ($Arguments[1] -eq '--is-inside-work-tree') { 'true' } else { '__REPO__' }
+  exit 0
+}
+if ($Arguments[0] -eq 'log') { exit 0 }
+exit 1
+'@
+  $stub = $stub.Replace('__CALLS__', "$root\calls.txt").Replace('__REPO__', "$root\repo")
+  Write-Fixture "$root\bin\git.ps1" $stub
+  Write-Fixture "$root\bin\gh.ps1" $stub
+
+  switch ($Case) {
+    'probe' {
+      foreach ($combination in @('none', 'opencode', 'codex', 'both')) {
+        if ($combination -in @('opencode', 'both')) { $null = [IO.Directory]::CreateDirectory("$root\logs") }
+        if ($combination -in @('codex', 'both')) { $null = [IO.Directory]::CreateDirectory("$root\codex\sessions") }
+        $data = Invoke-Json -Probe
+        Assert ($data.meta.probeOnly) 'probeOnly missing'
+        Assert ($data.meta.sources.opencode.available -eq ($combination -in @('opencode', 'both'))) 'OpenCode availability mismatch'
+        Assert ($data.meta.sources.codex.available -eq ($combination -in @('codex', 'both'))) 'Codex availability mismatch'
+        Assert (-not $data.meta.sources.opencode.cliAvailable) 'unexpected OpenCode CLI'
+        Assert (-not $data.meta.sources.codex.cliAvailable) 'unexpected Codex CLI'
+        Assert (@($data.repos).Count -eq 0) 'probe collected repos'
+        Assert (-not (Test-Path "$root\calls.txt")) 'probe invoked git/gh'
+        if (Test-Path "$root\logs") { [IO.Directory]::Delete("$root\logs", $true) }
+        if (Test-Path "$root\codex") { [IO.Directory]::Delete("$root\codex", $true) }
+      }
+      $cliStub = "param([Parameter(ValueFromRemainingArguments=`$true)][string[]]`$Arguments)`n[IO.File]::WriteAllText('$root\calls.txt', 'CLI invoked'); exit 1"
+      Write-Fixture "$root\bin\opencode.ps1" $cliStub
+      Write-Fixture "$root\bin\codex.ps1" $cliStub
+      $data = Invoke-Json -Probe
+      Assert ($data.meta.sources.opencode.available -and $data.meta.sources.opencode.cliAvailable) 'OpenCode DB CLI entry unavailable'
+      Assert ($data.meta.sources.codex.cliAvailable -and -not $data.meta.sources.codex.available) 'Codex CLI alone was treated as readable history'
+      Assert (-not (Test-Path "$root\calls.txt")) 'probe invoked CLI'
+    }
+    'guard' {
+      foreach ($mode in @('session', 'mixed', 'scan')) {
+        $data = Invoke-Json -Mode $mode
+        Assert ($data.meta.collectionStatus -eq 'no-sources') 'no source must stop'
+        Assert (-not $data.meta.canGenerateLog) 'no sources allowed log'
+        Assert (-not (Test-Path "$root\calls.txt")) 'no sources invoked git/gh'
+      }
+    }
+    'empty-failed' {
+      $null = [IO.Directory]::CreateDirectory("$root\codex\sessions")
+      $data = Invoke-Json
+      Assert ($data.meta.sources.codex.readStatus -eq 'empty') 'empty source classified as failure'
+      Assert ($data.meta.collectionStatus -eq 'no-activity') 'empty activity status missing'
+      Write-Fixture "$root\codex\sessions\bad.jsonl" '{broken'
+      $data = Invoke-Json -Mode mixed
+      Assert ($data.meta.sources.codex.readStatus -eq 'failed') 'malformed source classified as empty'
+      Assert ($data.meta.collectionStatus -eq 'read-failed') 'all read failures must stop'
+      Assert (-not $data.meta.canGenerateLog) 'failed collection allowed log'
+      Assert (-not (Test-Path "$root\calls.txt")) 'failed/empty collection invoked git/gh'
+    }
+    'codex' {
+      Add-Codex
+      Add-Codex -File 'archived_sessions\child.jsonl' -Id child -Parent parent
+      Add-Codex -File 'sessions\resume.jsonl'
+      Add-Codex -File 'sessions\outside.jsonl' -Id outside -Time '2026-05-28T15:59:59Z'
+      Add-Codex -File 'sessions\tomorrow.jsonl' -Id tomorrow -Time '2026-05-29T16:00:00Z'
+      $data = Invoke-Json
+      Assert ($data.meta.sources.codex.readStatus -eq 'success') 'Codex not collected'
+      Assert (@($data.repos).Count -eq 1) 'repo not deduplicated'
+      $evidence = @($data.repos[0].sessionEvidence)
+      Assert ($evidence.Count -eq 1) 'parent/continuation duplicate topic'
+      Assert (@($evidence[0].sessionIds).Count -eq 2) 'parent/child evidence lost'
+      Assert (@($evidence[0].files).Count -eq 3) 'archive/resume evidence lost'
+      Assert ($evidence[0].title -eq '修正合成登入流程') 'topic evidence missing'
+      $compact = (($data | ConvertTo-Json -Depth 12) | & $pwsh -NoProfile -File $formatter) | ConvertFrom-Json
+      Assert (@($compact.errors).Count -eq 0) 'formatter incompatible'
+      Assert (@($compact.repos[0].sessionEvidence[0].files).Count -eq 3) 'formatter lost Codex evidence'
+    }
+    'partial' {
+      Add-Codex
+      Write-Fixture "$root\codex\archived_sessions\bad.jsonl" '{broken'
+      Add-OpenCode -Fail
+      $data = Invoke-Json
+      Assert ($data.meta.sources.opencode.readStatus -eq 'failed') 'OpenCode failure missing'
+      Assert ($data.meta.sources.codex.readStatus -eq 'partial') 'Codex partial failure missing'
+      Assert ($data.meta.collectionStatus -eq 'partial') 'global partial status missing'
+      Assert ($data.meta.canGenerateLog) 'partial successful evidence blocked'
+      Assert (@($data.warnings).Count -gt 0) 'partial gap not disclosed'
+    }
+    'opencode' {
+      Write-Fixture "$root\logs\fallback.log" "INFO  2026-05-29T10:00:00 +1ms service=default directory=$root\repo creating instance"
+      Add-OpenCode
+      $data = Invoke-Json
+      Assert ($data.meta.sources.opencode.readStatus -eq 'empty') 'successful DB [] not authoritative'
+      Assert (@($data.repos).Count -eq 0) 'DB [] fell back'
+      Add-OpenCode -Fail
+      $data = Invoke-Json
+      Assert ($data.meta.sources.opencode.readStatus -eq 'success') 'DB failure did not fall back to readable logs'
+      Assert (@($data.repos).Count -eq 1) 'fallback evidence missing'
+      [IO.File]::Delete("$root\bin\opencode.ps1")
+      $data = Invoke-Json
+      Assert ($data.meta.sources.opencode.readStatus -eq 'success') 'no CLI readable OpenCode logs unavailable'
+    }
+    'merge' {
+      Add-Codex
+      $rows = @(@{id='one'; directory="$root\repo"; title='修正合成登入流程'}, @{id='two'; directory="$root\repo"; title='補上合成測試'}) | ConvertTo-Json -Compress
+      Add-OpenCode $rows
+      $data = Invoke-Json
+      Assert (@($data.repos).Count -eq 1) 'cross-source repo duplicated'
+      Assert (@($data.repos[0].sessionEvidence).Count -eq 3) 'same repo session/source evidence lost'
+      Assert (@($data.repos[0].sessionEvidence | Where-Object agent -eq codex).Count -eq 1) 'Codex evidence missing'
+      Assert (@($data.repos[0].sessionEvidence | Where-Object agent -eq opencode).Count -eq 2) 'OpenCode evidence missing'
+    }
+    'formatter' {
+      Add-Codex
+      $rows = @(1..6 | ForEach-Object { @{id="session-$_"; directory="$root\repo"; title="合成工作 $_"} }) | ConvertTo-Json -Compress
+      Add-OpenCode $rows
+      $data = Invoke-Json
+      $compact = (($data | ConvertTo-Json -Depth 12) | & $pwsh -NoProfile -File $formatter) | ConvertFrom-Json
+      Assert (@($compact.repos[0].sessionEvidence).Count -eq 7) 'formatter truncated session/source evidence'
+      Assert (@($compact.repos[0].sessionEvidence | Where-Object agent -eq codex).Count -eq 1) 'formatter dropped second agent'
+    }
+    'read-failures' {
+      Add-Codex
+      $locked = [IO.File]::Open("$root\codex\sessions\2020\old.jsonl", 'Open', 'ReadWrite', 'None')
+      try {
+        $probe = Invoke-Json -Probe
+        Assert ($probe.meta.sources.codex.available) 'probe attempted to read locked transcripts'
+        $data = Invoke-Json -Mode scan
+        Assert ($data.meta.collectionStatus -eq 'read-failed') 'locked source treated as empty'
+        Assert (-not (Test-Path "$root\calls.txt")) 'all read failures scanned git/gh'
+      } finally { $locked.Dispose() }
+      Write-Fixture "$root\logs\locked.log" 'synthetic inaccessible log'
+      Add-OpenCode -Fail
+      [IO.Directory]::Delete("$root\codex", $true)
+      $locked = [IO.File]::Open("$root\logs\locked.log", 'Open', 'ReadWrite', 'None')
+      try {
+        $data = Invoke-Json
+        Assert ($data.meta.sources.opencode.readStatus -eq 'failed') 'failed OpenCode logs treated as no activity'
+        Assert ($data.meta.collectionStatus -eq 'read-failed') 'OpenCode failed source allowed log'
+        Assert (-not (Test-Path "$root\calls.txt")) 'OpenCode read failures scanned git/gh'
+      } finally { $locked.Dispose() }
+    }
+    'archive-only' {
+      Add-Codex -File 'archived_sessions\only.jsonl' -Id child -Parent parent -Time '2026-05-28T16:00:00Z'
+      Add-Codex -File 'archived_sessions\native-child.jsonl' -Id native -Time '2026-05-29T15:59:59Z'
+      $nativeFile = "$root\codex\archived_sessions\native-child.jsonl"
+      $lines = [IO.File]::ReadAllLines($nativeFile)
+      $meta = $lines[0] | ConvertFrom-Json
+      $meta.payload | Add-Member -NotePropertyName source -NotePropertyValue @{subagent=@{thread_spawn=@{parent_thread_id='parent'}}}
+      $lines[0] = $meta | ConvertTo-Json -Depth 8 -Compress
+      Write-Fixture $nativeFile ($lines -join "`n")
+      $data = Invoke-Json
+      Assert ($data.meta.sources.codex.available) 'archive-only unavailable'
+      Assert (@($data.repos[0].sessionEvidence).Count -eq 1) 'native parent metadata not deduplicated'
+      Assert (@($data.repos[0].sessionEvidence[0].timestamps).Count -eq 2) 'inclusive timezone boundaries lost'
+      Assert (@($data.repos[0].sessionEvidence[0].sessionIds).Count -eq 2) 'archive parent evidence lost'
+    }
+    'db-fallback' {
+      Write-Fixture "$root\logs\fallback.log" "INFO  2026-05-29T10:00:00 +1ms service=default directory=$root\repo creating instance"
+      Add-OpenCode '{invalid'
+      $data = Invoke-Json
+      Assert (@($data.repos).Count -eq 1) 'invalid DB JSON did not fall back'
+      $record = @{updatedAt=1780010000000; injectedPaths=@("$root\repo")} | ConvertTo-Json -Compress
+      Write-Fixture "$root\storage\directory-readme\record.json" $record
+      Add-OpenCode -Fail
+      $data = Invoke-Json
+      Assert (@($data.repos).Count -eq 1) 'directory-readme fallback lost'
+      Assert ($data.repos[0].sessionEvidence[0].updatedAt -eq 1780010000000) 'directory-readme evidence lost'
+      [IO.File]::Delete("$root\bin\opencode.ps1")
+      $data = Invoke-Json
+      Assert ($data.meta.sources.opencode.available) 'CLI-less directory-readme source unavailable'
+    }
+    'source-isolation' {
+      Add-Codex
+      Add-OpenCode '[null]'
+      $data = Invoke-Json
+      Assert ($data.meta.sources.opencode.readStatus -eq 'failed') 'unexpected OpenCode reader failure not isolated'
+      Assert ($data.meta.sources.codex.readStatus -eq 'success') 'OpenCode reader exception blocked Codex'
+      Assert ($data.meta.collectionStatus -eq 'partial') 'unexpected source failure gap missing'
+      Assert (@($data.repos).Count -eq 1) 'remaining successful source not collected'
+    }
+    default { throw "Unknown case: $Case" }
+  }
+  "PASS $Case"
+}
+finally {
+  $env:PATH = $oldPath
+  if (Test-Path $root) { [IO.Directory]::Delete($root, $true) }
+}

@@ -164,7 +164,8 @@ end {
         shownCommits = @($summaryCommits | Select-Object -First $MaxCommitsPerRepo)
         prs = @($prTexts)
         lowSignalPrRefs = @($lowSignalPrRefs)
-        sessionEvidence = @((ConvertTo-Array -Value (Get-PropertyValue -Object $repo -Name 'sessionEvidence')) | Select-Object -First 5)
+        # 主題合併需要全部來源證據；截斷前五筆會讓另一來源或續行消失。
+        sessionEvidence = @(ConvertTo-Array -Value (Get-PropertyValue -Object $repo -Name 'sessionEvidence'))
         warnings = @($repoWarnings)
       })
     }
