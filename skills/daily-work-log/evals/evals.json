@@ -334,15 +334,15 @@
     {
       "id": 20,
       "prompt": "Codex 今天有一份昨天開啟、mtime 也是昨天的 session，事件 timestamp 落在今日台北時區；archived_sessions 裡有父子重播及同 ID 續行。請整理日誌。",
-      "expected_output": "正式蒐集包含 sessions 與 archived_sessions，依事件 timestamp／指定時區範圍納入跨日續行，不以檔名或 mtime 排除；父子／續行去重並保留 sessionIds、files 與 timestamps。",
+      "expected_output": "先 probe，再以有界日期分區蒐集；對選中檔依事件 timestamp／指定時區範圍納入，不以檔名或 mtime 代替事件時間。Archive 與範圍外分區可略過並明講缺口；已選父子／續行去重保留 sessionIds、files 與 timestamps，不宣稱完整。",
       "files": [],
-      "expectations": ["存在且可讀的 session／archive 都納入。", "事件 timestamp 是範圍判斷依據。", "去重不刪父子／續行來源證據。"],
-      "assertions": ["昨日檔名／mtime 不導致漏掉今日事件。", "相同工作不重複列出，範圍外事件不納入。"]
+      "expectations": ["日期只縮小候選；archive 略過並揭露 coverage。", "已選事件 timestamp 是範圍判斷依據。", "已選父子／續行去重不刪來源證據。"],
+      "assertions": ["選中檔的昨日檔名／mtime 不排除今日事件。", "沒有全歷史列舉或 archive 補掃。", "相同工作不重複列出，範圍外事件不納入，不宣稱完整。"]
     },
     {
       "id": 21,
-      "prompt": "OpenCode DB 失敗且所有 fallback 讀不到；Codex 有可讀當日活動，但 archive 有一份壞檔。請整理日誌並明講缺口。",
-      "expected_output": "正式 collection 使用 Codex 成功部分，揭露 OpenCode failed 與 Codex partial 的缺口；不宣稱完整。formatter 保留來源 metadata 與所有 session 證據，gh 預設停止／降級契約仍適用。",
+      "prompt": "OpenCode DB 失敗且所有 fallback 讀不到；Codex 選中日期分區有可讀當日活動及一份壞檔，archive 也存在。請整理日誌並明講缺口。",
+      "expected_output": "正式 collection 使用 Codex 成功部分，揭露 OpenCode failed、Codex partial 與 archive 略過的缺口；不宣稱完整。formatter 保留 coverage 與所有已選 session 證據，gh 預設停止／降級契約仍適用。",
       "files": [],
       "expectations": ["使用其他已驗證的來源，不因單一來源失敗停止所有蒐集。", "說明哪個來源 failed／partial，而非籠統稱沒有活動。"],
       "assertions": ["日誌只引用成功讀取的證據。", "缺口明確且沒有宣稱資料完整。"]
@@ -354,6 +354,30 @@
       "files": [],
       "expectations": ["DB 空結果仍具權威性。", "來源可用與當日有活動分開表達。"],
       "assertions": ["沒有來源失敗的錯誤宣稱。", "不使用舊 log 湊 repo 或產生工作日誌。"]
+    },
+    {
+      "id": 23,
+      "prompt": "Codex 首次整理今天日報，日期分區外有十萬舊檔，cache 不存在或損壞。允許漏收，但禁止全歷史掃描。請使用最小方案。",
+      "expected_output": "使用無 cache 的直接日期分區有界 collector，probe 不讀 transcript；正式搜尋與讀取依固定 cap 停止，明講 archive／範圍外／達限缺口。首次、重跑及錯誤都不 fallback 全掃。",
+      "files": [],
+      "expectations": ["不先全列再 filter，不排序全部歷史。", "不強制新增 cache subsystem。", "舊歷史增量不擴大候選訪問。"],
+      "assertions": ["coverage.complete=false；達 cap 停止並揭露 limitHits。", "沒有 recursive full-history enumeration/read/parse。", "只使用已選證據，不宣稱完整涵蓋。"]
+    },
+    {
+      "id": 24,
+      "prompt": "Codex 指定日期有超過 128 檔與巨大單行，其中前幾筆有有效活動。請整理日誌並顯示實際涵蓋限制。",
+      "expected_output": "依固定日期／entry／file／實際 byte cap 有界讀取；巨大單行不經無界 ReadLine，超長或截斷行不解析。保留前面成功活動，partial 明講限制造成的缺口，不擴大搜尋。",
+      "files": [],
+      "expectations": ["最多32日期、2048 entries、128 candidates、16 MiB total、2 MiB file、64 KiB line。", "列舉 lazy 達限即停，actual readBytes 不超額。"],
+      "assertions": ["limitHits 與 coverage counters 可觀察。", "partial 證據可用但不宣稱完整；沒有有效活動時不產生日誌。"]
+    },
+    {
+      "id": 25,
+      "prompt": "用合成資料證明這次 Codex 有界蒐集的工作量，不准讀真實私人歷史。請分開量測 probe 與 collection，提供冷暖數據與可公開 JSON。",
+      "expected_output": "執行隔離 synthetic benchmark，增加範圍外舊歷史後比較實際訪問 entries／opened files／read bytes，分開 probe／collection 冷暖耗時，保留外部 temp 的 sanitized JSON。註明 OS cache 未控制、memory 是 test process 累積 high-water、reference 只是合成 enumerate-read-parse，不宣稱 latency SLA 或等價速度比例。",
+      "files": [],
+      "expectations": ["全部紀錄入口與 CLI 隔離。", "記錄 output bytes 與量測範圍。", "reference 不作 production fallback。"],
+      "assertions": ["增加範圍外歷史後 collection counters 不增加。", "probe 只訪問已知入口第一個 entry，openedFiles/readBytes=0。", "公開 JSON 不包含私人內容或本機 fixture 絕對路徑。"]
     }
   ]
 }
