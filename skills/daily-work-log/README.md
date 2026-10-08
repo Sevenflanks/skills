@@ -52,6 +52,14 @@ Codex 從 `-CodexRoot`（否則 `CODEX_HOME`，再否則 `~/.codex`）直接定�
 | `unvisitedDays` | 因全域 cap 尚未開始 path 檢查的候選。空陣列也不能宣稱完整。 |
 | `stopReason` | 全域停止原因：`totalBytes`、`entries`、`files`、`days` 或 `candidate-days-exhausted`；同時達限依此前四項的順序呈現。最後一項只表示候選 traversal 結束。 |
 | `oversizedLines` | 已讀到超過 64 KiB 的行數，每行只計一次，包含丟棄中到 EOF／byte cap 的行；不是 JSON parse failure 數。 |
+| `fileCapStops` | 尚有未讀 bytes 且因單檔 cap 停止的檔數；真正 EOF 恰好達限不計，global／file 同時截斷仍計一次。 |
+| `readBytesDistribution` | 成功 open 的實讀量分布：count、totalBytes、minBytes、maxBytes 與固定五桶；空檔與中途失敗計入，open 失敗除外。無樣本極值為 null。 |
+| `oversizedDiscardBytes` | 已確認超長行的實讀丟棄 bytes，含 buffered prefix 與已讀 newline；是 readBytes 子集，不再加算預算。 |
+| `filesWithRangeEvents` | 去重前有保留範圍內事件的檔數，逐檔一次；不是 session 數或最終證據列數，後段失敗仍保留計數。 |
+
+詳細計帳、桶界、錯誤與去重定義以 [`SKILL.md` 的 aggregate 契約](SKILL.md#aggregate-診斷的計帳契約) 為準。Probe／不可用來源沒有 collection coverage；可用空來源則有零 counters、空分布。新增統計只使用固定大小 aggregate state，不保存新的逐檔路徑／內容。
+
+例如讀了 8 檔、64 MiB、8 次單檔停止、48 MiB 超長行丟棄，只有 2 檔產出範圍內事件，表示實讀量有 75% 用於已判定的超長行；不是「只有 2 個 session」，也無法推算漏了多少事件。要同時揭露 total cap、未訪問候選、archive／分區外續行；達限不能單獨證明額度不足或最佳值。
 
 `limitHits` 保留所有達限訊號，包括局部 `fileBytes`／`lineBytes`／`pathComponents`。局部達限仍可續讀其他候選，所以 `stopReason=candidate-days-exhausted` 可以同時有局部缺口；列舉失敗另看 `enumerationFailures`。Archive／範圍外續行、未讀完檔案或同日未列舉 entries 都可能漏收。恰好達 entries／files／totalBytes cap 保守回報，不額外讀取來證明完整；單檔在真正 EOF 恰好到 file cap 則不記 `fileBytes`。
 
@@ -71,6 +79,16 @@ JSON `meta.sources` 分別回報 OpenCode／Codex 的可用性、CLI 存在、�
 `scan`／`mixed` 保留原有跨 branch Git、worktree、current-author 與相關 PR 補證；也須先通過來源 guard。Codex 只有 CLI、沒有本機紀錄時略過。這個 skill 不自動安裝／登入 CLI、不修改來源資料、不新增其他 agent 來源。
 
 ## 執行與驗證
+
+### 摘要的交付狀態
+
+按 [`SKILL.md` Workflow 第 6 步](SKILL.md#workflow) 先對照交付證據，再合併同 repo／跨來源相同主題；不同實質工作仍分開，優先保留成果與待辦。例如：
+
+- 「登入修正已合併 #31；續作待合併 #33（Draft）」：前者需 MERGED，後者 OPEN 且已知 Draft；同主題不重複照抄 OpenCode／Codex 標題。
+- 「處理匯出截斷問題（session-only；尚無 commit／PR 證據）」：僅標題可支持處理主題，不宣稱驗收通過、部署成功或已合併。
+- 「取消舊方案 #34（已關閉、未合併）」：CLOSED 不等於已交付；commit 或 bot release 也不能替代 merge／實際部署證據。
+
+Formatter 保留 PR state，`[OPEN]` 包含 Draft 可能性；未保留 `isDraft` 時只寫待合併，不猜 ready。Session 標題本身即使寫「驗收通過」也須結果補證，才能用成果用語。
 
 ```powershell
 pwsh -NoProfile -File "<skill>\scripts\collect-daily-work-log.ps1" -ProbeOnly
@@ -105,6 +123,7 @@ $parameters = @{
 pwsh -NoProfile -File skills/daily-work-log/tests/bounded-collection.tests.ps1 -Case all -EvidenceRoot "<existing-external-temp-directory>"
 pwsh -NoProfile -File skills/daily-work-log/tests/multi-source.tests.ps1 -Case all
 Invoke-Pester -Script skills/daily-work-log/tests/collect-daily-work-log.tests.ps1
+pwsh -NoProfile -File skills/daily-work-log/tests/diagnostics.tests.ps1 -EvidenceRoot "<existing-external-temp-directory>"
 npm run validate
 ```
 
@@ -120,6 +139,8 @@ npm run validate
 
 ## 版本變更
 
+`0.5.0` 新增 aggregate 單檔停止／實讀分布／超長行丟棄 bytes／有範圍事件檔數，補足失敗與去重計帳、formatter 保留回歸及交付狀態摘要 evals。維持 64／8 MiB、既有排序／其他 caps、事件與 readStatus 契約；合成 fixture／stream faults／CLI stubs 並未驗證真實 workload 或實際摘要模型執行品質。
+
 `0.4.0` 新增可調 byte 額度，預設提高至 64／8 MiB；指定時區日期優先、超長行後串流續讀，新增 additive 日期／停止／超長行 coverage。既有 `readStatus` 與 formatter 相容；仍可漏收，沒有無上限或達限自動重跑。
 
 `0.3.0` 將 Codex 完整歷史涵蓋改為有界、可漏收；新增 coverage 與 probe counters，archive 正式略過。呼叫參數不變，摘要必須明講涵蓋缺口。
@@ -132,3 +153,4 @@ npm run validate
 - [`tests/bounded-collection.tests.ps1`](tests/bounded-collection.tests.ps1)：搜尋／I/O 上限、舊歷史增量與 synthetic benchmark。
 - [`tests/multi-source.tests.ps1`](tests/multi-source.tests.ps1)：來源組合、停止條件、Codex 選中跨日／去重、archive 略過與 formatter 合成測試。
 - [`tests/collect-daily-work-log.tests.ps1`](tests/collect-daily-work-log.tests.ps1)：既有 OpenCode、Git／PR 與 formatter 回歸。
+- [`tests/diagnostics.tests.ps1`](tests/diagnostics.tests.ps1)：僅載入 production functions，注入合成 Stream 的 Read／Dispose 失敗，驗證 catch／finally 計帳；不執行真實來源 probe。

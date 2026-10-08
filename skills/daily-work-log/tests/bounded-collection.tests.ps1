@@ -55,6 +55,10 @@ function Bounds($Data) {
   Assert ($c.readBytes -le $c.limits.totalBytes) 'actual byte budget exceeded'
   Assert (($c.visitedDays -join ',') -eq ($c.selectedDays -join ',') -and $c.daysConsidered -eq $c.visitedDays.Count) 'visited compatibility counters disagree'
   Assert ($c.candidateDays.Count -eq $c.visitedDays.Count + $c.unvisitedDays.Count) 'candidate coverage partition incomplete'
+  $d = $c.readBytesDistribution
+  Assert ($d.count -eq $c.openedFiles -and $d.totalBytes -eq $c.readBytes) 'aggregate actual reads disagree'
+  Assert (($d.buckets.zero + $d.buckets.upTo256KiB + $d.buckets.upTo1MiB + $d.buckets.upTo8MiB + $d.buckets.over8MiB) -eq $d.count) 'distribution buckets lost/duplicated opened files'
+  Assert ($c.oversizedDiscardBytes -ge 0 -and $c.oversizedDiscardBytes -le $c.readBytes -and $c.filesWithRangeEvents -le $c.openedFiles -and $c.fileCapStops -le $c.openedFiles) 'aggregate subset exceeds read/open population'
   return $c
 }
 
@@ -73,12 +77,81 @@ exit 1
   $null = Write-Fixture 'bin\git.ps1' ($stub.Replace('__REPO__', "$root\repo"))
   $env:PATH = "$root\bin;$pwshDirectory"
   if ($Case -eq 'all') {
-    foreach ($name in @('limits','date-priority','stream-boundaries','long-session','scope','days','max-date','probe-work','entries','files','bytes','line','partial-line','utf8','junction','path-components','statuses','benchmark')) {
+    foreach ($name in @('diagnostic-boundaries','diagnostic-distribution','diagnostic-events','limits','date-priority','stream-boundaries','long-session','scope','days','max-date','probe-work','entries','files','bytes','line','partial-line','utf8','junction','path-components','statuses','benchmark')) {
       & $PSCommandPath -Case $name -EvidenceRoot $EvidenceRoot
     }
     return
   }
   switch ($Case) {
+    'diagnostic-boundaries' {
+      $path = Write-Fixture 'codex\sessions\2026\05\29\stream.jsonl' ''
+      $fixtures = @(
+        @{label='diag-exact-line-lf'; text=(' ' * 64KB)+"`n"; discard=0; lines=0},
+        @{label='diag-over-line-crlf'; text=('x' * 64KB)+"`r`n"; discard=64KB+2; lines=1},
+        @{label='diag-over-line-eof'; text='x' * (64KB+1); discard=64KB+1; lines=1},
+        @{label='diag-two-lines'; text=(('x' * (64KB+1))+"`n")*2; discard=2*(64KB+2); lines=2},
+        @{label='diag-discard-file'; text=('x' * 100000)+"`n"; cap=70000; discard=70000; lines=1; fileStops=1},
+        @{label='diag-discard-tie'; text=('x' * 100000)+"`n"; cap=70000; total=70000; discard=70000; lines=1; fileStops=1},
+        @{label='diag-discard-global'; text=('x' * 100000)+"`n"; total=70000; discard=70000; lines=1},
+        @{label='diag-unconfirmed-tail'; text=('x' * 100000)+"`n"; cap=64KB; discard=0; lines=0; fileStops=1},
+        @{label='diag-exact-file-eof'; text=' ' * 4096; cap=4096; discard=0; lines=0},
+        @{label='diag-exact-tie-eof'; text=(' ' * 4095)+"`n"; cap=4096; total=4096; discard=0; lines=0},
+        @{label='diag-newline-cap'; text=((' ' * 4095)+"`n")+'tail'; cap=4096; discard=0; lines=0; fileStops=1}
+      )
+      foreach ($fixture in $fixtures) {
+        [IO.File]::WriteAllText($path, $fixture.text, [Text.UTF8Encoding]::new($false))
+        $limits = @{}
+        if ($fixture.ContainsKey('cap')) { $limits.CodexFileBytes = $fixture.cap }
+        if ($fixture.ContainsKey('total')) { $limits.CodexTotalBytes = $fixture.total }
+        $data = Collect -Limits $limits -Label $fixture.label
+        $c = Bounds $data
+        $expectedRead = [Text.Encoding]::UTF8.GetByteCount($fixture.text)
+        foreach ($key in @('cap','total')) { if ($fixture.ContainsKey($key)) { $expectedRead = [Math]::Min($expectedRead,$fixture[$key]) } }
+        $stops = if ($fixture.ContainsKey('fileStops')) { $fixture.fileStops } else { 0 }
+        Assert ($c.readBytes -eq $expectedRead -and $c.oversizedDiscardBytes -eq $fixture.discard -and $c.oversizedLines -eq $fixture.lines) "$($fixture.label): oversized prefix/newline/cap accounting wrong"
+        Assert ($c.fileCapStops -eq $stops -and $c.filesWithRangeEvents -eq 0) "$($fixture.label): file stop/event population wrong"
+        Assert ($c.readBytesDistribution.count -eq 1 -and $c.readBytesDistribution.totalBytes -eq $expectedRead -and $c.readBytesDistribution.minBytes -eq $expectedRead -and $c.readBytesDistribution.maxBytes -eq $expectedRead) "$($fixture.label): actual read distribution wrong"
+        Assert ($data.meta.sources.codex.readStatus -eq 'empty') 'diagnostics changed empty readStatus'
+        "PASS $($fixture.label)"
+      }
+    }
+    'diagnostic-distribution' {
+      foreach ($size in @(0,1,256KB,(256KB+1),1MB,(1MB+1),8MB,(8MB+1))) {
+        $null = Write-Fixture "codex\sessions\2026\05\29\size-$size.jsonl" ((' ' * 4095 + "`n") * [Math]::Floor($size/4096) + (' ' * ($size%4096)))
+      }
+      $c = Bounds (Collect -Limits @{CodexFileBytes=16MB} -Label diag-distribution)
+      $d = $c.readBytesDistribution
+      Assert ($d.count -eq 8 -and $d.totalBytes -eq $c.readBytes -and $d.minBytes -eq 0 -and $d.maxBytes -eq (8MB+1)) 'distribution population/sum/extrema wrong'
+      Assert ($d.buckets.zero -eq 1 -and $d.buckets.upTo256KiB -eq 2 -and $d.buckets.upTo1MiB -eq 2 -and $d.buckets.upTo8MiB -eq 2 -and $d.buckets.over8MiB -eq 1) 'fixed bucket boundaries wrong'
+      Assert ($c.fileCapStops -eq 0 -and $c.filesWithRangeEvents -eq 0) 'whitespace files counted as events/stops'
+      [IO.Directory]::Delete("$root\codex", $true)
+      $null = [IO.Directory]::CreateDirectory("$root\codex\sessions")
+      $c = Bounds (Collect -Label diag-empty-directory)
+      Assert ($c.readBytesDistribution.count -eq 0 -and $c.readBytesDistribution.totalBytes -eq 0 -and $null -eq $c.readBytesDistribution.minBytes -and $null -eq $c.readBytesDistribution.maxBytes -and $c.oversizedDiscardBytes -eq 0 -and $c.filesWithRangeEvents -eq 0 -and $c.fileCapStops -eq 0) 'empty population must have null extrema and zero counters'
+      $probe = Collect -Probe -Label diag-probe
+      Assert (-not $probe.meta.sources.codex.PSObject.Properties['coverage'] -and $probe.meta.sources.codex.probeWork.readBytes -eq 0) 'probe invented collection diagnostics'
+      [IO.Directory]::Delete("$root\codex", $true)
+      $unavailable = Collect -Label diag-unavailable
+      Assert ($unavailable.meta.sources.codex.readStatus -eq 'unavailable' -and -not $unavailable.meta.sources.codex.PSObject.Properties['coverage']) 'unavailable source invented collection diagnostics'
+    }
+    'diagnostic-events' {
+      $null = Write-Fixture 'codex\sessions\2026\05\29\parent.jsonl' (((Session) -join "`n")+"`n"+(Session)[1]+"`n{broken`n")
+      $null = Write-Fixture 'codex\sessions\2026\05\29\child.jsonl' ((Session -Id child -Parent parent) -join "`n")
+      $null = Write-Fixture 'codex\sessions\2026\05\29\outside.jsonl' ((Session -Time '2026-05-30T02:00:00Z') -join "`n")
+      $null = Write-Fixture 'codex\sessions\2026\05\29\no-cwd.jsonl' (Session)[1]
+      $null = Write-Fixture 'codex\sessions\2026\05\29\metadata.jsonl' (Session)[0]
+      $null = Write-Fixture 'codex\sessions\2026\05\29\telemetry.jsonl' '{"type":"event_msg","timestamp":"2026-05-29T02:00:00Z","payload":{"type":"token_count"}}'
+      $lockedPath = Write-Fixture 'codex\sessions\2026\05\29\locked.jsonl' ((Session) -join "`n")
+      $locked = [IO.File]::Open($lockedPath,'Open','ReadWrite','None')
+      try { $data = Collect -Label diag-events-failures } finally { $locked.Dispose() }
+      $c = Bounds $data
+      Assert ($c.candidateFiles -eq 7 -and $c.openedFiles -eq 6 -and $c.readBytesDistribution.count -eq 6 -and $c.readBytesDistribution.totalBytes -eq $c.readBytes) 'failed open entered distribution'
+      Assert ($c.filesWithRangeEvents -eq 2 -and @($data.repos[0].sessionEvidence).Count -eq 1 -and $data.repos[0].sessionEvidence[0].files.Count -eq 2) 'per-file retained event semantics changed by dedup/failure/nonactivity'
+      Assert ($data.meta.sources.codex.readStatus -eq 'partial') 'failure diagnostics changed readStatus'
+      $formatter = Join-Path $PSScriptRoot '..\scripts\format-daily-work-log-evidence.ps1'
+      $compact = ($data | ConvertTo-Json -Depth 12) | & $formatter | ConvertFrom-Json
+      Assert (@($compact.errors).Count -eq 0 -and ($compact.meta.sources.codex.coverage | ConvertTo-Json -Depth 10 -Compress) -eq ($c | ConvertTo-Json -Depth 10 -Compress)) 'formatter lost aggregate diagnostics'
+    }
     'limits' {
       $null = Write-Fixture 'codex\sessions\2026\05\29\empty.jsonl' ''
       $c = Bounds (Collect -Label default-limits)

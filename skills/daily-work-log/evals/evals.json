@@ -402,6 +402,38 @@
       "files": [],
       "expectations": ["所有丟棄 bytes 都計單檔及總額度。", "4／64 KiB buffers 不被宣稱為整個 process 的 hard memory cap。"],
       "assertions": ["保留既有 partial／failed／empty 語意與前後有效事件。", "合成量測揭露計時與 memory 界線，不宣稱性能 SLA 或真實 workload 已確認。"]
+    },
+    {
+      "id": 29,
+      "prompt": "整理 Codex 日報：coverage complete=false，readBytes=67108864，openedFiles=8，fileCapStops=8，oversizedDiscardBytes=50331648，filesWithRangeEvents=2，readBytesDistribution count=8、totalBytes=67108864、minBytes=maxBytes=8388608，桶 upTo8MiB=8、其他0；stopReason=totalBytes，有未訪問日期，archive／分區外續行略過。最後只有一列去重 evidence。請解釋消耗與缺口，不加碼重跑。",
+      "expected_output": "說明 64 MiB 實讀中 48 MiB／75% 為已判定超長行丟棄，8 個成功 open 檔各讀 8 MiB 且有未讀尾部；2 個貢獻事件檔可去重成1列，不是2 sessions。保留 total cap、未訪問、封存與分區外續行缺口；不推算遺漏事件數或斷言額度太小。",
+      "files": [],
+      "expectations": ["診斷是讀取預算內的子集，不把丟棄量再次加到64 MiB。", "桶為每檔實讀量，不是檔案大小、解析成功行數或 session 數。", "同時揭露 partial／complete=false 與已略過範圍，不因一列證據推論只有一個工作或完整無遺漏。"],
+      "assertions": ["指出75%消耗及2個有事件檔與1列去重證據的差別。", "沒有自動提高64／8 MiB、重跑、全歷史掃描或完整涵蓋保證。"]
+    },
+    {
+      "id": 30,
+      "prompt": "Codex probe 的 openedFiles/readBytes 都是0且沒有 collection coverage。正式可用空來源的 aggregate counters為0、distribution count/total/buckets為0、min/max=null；另一次所有 open 失敗，distribution也是空但readStatus=failed。還有一檔 file/global cap 同時70000、仍有尾部，讀到超過64KiB prefix後丟棄到cap；另一檔4096bytes恰好EOF。解讀這些差別。",
+      "expected_output": "Probe 未讀 transcript、沒有正式診斷；空正式來源是空母體、不代表完整查無活動。Open失敗不入分布，failed不是empty；若open後Read失敗則已實讀bytes仍入帳。70000截斷tie計fileCapStops一次、file/total兩個hit、stopReason=totalBytes，oversizedDiscardBytes包含prefix且只算已讀70000。EOFexact不計file stop，total達限仍保守hit。",
+      "files": [],
+      "expectations": ["維持既有readStatus／來源guard，不用新counter把failed改成可產生日誌。", "64KiB+LF未超長，64KiB+CRLF超長；未確認超長的capped尾行不算oversized。"],
+      "assertions": ["不把probe零讀取當今日無活動。", "不把空母體min/max寫成已讀0bytes的樣本，不將tie重複計檔數或預算。"]
+    },
+    {
+      "id": 31,
+      "prompt": "同repo OpenCode與Codex都記錄登入修正；PR #31 state=MERGED，續作 PR #33 state=OPEN、isDraft=true。兩邊還記錄另一項匯出截斷修正，只有session title『匯出驗收通過、部署成功』，沒有commit／PR／驗證結果。請整理工作日誌。",
+      "expected_output": "同登入主題合併跨來源證據，保留『登入修正已合併 #31；續作待合併 #33（Draft）』。匯出截斷是另一實質工作，另列session-only／僅session證據、驗證／處理中與待補證；不沿用標題宣稱驗收或部署成功。",
+      "files": [],
+      "expectations": ["一個merged PR不把整個主題或另一個Draft宣稱完成。", "不重複列兩來源相同主題，也不把登入和匯出硬合併。", "優先保留已交付成果與待完成工作，不照抄標題做已完成清單。"],
+      "assertions": ["#31已合併與#33待合併Draft用語清楚區分。", "匯出標為session-only且沒有無證據的驗收通過／部署成功／已合併宣稱。"]
+    },
+    {
+      "id": 32,
+      "prompt": "Formatter prs文字只有『PR #41: 權限查詢 [OPEN]』、『PR #42: 舊方案 [CLOSED]』。有同主題commit，但沒有isDraft或部署結果。另一repo只有session title『付款流程完成』，請整理日報並保留待辦。",
+      "expected_output": "#41待合併，不猜ready或Draft；#42已關閉、未合併，不當成果；commit不證明merge／驗收／部署。另一repo標session-only，處理付款流程、待補交付證據，不把完成標題當實際成果。",
+      "files": [],
+      "expectations": ["缺少Draft資訊時維持待合併而非猜ready。", "CLOSED沒有MERGED證據不稱已交付。", "repo分組與有意義待辦保留，session-only不略過也不過度宣稱。"],
+      "assertions": ["沒有已部署或驗收通過的無證據推論。", "session-only與有Git／PR證據的工作狀態清楚區分。"]
     }
   ]
 }
