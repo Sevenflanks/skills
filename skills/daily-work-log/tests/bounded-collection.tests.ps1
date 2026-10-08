@@ -69,7 +69,7 @@ exit 1
   $null = Write-Fixture 'bin\git.ps1' ($stub.Replace('__REPO__', "$root\repo"))
   $env:PATH = "$root\bin;$pwshDirectory"
   if ($Case -eq 'all') {
-    foreach ($name in @('scope','days','max-date','probe-work','entries','files','bytes','line','partial-line','junction','statuses','benchmark')) {
+    foreach ($name in @('scope','days','max-date','probe-work','entries','files','bytes','line','partial-line','utf8','junction','statuses','benchmark')) {
       & $PSCommandPath -Case $name -EvidenceRoot $EvidenceRoot
     }
     return
@@ -148,6 +148,46 @@ exit 1
       $c = Bounds $data
       Assert ('fileBytes' -in $c.limitHits) 'partial line did not expose byte limit'
       Assert ($data.meta.sources.codex.readStatus -eq 'empty') 'partial JSON tail incorrectly classified as parse failure'
+    }
+    'utf8' {
+      $prefix = [Text.Encoding]::UTF8.GetBytes(((Session -Text '壞 UTF-8 前的有效工作') -join "`n") + "`n")
+      $suffix = [Text.Encoding]::UTF8.GetBytes(((Session -Text '壞 UTF-8 後的有效工作') -join "`n") + "`n")
+      # JSON 結構有效，只有 message 中的 0xFF 壞掉；寬鬆 replacement 解碼會錯收第三筆工作。
+      $badLine = [byte[]]([Text.Encoding]::UTF8.GetBytes('{"type":"event_msg","timestamp":"2026-05-29T02:00:00Z","payload":{"type":"user_message","message":"') + @(0xff) + [Text.Encoding]::UTF8.GetBytes('"}}' + "`n"))
+      $path = Write-Fixture 'codex\sessions\2026\05\29\bytes.jsonl' ''
+      [IO.File]::WriteAllBytes($path, [byte[]]($prefix + $badLine + $suffix))
+      $data = Collect -Label utf8-mixed
+      $c = Bounds $data
+      Assert ($data.meta.sources.codex.readStatus -eq 'partial' -and $data.meta.canGenerateLog) 'invalid UTF-8 discarded valid evidence instead of partial'
+      Assert (@($data.repos).Count -eq 1 -and @($data.repos[0].sessionEvidence).Count -eq 2) 'valid work before/after invalid UTF-8 lost'
+      Assert (@($data.warnings | Where-Object { $_ -like 'Some Codex events could not be read or parsed:*' }).Count -eq 1) 'invalid UTF-8 gap not disclosed'
+      Assert ($c.openedFiles -eq 1 -and $c.readBytes -eq $prefix.Length + $badLine.Length + $suffix.Length) 'invalid UTF-8 changed actual read accounting'
+
+      [IO.File]::WriteAllBytes($path, [byte[]]($prefix + @(0xff)))
+      $data = Collect -Label utf8-bad-eof
+      $c = Bounds $data
+      Assert ($data.meta.sources.codex.readStatus -eq 'partial' -and @($data.repos[0].sessionEvidence).Count -eq 1) 'invalid UTF-8 EOF discarded preceding evidence'
+      Assert ($c.readBytes -eq $prefix.Length + 1 -and @($c.limitHits).Count -eq 0) 'invalid UTF-8 EOF mislabeled as byte truncation'
+
+      [IO.File]::WriteAllBytes($path, [byte[]]@(0xff, 10, 0xfe, 10))
+      $data = Collect -Label utf8-all-failed
+      $c = Bounds $data
+      Assert ($data.meta.sources.codex.readStatus -eq 'failed' -and $data.meta.collectionStatus -eq 'read-failed' -and -not $data.meta.canGenerateLog) 'all-invalid UTF-8 escaped failed stop state'
+      Assert (@($data.repos).Count -eq 0 -and -not $data.meta.ghAvailable -and $c.readBytes -eq 4) 'all-invalid UTF-8 produced work or bypassed stop guard'
+
+      # byte cap 剛好切在「中」的第一個 byte；未讀完尾行應略過，不冒充完整壞行。
+      $cap = 2097152
+      $bytes = [byte[]]::new($cap + 3)
+      [Array]::Fill[byte]($bytes, 32)
+      [Array]::Copy($prefix, $bytes, $prefix.Length)
+      for ($i = $prefix.Length; $i -lt $cap - 2; $i += 1024) { $bytes[$i] = 10 }
+      $bytes[$cap-1] = 0xe4; $bytes[$cap] = 0xb8; $bytes[$cap+1] = 0xad; $bytes[$cap+2] = 10
+      [IO.File]::WriteAllBytes($path, $bytes)
+      $data = Collect -Label utf8-truncated-tail
+      $c = Bounds $data
+      Assert ($data.meta.sources.codex.readStatus -eq 'partial' -and @($data.repos[0].sessionEvidence).Count -eq 1) 'UTF-8 tail truncation lost preceding evidence'
+      Assert ($c.readBytes -eq $cap -and 'fileBytes' -in $c.limitHits) 'UTF-8 tail escaped byte cap'
+      Assert (@($data.warnings | Where-Object { $_ -like 'Some Codex events could not be read or parsed:*' }).Count -eq 0) 'truncated UTF-8 tail falsely classified as corrupt full line'
     }
     'junction' {
       $null = Write-Fixture 'outside\secret.jsonl' ((Session) -join "`n")

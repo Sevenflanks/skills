@@ -209,7 +209,7 @@ function Test-CodexPartitionPath {
 }
 
 function Read-CodexLinesBounded {
-  param([string]$Path, [object]$Coverage)
+  param([string]$Path, [object]$Coverage, [ref]$ReadFailed)
   $budget = [int][Math]::Min($Coverage.limits.fileBytes, $Coverage.limits.totalBytes - $Coverage.readBytes)
   if ($budget -le 0) { return }
   $stream = $null
@@ -238,7 +238,13 @@ function Read-CodexLinesBounded {
         $end = $count
       }
       if ($end - $start -gt $Coverage.limits.lineBytes) { $null = $Coverage.limitHits.Add('lineBytes'); break }
-      $line = $utf8.GetString($buffer, $start, $end - $start).TrimEnd([char]13)
+      # 解碼失敗只略過該完整行；若拋出例外，foreach 求值會連前段有效 evidence 一起丟失。
+      try { $line = $utf8.GetString($buffer, $start, $end - $start).TrimEnd([char]13) }
+      catch [Text.DecoderFallbackException] {
+        $ReadFailed.Value = $true
+        $start = $end + 1
+        continue
+      }
       if ($start -eq 0) { $line = $line.TrimStart([char]0xfeff) }
       $line
       $start = $end + 1
@@ -263,7 +269,7 @@ function Get-CodexSessionDirectories {
       $validTimedEvents = 0
       $fileFailed = $false
       try {
-        foreach ($line in (Read-CodexLinesBounded -Path $file.FullName -Coverage $Source.coverage)) {
+        foreach ($line in (Read-CodexLinesBounded -Path $file.FullName -Coverage $Source.coverage -ReadFailed ([ref]$fileFailed))) {
           if ([string]::IsNullOrWhiteSpace($line)) { continue }
           try {
             $event = $line | ConvertFrom-Json
