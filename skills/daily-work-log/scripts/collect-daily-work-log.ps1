@@ -167,7 +167,7 @@ function Get-CodexSessionDirectories {
       $reader = $null
       $sessionId = $file.FullName
       $cwd = $null
-      $validLines = 0
+      $validTimedEvents = 0
       $fileFailed = $false
       try {
         $stream = [System.IO.FileStream]::new($file.FullName, 'Open', 'Read', ([System.IO.FileShare]::ReadWrite -bor [System.IO.FileShare]::Delete))
@@ -179,7 +179,6 @@ function Get-CodexSessionDirectories {
             if ($null -eq $event -or -not (Get-ObjectPropertyValue $event 'type')) { throw 'Invalid event' }
           }
           catch { $fileFailed = $true; continue }
-          $validLines++
           $type = [string](Get-ObjectPropertyValue $event 'type')
           $payload = Get-ObjectPropertyValue $event 'payload'
           if ($type -eq 'session_meta') {
@@ -205,6 +204,7 @@ function Get-CodexSessionDirectories {
             $time = if ($rawTime -is [datetime]) { [datetimeoffset]$rawTime } else { [datetimeoffset]::Parse([string]$rawTime, [System.Globalization.CultureInfo]::InvariantCulture) }
           }
           catch { $fileFailed = $true; continue }
+          $validTimedEvents++
           if ($time -lt $FromRange -or $time -gt $ToRange) { continue }
           $payloadType = [string](Get-ObjectPropertyValue $payload 'type')
           $text = $null
@@ -231,8 +231,8 @@ function Get-CodexSessionDirectories {
             time = $time.ToString('o'); file = $file.FullName
           })
         }
-        # 真正空檔是可讀的空紀錄；只有損壞行時不是「無活動」。
-        if ($validLines -gt 0 -or -not $fileFailed) { $readCount++ }
+        # 空檔／合法 metadata-only session 仍是 empty；metadata 不可救回時間戳全壞的事件。
+        if ($validTimedEvents -gt 0 -or -not $fileFailed) { $readCount++ }
       }
       catch { $fileFailed = $true }
       finally { if ($null -ne $reader) { $reader.Dispose() } }

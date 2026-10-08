@@ -5,7 +5,7 @@ param([string]$Case = 'probe', [string]$EvidenceRoot)
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 if ($Case -eq 'all') {
-  foreach ($name in @('probe', 'guard', 'empty-failed', 'codex', 'partial', 'opencode', 'merge', 'formatter', 'read-failures', 'archive-only', 'db-fallback', 'source-isolation')) {
+  foreach ($name in @('probe', 'guard', 'empty-failed', 'codex', 'partial', 'opencode', 'merge', 'formatter', 'read-failures', 'archive-only', 'db-fallback', 'source-isolation', 'timestamp-failure', 'valid-empty-events', 'timestamp-partial')) {
     & $PSCommandPath -Case $name -EvidenceRoot $EvidenceRoot
   }
   return
@@ -234,6 +234,52 @@ exit 1
       Assert ($data.meta.sources.codex.readStatus -eq 'success') 'OpenCode reader exception blocked Codex'
       Assert ($data.meta.collectionStatus -eq 'partial') 'unexpected source failure gap missing'
       Assert (@($data.repos).Count -eq 1) 'remaining successful source not collected'
+    }
+    'timestamp-failure' {
+      $badEvent = @{timestamp='broken'; type='event_msg'; payload=@{type='user_message'; message='合成活動'}} | ConvertTo-Json -Depth 5 -Compress
+      foreach ($withMetadata in @($false, $true)) {
+        $lines = @()
+        if ($withMetadata) {
+          $lines += (@{timestamp='2026-05-29T02:00:00Z'; type='session_meta'; payload=@{id='synthetic'; cwd="$root\repo"}} | ConvertTo-Json -Depth 5 -Compress)
+        }
+        $lines += $badEvent
+        Write-Fixture "$root\codex\sessions\bad-time.jsonl" ($lines -join "`n")
+        foreach ($mode in @('scan', 'mixed', 'session')) {
+          $data = Invoke-Json -Mode $mode
+          Assert ($data.meta.sources.codex.readStatus -eq 'failed') "bad activity timestamp escaped failure (metadata=$withMetadata, mode=$mode)"
+          Assert ($data.meta.collectionStatus -eq 'read-failed') 'all timestamp failures did not stop collection'
+          Assert (-not $data.meta.canGenerateLog) 'invalid timestamp allowed work log'
+          Assert (@($data.repos).Count -eq 0) 'invalid timestamp collected repositories'
+          Assert (-not (Test-Path "$root\calls.txt")) 'invalid timestamp invoked git/gh'
+        }
+      }
+    }
+    'valid-empty-events' {
+      $meta = @{timestamp='2026-05-29T02:00:00Z'; type='session_meta'; payload=@{id='synthetic'; cwd="$root\repo"}} | ConvertTo-Json -Depth 5 -Compress
+      $context = @{timestamp='2026-05-29T02:00:00Z'; type='turn_context'; payload=@{cwd="$root\repo"}} | ConvertTo-Json -Depth 5 -Compress
+      $telemetry = @{timestamp='2026-05-29T02:00:00Z'; type='event_msg'; payload=@{type='token_count'; info=@{total_token_usage=@{input_tokens=10}}}} | ConvertTo-Json -Depth 6 -Compress
+      foreach ($content in @('', $meta, ($meta + "`n" + $context), ($meta + "`n" + $telemetry))) {
+        Write-Fixture "$root\codex\sessions\empty-session.jsonl" $content
+        $data = Invoke-Json
+        Assert ($data.meta.sources.codex.readStatus -eq 'empty') 'valid empty/metadata/non-activity session treated as failure'
+        Assert ($data.meta.collectionStatus -eq 'no-activity') 'valid empty session lost no-activity status'
+        Assert (-not $data.meta.canGenerateLog) 'empty session invented work log'
+        Assert (-not (Test-Path "$root\calls.txt")) 'empty session invoked git/gh'
+      }
+    }
+    'timestamp-partial' {
+      Add-Codex -Time broken
+      $validEvent = @{timestamp='2026-05-29T02:00:00Z'; type='event_msg'; payload=@{type='agent_message'; message='已完成合成修正'}} | ConvertTo-Json -Depth 5 -Compress
+      [IO.File]::AppendAllText("$root\codex\sessions\2020\old.jsonl", "`n" + $validEvent)
+      $data = Invoke-Json
+      Assert ($data.meta.sources.codex.readStatus -eq 'partial') 'valid different event could not preserve partial result'
+      Assert ($data.meta.canGenerateLog) 'valid activity blocked by bad sibling timestamp'
+      Assert (@($data.repos[0].sessionEvidence).Count -eq 1) 'bad timestamp activity entered evidence'
+      Assert ($data.repos[0].sessionEvidence[0].title -eq '已完成合成修正') 'valid different activity evidence missing'
+      Add-Codex -Time '2026-05-28T15:59:59Z'
+      $data = Invoke-Json
+      Assert ($data.meta.sources.codex.readStatus -eq 'empty') 'valid out-of-range timestamp treated as failure'
+      Assert (-not $data.meta.canGenerateLog) 'out-of-range activity entered work log'
     }
     default { throw "Unknown case: $Case" }
   }
