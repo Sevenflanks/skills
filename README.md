@@ -9,7 +9,7 @@
 | Skill | 版本 | 狀態 | 說明 | 路徑 |
 | --- | --- | --- | --- | --- |
 | `code-intent-comments` | `0.1.0` | stable | 引導 agent 以白話繁中撰寫高價值程式註解，補足 class 責任、核心邏輯、CR、相容性與高風險脈絡。 | [`skills/code-intent-comments/`](skills/code-intent-comments/) |
-| `daily-work-log` | `0.3.0` | stable | 先探測並合併 OpenCode／Codex 活動與 Git／GitHub 證據；Codex 有界蒐集並揭露涵蓋缺口。 | [`skills/daily-work-log/`](skills/daily-work-log/) |
+| `daily-work-log` | `0.4.0` | stable | 先探測並合併 OpenCode／Codex 活動與 Git／GitHub 證據；Codex 有界蒐集並揭露涵蓋缺口。 | [`skills/daily-work-log/`](skills/daily-work-log/) |
 | `gh-body-file` | `0.1.1` | stable | 在 Windows、PowerShell、OpenCode shell 環境中，安全使用 GitHub CLI 支援 `--body-file` 的指令。 | [`skills/gh-body-file/`](skills/gh-body-file/) |
 | `agent-process-lifecycle` | `1.1.1` | stable | 管理可能卡住或跨越 tool call 的本機 process；Windows 同 tool Stop 採當次 owner cleanup 契約，跨 tool Preserve 才需背景返回；缺證據的特殊路由可診斷；non-Windows 僅分類、handoff 或 launch 前 blocked。 | [`skills/agent-process-lifecycle/`](skills/agent-process-lifecycle/) |
 | `finish-and-admin-merge` | `0.1.2` | stable | 依最新 PR、review 與 checks 證據執行已授權的 admin squash merge，並安全收尾 branch／worktree。 | [`skills/finish-and-admin-merge/`](skills/finish-and-admin-merge/) |

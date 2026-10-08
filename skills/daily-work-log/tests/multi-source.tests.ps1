@@ -184,6 +184,8 @@ exit 1
       $compact = (($data | ConvertTo-Json -Depth 12) | & $pwsh -NoProfile -File $formatter) | ConvertFrom-Json
       Assert (@($compact.repos[0].sessionEvidence).Count -eq 7) 'formatter truncated session/source evidence'
       Assert (@($compact.repos[0].sessionEvidence | Where-Object agent -eq codex).Count -eq 1) 'formatter dropped second agent'
+      $coverage = $compact.meta.sources.codex.coverage
+      Assert (-not $coverage.complete -and ($coverage.candidateDays -join ',') -eq '2026/05/29,2026/05/28' -and ($coverage.visitedDays -join ',') -eq ($coverage.selectedDays -join ',') -and $coverage.unvisitedDays.Count -eq 0 -and $coverage.stopReason -eq 'candidate-days-exhausted' -and $coverage.oversizedLines -eq 0) 'formatter lost additive coverage semantics'
     }
     'read-failures' {
       Add-Codex

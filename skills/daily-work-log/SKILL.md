@@ -4,7 +4,7 @@ description: 整理每日工作日誌或跨 repo 今日工作時使用。先探�
 license: MIT
 metadata:
   author: sevenflankse
-  version: 0.3.0
+  version: 0.4.0
 ---
 
 # Daily Work Log
@@ -76,7 +76,7 @@ Do not use this skill when:
 5. **Inspect collection gaps before writing the summary**
    - 先檢查 `errors`、`meta.canGenerateLog`、`meta.collectionStatus` 與各 `readStatus`。`no-sources`／`read-failed` 停止；`no-activity` 說明來源可讀但沒有當日證據，不能稱為讀取失敗或產生空白工作日誌。
    - `readStatus` 分別為 `unavailable`、`not-read`（probe）、`empty`、`success`、`partial`、`failed`。`partial`／`failed` 或略過來源要指出缺口；有其他成功來源可繼續，不宣稱資料完整。
-   - 檢查 Codex `coverage.complete=false`、`selectedDays`、`limitHits`、`skipped` 與實際訪問／讀取 counters；即使 `success` 或 `empty` 也只代表已選資料。有界空結果不能稱為「完整查過今天沒有工作」。
+    - 檢查 Codex `coverage.complete=false`、`candidateDays`／`visitedDays`／`unvisitedDays`、`stopReason`、`oversizedLines`、`limitHits`、`skipped` 與實際訪問／讀取 counters；即使 `success`、`empty` 或沒有未訪問日期，也只代表已選資料。有界空結果不能稱為「完整查過今天沒有工作」。
    - `canGenerateLog=false` 時只說明狀態與原因，不能憑記憶或額外掃描補成日誌。
    - Check `meta.ghAvailable` and `meta.ghViewer`.
    - If GitHub CLI is unavailable or not authenticated, stop before writing the daily log. Tell the user to install `gh` or run `gh auth login`, then rerun collection.
@@ -139,15 +139,17 @@ Treat collector JSON as source of truth:
 
 **允許漏收，但所有首次、重跑與錯誤路徑都禁止全歷史列舉／讀取／解析，包括先全列再 filter。** 採無 cache 的直接日期定位；錯誤只回報缺口，不擴大搜尋。
 
-- 候選日期是起迄時間的 UTC 日期與 `Timezone` 日期之最小至最大值，升序最多 **32 日**；跨時區日界可多選一日。日期只定位目錄，已選事件仍以 timestamp 判範圍。
+- 候選日期聯集維持起迄時間的 UTC 日期與 `Timezone` 日期之最小至最大值；先訪問指定時區的實際日期升序，再補 UTC 額外候選升序，最多開始 **32 日**的 partition path 檢查。日期只定位目錄，已選事件仍以 timestamp 判範圍。
 - 每日只 lazy 列舉該分區第一層，跨日期共最多 **2,048 entries／128 JSONL 候選檔**。非 JSONL 與子目錄也計 entry；不排序、不展開子目錄，達限即 Dispose，不再呼叫 MoveNext。
-- 每檔最多實際讀 **2 MiB**，每次 collection 共 **16 MiB**；FileStream.Read 以 **4 KiB** chunks 讀入有限 buffer，不用無界 ReadLine。完整單行上限 **64 KiB**；超長行停止該檔後續解析，未讀完的尾行略過，完整且損壞的 JSON 仍是讀取失敗。達總 byte cap 停止後續候選搜尋。
+- `-CodexTotalBytes`／`-CodexFileBytes` 預設為每次 **64 MiB**／每檔 **8 MiB**；只接受 **1 至 9,223,372,036,854,775,807 的整數 bytes**，可明確指定 **128 MiB／16 MiB**。單檔有效額度仍取單檔與全域剩餘額度的較小值。Probe 與 collection 使用相同額度；達限回報缺口，不自動加碼或重跑，也沒有無上限模式。參數例子見 [`README.md`](README.md#調整-codex-讀取額度)。
+- FileStream.Read 每次最多 **4 KiB**且不超過剩餘額度，單行 buffer 為 **64 KiB**（LF 前的原始 bytes，含 BOM／CR）。超長行只計一次 `oversizedLines`，丟棄至 newline 或 EOF，再續讀正常行；所有實讀／丟棄 bytes 都計額度。完整行才 strict UTF8 解碼與解析，支援跨 chunk、首行 BOM、CRLF 與真正 EOF 的無 newline 尾行。達 cap 的未完整尾行略過，不當成損壞資料；完整壞 UTF8／JSON 略過該行並保留警告及前後有效 evidence。達總 byte cap 停止後續候選搜尋。
 - 固定日期路徑最多檢查 **64 個 ancestor components**，拒絕 junction／reparse points；分區內巢狀目錄與 archive 都略過。檔案順序沿用 filesystem，不保證取到最新檔；恰好達 entries／files／totalBytes cap 也保守揭露限制。
-- `meta.sources.codex.coverage` 回報 `limits`、`daysConsidered`、`selectedDays`、`visitedEntries`、`candidateFiles`、`openedFiles`、`readBytes`、`enumerationFailures`、`limitHits`、`skipped`，固定 `complete=false`／`strategy=date-partitions-no-cache`／`archive=skipped`。Counters 是 application-level MoveNext 與實際 FileStream.Read bytes，不代表 OS metadata／prefetch I/O。
+- `meta.sources.codex.coverage` 保留 `limits`、`daysConsidered`、`selectedDays`、`visitedEntries`、`candidateFiles`、`openedFiles`、`readBytes`、`enumerationFailures`、`limitHits`、`skipped`；新增 `candidateDays`（完整有序日期候選）、`visitedDays`（開始 path 檢查，與 `selectedDays` 相同，含不存在／被拒絕路徑）、`unvisitedDays`（達全域 cap 尚未開始檢查的候選）、`oversizedLines`（已讀到超過單行上限的行數）。Visited 不表示全日列舉完畢；未訪問集合為空也不表示完整。
+- `stopReason` 只描述全域 traversal 終點：同時達限依 `totalBytes` → `entries` → `files` 優先，再為尚有未訪問候選的 `days`，否則 `candidate-days-exhausted`。局部 `fileBytes`／`lineBytes`／`pathComponents` 只在 `limitHits`；缺失目錄／列舉失敗看 `visitedDays`／`enumerationFailures`。固定 `complete=false`／`strategy=date-partitions-no-cache`／`archive=skipped`。Counters 是 application-level MoveNext 與實際 FileStream.Read bytes，不代表 OS metadata／prefetch I/O。
 - `probeWork` 分開記已知入口檢查數與成功 MoveNext 數；最多檢查兩入口、各消耗一 entry，`openedFiles=0`／`readBytes=0`。probe 沒有 collection coverage，不能推論當日活動。
 - 有事件且達限時為 `partial`；無事件且無損壞時保留 `empty`／`no-activity`；選中事件全失敗保留 `failed`／`read-failed`。Archive 被略過本身不算解析失敗，所有結果仍須說明不完整。
 
-這組保守上限保留一個月與日界範圍，限制大量候選及 transcript 記憶體負擔；合成 fixture 驗證 cap 與舊歷史增量的工作量不變。它們不是 latency SLA；量測與可測範圍見 [`README.md`](README.md#有界驗證與量測)。
+這組上限限制 filesystem 訪問與 transcript 讀取；日期候選陣列仍隨要求範圍成長，reader buffers 不隨 byte 額度成長，但不限制事件清單或整個 PowerShell process 記憶體。64／8 MiB 是已確認預設，不是最佳門檻或 latency SLA；合成量測界線見 [`README.md`](README.md#有界驗證與量測)。
 
 ## Optional evidence compaction
 

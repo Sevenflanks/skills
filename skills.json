@@ -24,7 +24,7 @@
       "name": "daily-work-log",
       "path": "skills/daily-work-log",
       "summary": "先探測並合併 OpenCode／Codex 活動與 Git／GitHub 證據；Codex 有界蒐集並揭露涵蓋缺口，整理每日工作日誌。",
-      "version": "0.3.0",
+      "version": "0.4.0",
       "license": "MIT",
       "author": "sevenflankse",
       "tags": [
