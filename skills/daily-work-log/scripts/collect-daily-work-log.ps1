@@ -724,7 +724,7 @@ function Get-SessionDirectoriesFromDirectoryReadme {
 
   try {
     $files = @(Get-ChildItem -LiteralPath $directoryReadmeRoot -File -Filter '*.json' -ErrorAction Stop | Sort-Object Name)
-    if ($files.Count -eq 0) { $script:OpenCodeReadSucceeded = $true }
+    if ($files.Count -eq 0) { $script:OpenCodeEmptyReadSucceeded = $true }
   }
   catch {
     $script:OpenCodeReadFailures++
@@ -748,11 +748,13 @@ function Get-SessionDirectoriesFromDirectoryReadme {
       continue
     }
 
-    $script:OpenCodeReadSucceeded = $true
     $seen.Clear()
 
     $updatedAtProperty = $session.PSObject.Properties['updatedAt']
-    if (-not $updatedAtProperty) {
+    $injectedPathsProperty = $session.PSObject.Properties['injectedPaths']
+    if (-not $updatedAtProperty -or -not $injectedPathsProperty -or $null -eq $updatedAtProperty.Value) {
+      $hadParseFailure = $true
+      $script:OpenCodeReadFailures++
       continue
     }
 
@@ -760,19 +762,21 @@ function Get-SessionDirectoriesFromDirectoryReadme {
       $updatedAtMilliseconds = [int64]$updatedAtProperty.Value
     }
     catch {
+      $hadParseFailure = $true
+      $script:OpenCodeReadFailures++
       continue
     }
 
+    if (@($injectedPathsProperty.Value | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) }).Count -eq 0) {
+      $script:OpenCodeEmptyReadSucceeded = $true
+      continue
+    }
+    $script:OpenCodeReadSucceeded = $true
     if ($updatedAtMilliseconds -lt $fromMilliseconds -or $updatedAtMilliseconds -gt $toMilliseconds) {
       continue
     }
 
     $script:OpenCodeActivityCount++
-
-    $injectedPathsProperty = $session.PSObject.Properties['injectedPaths']
-    if (-not $injectedPathsProperty) {
-      continue
-    }
 
     foreach ($candidatePath in @($injectedPathsProperty.Value)) {
       $candidate = [string]$candidatePath
@@ -840,7 +844,7 @@ function Get-SessionDirectoriesFromLogs {
   $unresolvedCount = 0
   try {
     $logFiles = @(Get-ChildItem -LiteralPath $logRoot -File -Filter '*.log' -ErrorAction Stop | Sort-Object Name)
-    if ($logFiles.Count -eq 0) { $script:OpenCodeReadSucceeded = $true }
+    if ($logFiles.Count -eq 0) { $script:OpenCodeEmptyReadSucceeded = $true }
   }
   catch {
     $script:OpenCodeReadFailures++
@@ -863,12 +867,20 @@ function Get-SessionDirectoriesFromLogs {
           continue
         }
 
+        $eventTime = TryParse-LogLineTimestamp -Line $line
+        if ($null -ne $eventTime) { $script:OpenCodeReadSucceeded = $true }
         $candidate = Get-PathCandidateFromLogLine -Line $line
         if ([string]::IsNullOrWhiteSpace($candidate)) {
           continue
         }
 
-        $eventTime = TryParse-LogLineTimestamp -Line $line
+        if ($null -eq $eventTime) {
+          if ($line -match '^INFO\s') {
+            $script:OpenCodeReadFailures++
+            Add-WarningMessage -List $Warnings -Message ("Invalid OpenCode path-event timestamp: {0}" -f $file.FullName)
+          }
+          continue
+        }
         if (-not (Test-LogEventInRange -EventTime $eventTime -FromRange $FromRange -ToRange $ToRange -TimezoneId $TimezoneId)) {
           continue
         }
@@ -898,7 +910,7 @@ function Get-SessionDirectoriesFromLogs {
           $unresolvedCount += 1
         }
       }
-      $script:OpenCodeReadSucceeded = $true
+      $script:OpenCodeEmptyReadSucceeded = $true
     }
     catch {
       $script:OpenCodeReadFailures++
@@ -1714,13 +1726,17 @@ try {
   $sessionCandidates = [System.Collections.Generic.List[object]]::new()
   if ($sources.opencode.available) {
     $script:OpenCodeReadSucceeded = $false
+    $script:OpenCodeEmptyReadSucceeded = $false
     $script:OpenCodeReadFailures = 0
     $script:OpenCodeActivityCount = 0
     try {
       foreach ($candidate in @(Get-SessionDirectories -FromRange $resolvedFrom -ToRange $resolvedTo -TimezoneId $Timezone -OverrideLogRoot $OpenCodeLogRoot -OverrideStorageRoot $OpenCodeStorageRoot -Warnings $warnings)) {
         $sessionCandidates.Add($candidate)
       }
-      $sources.opencode.readStatus = if (-not $script:OpenCodeReadSucceeded) { 'failed' } elseif ($script:OpenCodeReadFailures -gt 0) { 'partial' } elseif ($script:OpenCodeActivityCount -gt 0) { 'success' } else { 'empty' }
+      # 空入口／空 log 只證明讀完，不能救回其他紀錄全失敗；DB 成功 [] 仍由成功旗標保留權威。
+      $sources.opencode.readStatus = if (-not $script:OpenCodeReadSucceeded) {
+        if ($script:OpenCodeReadFailures -eq 0 -and $script:OpenCodeEmptyReadSucceeded) { 'empty' } else { 'failed' }
+      } elseif ($script:OpenCodeReadFailures -gt 0) { 'partial' } elseif ($script:OpenCodeActivityCount -gt 0) { 'success' } else { 'empty' }
     }
     catch {
       $sources.opencode.readStatus = 'failed'

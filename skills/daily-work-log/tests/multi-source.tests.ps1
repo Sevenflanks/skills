@@ -5,7 +5,7 @@ param([string]$Case = 'probe', [string]$EvidenceRoot)
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 if ($Case -eq 'all') {
-  foreach ($name in @('probe', 'guard', 'empty-failed', 'codex', 'partial', 'opencode', 'merge', 'formatter', 'read-failures', 'archive-only', 'db-fallback', 'source-isolation', 'timestamp-failure', 'valid-empty-events', 'timestamp-partial', 'empty-sibling-failures', 'all-empty-entries')) {
+  foreach ($name in @('probe', 'guard', 'empty-failed', 'codex', 'partial', 'opencode', 'merge', 'formatter', 'read-failures', 'archive-only', 'db-fallback', 'source-isolation', 'timestamp-failure', 'valid-empty-events', 'timestamp-partial', 'empty-sibling-failures', 'all-empty-entries', 'opencode-empty-sibling-failures', 'opencode-empty-authority')) {
     & $PSCommandPath -Case $name -EvidenceRoot $EvidenceRoot
   }
   return
@@ -325,6 +325,74 @@ exit 1
         Assert (-not $data.meta.canGenerateLog) "truly empty entries allowed log: $content"
         Assert (-not (Test-Path "$root\calls.txt")) "truly empty entries invoked git/gh: $content"
       }
+    }
+    'opencode-empty-sibling-failures' {
+      $emptyCache = @{updatedAt=1780010000000; injectedPaths=@()} | ConvertTo-Json -Compress
+      $validCache = @{updatedAt=1780010000000; injectedPaths=@("$root\repo")} | ConvertTo-Json -Compress
+      foreach ($failure in @('locked-log', 'bad-time-log', 'locked-cache', 'malformed-cache', 'missing-time-cache', 'bad-time-cache')) {
+        foreach ($sibling in @('directory', 'empty-log', 'empty-cache')) {
+          foreach ($path in @("$root\logs", "$root\storage")) { if (Test-Path $path) { [IO.Directory]::Delete($path, $true) } }
+          $null = [IO.Directory]::CreateDirectory("$root\logs")
+          $null = [IO.Directory]::CreateDirectory("$root\storage\directory-readme")
+          if ($sibling -eq 'empty-log') { Write-Fixture "$root\logs\empty.log" '' }
+          if ($sibling -eq 'empty-cache') { Write-Fixture "$root\storage\directory-readme\empty.json" $emptyCache }
+          $failedPath = if ($failure -like '*-log') { "$root\logs\failed.log" } else { "$root\storage\directory-readme\failed.json" }
+          $content = switch ($failure) {
+            'locked-log' { "INFO  2026-05-29T10:00:00 +1ms service=default directory=$root\repo creating instance" }
+            'bad-time-log' { "INFO  broken +1ms service=default directory=$root\repo creating instance" }
+            'locked-cache' { $validCache }
+            'malformed-cache' { '{broken' }
+            'missing-time-cache' { @{injectedPaths=@("$root\repo")} | ConvertTo-Json -Compress }
+            'bad-time-cache' { @{updatedAt='broken'; injectedPaths=@("$root\repo")} | ConvertTo-Json -Compress }
+          }
+          Write-Fixture $failedPath $content
+          $locked = $null
+          try {
+            if ($failure -like 'locked-*') { $locked = [IO.File]::Open($failedPath, 'Open', 'ReadWrite', 'None') }
+            foreach ($mode in @('scan', 'mixed', 'session')) {
+              $data = Invoke-Json -Mode $mode
+              $scenario = "$failure-$sibling-$mode"
+              if ($EvidenceRoot) { Write-Fixture "$EvidenceRoot\opencode-empty-sibling-$scenario.json" ($data | ConvertTo-Json -Depth 12) }
+              Assert ($data.meta.sources.opencode.readStatus -eq 'failed') "empty OpenCode sibling masked failures: $scenario"
+              Assert ($data.meta.collectionStatus -eq 'read-failed') "OpenCode failure escaped guard: $scenario"
+              Assert (-not $data.meta.canGenerateLog) "OpenCode failure allowed log: $scenario"
+              Assert (@($data.repos).Count -eq 0) "OpenCode failure collected repos: $scenario"
+              Assert (-not (Test-Path "$root\calls.txt")) "OpenCode failure invoked git/gh: $scenario"
+            }
+          } finally { if ($null -ne $locked) { $locked.Dispose() } }
+        }
+      }
+    }
+    'opencode-empty-authority' {
+      $null = [IO.Directory]::CreateDirectory("$root\logs")
+      $null = [IO.Directory]::CreateDirectory("$root\storage\directory-readme")
+      foreach ($empty in @('directory', 'log', 'cache', 'noise')) {
+        if ($empty -eq 'log') { Write-Fixture "$root\logs\empty.log" '' }
+        if ($empty -eq 'cache') { Write-Fixture "$root\storage\directory-readme\empty.json" (@{updatedAt=1780010000000; injectedPaths=@()} | ConvertTo-Json -Compress) }
+        if ($empty -eq 'noise') { Write-Fixture "$root\logs\noise.log" "permission=read path=$root\repo" }
+        $data = Invoke-Json
+        Assert ($data.meta.sources.opencode.readStatus -eq 'empty') "genuinely empty OpenCode treated as failed: $empty"
+        Assert ($data.meta.collectionStatus -eq 'no-activity') 'empty OpenCode lost no-activity status'
+        Assert (-not (Test-Path "$root\calls.txt")) 'empty OpenCode scanned git/gh'
+      }
+      Write-Fixture "$root\storage\directory-readme\bad.json" '{broken'
+      Write-Fixture "$root\logs\locked.log" 'synthetic inaccessible log'
+      $locked = [IO.File]::Open("$root\logs\locked.log", 'Open', 'ReadWrite', 'None')
+      try {
+        Add-OpenCode '[]'
+        foreach ($mode in @('session', 'scan', 'mixed')) {
+          $data = Invoke-Json -Mode $mode
+          Assert ($data.meta.sources.opencode.readStatus -eq 'empty') 'DB [] not authoritative over failed files'
+          Assert (@($data.warnings | Where-Object { $_ -match 'falling back|could not be parsed|Failed to read OpenCode log' }).Count -eq 0) 'DB [] read failed fallback sources'
+        }
+      } finally { $locked.Dispose() }
+      [IO.File]::Delete("$root\logs\locked.log")
+      Write-Fixture "$root\logs\valid.log" "INFO  2026-05-29T10:00:00 +1ms service=default directory=$root\repo creating instance"
+      Add-OpenCode -Fail
+      $data = Invoke-Json
+      Assert ($data.meta.sources.opencode.readStatus -eq 'partial') 'genuine log record could not rescue partial cache failure'
+      Assert ($data.meta.canGenerateLog) 'valid fallback activity was blocked'
+      Assert (@($data.repos[0].sessionEvidence | Where-Object discoverySource -eq log).Count -eq 1) 'log fallback evidence missing'
     }
     default { throw "Unknown case: $Case" }
   }
