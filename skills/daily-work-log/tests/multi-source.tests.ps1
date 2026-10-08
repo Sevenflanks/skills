@@ -5,7 +5,7 @@ param([string]$Case = 'probe', [string]$EvidenceRoot)
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 if ($Case -eq 'all') {
-  foreach ($name in @('probe', 'guard', 'empty-failed', 'codex', 'partial', 'opencode', 'merge', 'formatter', 'read-failures', 'archive-only', 'db-fallback', 'source-isolation', 'timestamp-failure', 'valid-empty-events', 'timestamp-partial')) {
+  foreach ($name in @('probe', 'guard', 'empty-failed', 'codex', 'partial', 'opencode', 'merge', 'formatter', 'read-failures', 'archive-only', 'db-fallback', 'source-isolation', 'timestamp-failure', 'valid-empty-events', 'timestamp-partial', 'empty-sibling-failures', 'all-empty-entries')) {
     & $PSCommandPath -Case $name -EvidenceRoot $EvidenceRoot
   }
   return
@@ -280,6 +280,51 @@ exit 1
       $data = Invoke-Json
       Assert ($data.meta.sources.codex.readStatus -eq 'empty') 'valid out-of-range timestamp treated as failure'
       Assert (-not $data.meta.canGenerateLog) 'out-of-range activity entered work log'
+    }
+    'empty-sibling-failures' {
+      $meta = @{timestamp='2026-05-29T02:00:00Z'; type='session_meta'; payload=@{id='empty'; cwd="$root\repo"}} | ConvertTo-Json -Depth 5 -Compress
+      foreach ($failedEntry in @('sessions', 'archived_sessions')) {
+        $emptyEntry = if ($failedEntry -eq 'sessions') { 'archived_sessions' } else { 'sessions' }
+        foreach ($failure in @('bad', 'locked')) {
+          foreach ($sibling in @('directory', 'file', 'metadata')) {
+            if (Test-Path "$root\codex") { [IO.Directory]::Delete("$root\codex", $true) }
+            $null = [IO.Directory]::CreateDirectory("$root\codex\$emptyEntry")
+            if ($sibling -ne 'directory') { Write-Fixture "$root\codex\$emptyEntry\empty.jsonl" $(if ($sibling -eq 'metadata') { $meta } else { '' }) }
+            $failedPath = "$root\codex\$failedEntry\failed.jsonl"
+            Write-Fixture $failedPath $(if ($failure -eq 'locked') { $meta } else { '{broken' })
+            $locked = $null
+            try {
+              if ($failure -eq 'locked') { $locked = [IO.File]::Open($failedPath, 'Open', 'ReadWrite', 'None') }
+              foreach ($mode in @('scan', 'mixed', 'session')) {
+                $data = Invoke-Json -Mode $mode
+                $scenario = "$failedEntry-$failure-$sibling-$mode"
+                if ($EvidenceRoot) { Write-Fixture "$EvidenceRoot\empty-sibling-$scenario.json" ($data | ConvertTo-Json -Depth 12) }
+                Assert ($data.meta.sources.codex.readStatus -eq 'failed') "empty sibling masked all file failures: $scenario"
+                Assert ($data.meta.collectionStatus -eq 'read-failed') "file failures escaped guard: $scenario"
+                Assert (-not $data.meta.canGenerateLog) "file failures allowed log: $scenario"
+                Assert (@($data.repos).Count -eq 0) "file failures collected repos: $scenario"
+                Assert (-not (Test-Path "$root\calls.txt")) "file failures invoked git/gh: $scenario"
+              }
+            } finally { if ($null -ne $locked) { $locked.Dispose() } }
+          }
+        }
+      }
+    }
+    'all-empty-entries' {
+      $meta = @{timestamp='2026-05-29T02:00:00Z'; type='session_meta'; payload=@{id='empty'; cwd="$root\repo"}} | ConvertTo-Json -Depth 5 -Compress
+      foreach ($content in @('directory', 'file', 'metadata')) {
+        $null = [IO.Directory]::CreateDirectory("$root\codex\sessions")
+        $null = [IO.Directory]::CreateDirectory("$root\codex\archived_sessions")
+        if ($content -ne 'directory') {
+          Write-Fixture "$root\codex\sessions\empty.jsonl" $(if ($content -eq 'metadata') { $meta } else { '' })
+          Write-Fixture "$root\codex\archived_sessions\empty.jsonl" ''
+        }
+        $data = Invoke-Json
+        Assert ($data.meta.sources.codex.readStatus -eq 'empty') "truly empty entries treated as failure: $content"
+        Assert ($data.meta.collectionStatus -eq 'no-activity') "truly empty entries lost no-activity: $content"
+        Assert (-not $data.meta.canGenerateLog) "truly empty entries allowed log: $content"
+        Assert (-not (Test-Path "$root\calls.txt")) "truly empty entries invoked git/gh: $content"
+      }
     }
     default { throw "Unknown case: $Case" }
   }

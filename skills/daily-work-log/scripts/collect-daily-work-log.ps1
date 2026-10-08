@@ -156,7 +156,6 @@ function Get-CodexSessionDirectories {
     try {
       # 必須讀取事件：舊檔名、建立日及 mtime 都不能排除跨日續行。
       $files = @(Get-ChildItem -LiteralPath $entry.path -Recurse -File -Filter '*.jsonl' -ErrorAction Stop)
-      if ($files.Count -eq 0) { $readCount++ }
     }
     catch {
       $failedCount++
@@ -231,8 +230,8 @@ function Get-CodexSessionDirectories {
             time = $time.ToString('o'); file = $file.FullName
           })
         }
-        # 空檔／合法 metadata-only session 仍是 empty；metadata 不可救回時間戳全壞的事件。
-        if ($validTimedEvents -gt 0 -or -not $fileFailed) { $readCount++ }
+        # 空入口／空檔／metadata-only 不算事件讀取成功，避免掩蓋另一入口的全部檔案失敗。
+        if ($validTimedEvents -gt 0) { $readCount++ }
       }
       catch { $fileFailed = $true }
       finally { if ($null -ne $reader) { $reader.Dispose() } }
@@ -264,7 +263,7 @@ function Get-CodexSessionDirectories {
     $null = $group.files.Add($event.file)
     $null = $group.timestamps.Add($event.time)
   }
-  $Source.readStatus = if ($readCount -eq 0) { 'failed' } elseif ($failedCount -gt 0) { 'partial' } elseif ($events.Count -gt 0) { 'success' } else { 'empty' }
+  $Source.readStatus = if ($readCount -eq 0 -and $failedCount -gt 0) { 'failed' } elseif ($failedCount -gt 0) { 'partial' } elseif ($events.Count -gt 0) { 'success' } else { 'empty' }
   foreach ($group in $groups.Values) {
     $group.sessionIds = @($group.sessionIds | Sort-Object)
     $group.files = @($group.files | Sort-Object)
