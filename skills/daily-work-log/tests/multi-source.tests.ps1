@@ -5,7 +5,7 @@ param([string]$Case = 'probe', [string]$EvidenceRoot)
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 if ($Case -eq 'all') {
-  foreach ($name in @('bounded-scope', 'probe', 'guard', 'empty-failed', 'codex', 'partial', 'opencode', 'merge', 'formatter', 'read-failures', 'archive-only', 'selected-native-parent', 'db-fallback', 'source-isolation', 'timestamp-failure', 'valid-empty-events', 'timestamp-partial', 'empty-sibling-failures', 'all-empty-entries', 'opencode-empty-sibling-failures', 'opencode-empty-authority')) {
+  foreach ($name in @('bounded-scope', 'probe', 'guard', 'empty-failed', 'codex', 'partial', 'opencode', 'merge', 'formatter', 'read-failures', 'archive-only', 'selected-native-parent', 'db-fallback', 'source-isolation', 'timestamp-failure', 'valid-empty-events', 'timestamp-partial', 'empty-sibling-failures', 'all-empty-entries', 'opencode-empty-sibling-failures', 'opencode-empty-authority', 'structured-workdir')) {
     & $PSCommandPath -Case $name -EvidenceRoot $EvidenceRoot
   }
   return
@@ -45,9 +45,11 @@ function Add-Codex([string]$File = 'sessions\2026\05\29\old-name.jsonl', [string
   Write-Fixture $path ($lines -join "`n")
   [IO.File]::SetLastWriteTime($path, [datetime]'2026-05-28T00:00:00')
 }
-function Add-OpenCode([string]$Result = '[]', [switch]$Fail) {
+function Add-OpenCode([string]$Result = '[]', [switch]$Fail, [string]$Workdirs = '[]', [switch]$WorkdirFail) {
   $body = if ($Fail) { 'exit 1' } else { "'$($Result.Replace("'", "''"))'; exit 0" }
-  Write-Fixture "$root\bin\opencode.ps1" ("param([Parameter(ValueFromRemainingArguments=`$true)][string[]]`$Arguments)`n" + $body)
+  $supplementBody = if ($WorkdirFail) { 'exit 1' } else { "'$($Workdirs.Replace("'", "''"))'; exit 0" }
+  $supplement = "if (`$Arguments[-1] -match 'join session') { $supplementBody }`n"
+  Write-Fixture "$root\bin\opencode.ps1" ("param([Parameter(ValueFromRemainingArguments=`$true)][string[]]`$Arguments)`n" + $(if ($Fail) { '' } else { $supplement }) + $body)
 }
 
 try {
@@ -70,6 +72,25 @@ exit 1
   Write-Fixture "$root\bin\gh.ps1" $stub
 
   switch ($Case) {
+    'structured-workdir' {
+      $null = [IO.Directory]::CreateDirectory("$root\home")
+      $scopedGit = $stub.Replace("if (`$Arguments[0] -eq 'rev-parse') {", "if (`$Arguments[0] -eq 'rev-parse') { if ((Get-Location).Path -ne '$root\repo') { exit 1 }")
+      Write-Fixture "$root\bin\git.ps1" $scopedGit
+      $metadata = @(@{id='metadata';directory="$root\repo";title='合成 metadata'}, @{id='parent';directory="$root\home";path='Users/synthetic';title='合成 home parent'}) | ConvertTo-Json -Compress
+      $workdir = @(@{id='parent';tool='bash';workdir="$root\repo";timestamp=1780012800000;title='合成 home parent'}) | ConvertTo-Json -Compress
+      Add-OpenCode $metadata -Workdirs $workdir
+      $data = Invoke-Json
+      Assert ($data.meta.sources.opencode.readStatus -eq 'success' -and $data.meta.collectionStatus -eq 'success') 'successful supplement status wrong'
+      Assert (@($data.repos[0].sessionEvidence).Count -eq 2 -and $data.repos[0].sessionEvidence[1].pathSource -eq 'bash-workdir') 'supplement provenance lost at collection boundary'
+      foreach ($failure in @('invalid','shape','failed','cap')) {
+        $bad = if ($failure -eq 'invalid') { '{bad' } elseif ($failure -eq 'cap') { @(1..2049 | ForEach-Object { @{id='parent';tool='bash';workdir="$root\repo";timestamp=1780012800000} }) | ConvertTo-Json -Compress } else { '[{"tool":"bash"}]' }
+        Add-OpenCode $metadata -Workdirs $bad -WorkdirFail:($failure -eq 'failed')
+        $data = Invoke-Json
+        Assert ($data.meta.sources.opencode.readStatus -eq 'partial' -and $data.meta.collectionStatus -eq 'partial' -and $data.meta.canGenerateLog) "$failure gap not partial at collection boundary"
+        Assert (@($data.repos[0].sessionEvidence | Where-Object sessionId -eq metadata).Count -eq 1) "$failure discarded metadata"
+        Assert (($data.warnings -join '|') -match 'structured workdir' -and -not (($data.warnings -join '|') -match 'falling back')) "$failure fallback or undisclosed gap"
+      }
+    }
     'bounded-scope' {
       Add-Codex -File 'sessions\2026\05\29\old-name.jsonl'
       Add-Codex -File 'archived_sessions\child.jsonl' -Id child -Parent parent

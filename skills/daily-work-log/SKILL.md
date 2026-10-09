@@ -4,7 +4,7 @@ description: 整理每日工作日誌或跨 repo 今日工作時使用。先探�
 license: MIT
 metadata:
   author: sevenflankse
-  version: 0.5.0
+  version: 0.5.1
 ---
 
 # Daily Work Log
@@ -66,7 +66,7 @@ Do not use this skill when:
    - Codex 入口為 `-CodexRoot`（否則 `CODEX_HOME`，再否則 `~/.codex`）；只直接定位 `sessions/yyyy/MM/dd` 日期分區，`archived_sessions` 僅 probe 可用性，正式蒐集略過並揭露缺口。具體界限與停止策略見下方「Codex 有界涵蓋」。
    - 對選中並已讀取的 JSONL 事件，以 `timestamp` 比對含頭尾的指定範圍；預設今天依 `Timezone` 計算。選中檔的舊檔名或 mtime 不取代事件時間；日期分區之外的跨日續行可漏收，不宣稱完整涵蓋。
    - collector 合併 event／response 鏡像、同 session ID 續行及父子 session 的精確重播，保留 `sessionIds`／`files`／`timestamps`；不推測自然語意主題。
-   - In `session` mode, treat session-derived repo discovery as including both session-start directories and touched external repo evidence that can be resolved to git repo or worktree roots from `permission=external_directory` or `permission=read` log entries.
+    - OpenCode DB 成功且非空時，依下方「OpenCode repo discovery」補充 structured bash workdir；fallback logs 才使用 `permission=external_directory`／`read`／`read-only` touched path。
    - In `session` mode, if a session path is a safe aggregate directory rather than a git repo, the collector expands nested git repos / worktrees using fast `.git` marker discovery.
    - The default author scope is the current user. Commits and PRs from other authors are excluded unless they are release / deploy bot commits with PR-chain evidence back to current-user work.
    - If a repo has session evidence but no current-user commits, keep it in the final report as one short agent-written session summary when evidence is sufficient; do not invent details.
@@ -137,6 +137,15 @@ Treat collector JSON as source of truth:
 - `commits[]`: commit evidence from `git log --all`, including `authorEmail`; ignore stash noise before summarizing.
 - `prs[]`: PR evidence tied to commit / branch / hash relevance; preserve PR and issue numbers when useful.
 - `sessionEvidence[]`：`agent` 區分 `opencode`／`codex`；OpenCode 保留 DB／fallback session 欄位；Codex 保留有限長度 `title`、`role`、`sessionId`、`sessionIds[]`、`files[]`、`timestamps[]`。repo 去重不刪不同 session 證據。
+
+## OpenCode repo discovery
+
+- Session `directory`／`path` 與 fallback injected／log path 只接受明確 fully-qualified absolute 值；沒有來源 base 契約的 relative、drive-relative、root-relative 值略過並以既有 aggregate warning 揭露。不可依 collector CWD 或 session title 猜 repo。合法 drive／UNC absolute 沿用既有 resolver／安全 aggregate expansion 契約。
+- DB metadata 成功且非空時，只追加一次 `part JOIN session` query：沿用 session interval overlap，part `time_created` 另以 inclusive From／To 篩選。以 `json_valid` 保護個別壞 data，只投影 session ID／title／既有 session 時間、tool／workdir／part timestamp；不返回完整 `data`、commands、output 或對話。
+- 只確定 `type=tool`、`tool=bash` 的 `state.input.workdir` 語意：值須 text、長度最多 4,096、明確 fully-qualified absolute。其他 tool 欄位與文字不猜。依 part time／id 固定排序，最多處理 **2,048 候選 rows**，SQL `LIMIT 2049` 的額外一列只作截斷 sentinel。Cap 限制候選回傳／處理列數，不是 SQLite 掃描量、DB I/O、query latency 或整個 process 記憶體 SLA；不新增 cache、index 或 schema。
+- Structured workdir 必須仍存在且可解析 Git repo／worktree；已刪／missing worktree 只回 aggregate unresolved warning，不靠不存在路徑的 Git 父目錄或名稱推 canonical mapping。Home-started parent 可由其自己的範圍內 bash workdir 歸 repo。相同 session／正規化 path 去重，保留 `discoverySource=session`、`pathSource=bash-workdir`、`tool`、`timestamp`；formatter 完整保留。
+- DB 成功 `[]` 不補查 parts、也不 fallback。Metadata query 失敗維持 DB → directory-readme → logs。Supplement query failed／非 JSON／row shape 錯誤／cap／unresolved workdir 保留已成功 metadata／有效 rows，以 OpenCode `readStatus=partial`、overall `collectionStatus=partial` 與 warning 揭露缺口，不重試或擴大來源。Relative 值的略過 warning 本身不算 metadata 讀取失敗。
+- Probe 維持純 JSON、零 DB query、零 data 讀取。`success` 只代表已選來源讀取成功，不保證所有 repo 都有 structured 證據。
 
 ## Codex 有界涵蓋
 

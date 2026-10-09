@@ -37,6 +37,12 @@
 
 ## 多來源與停止條件
 
+### OpenCode 的 repo 歸屬
+
+`0.5.1` 修正相對 session path 依 collector CWD 誤歸 repo，並以當日 structured bash workdir 補回 home-started session 的外部工作 repo。完整來源、時間、2,048 + sentinel、4,096 長度、partial 與 missing worktree 契約見 [`SKILL.md` 的 OpenCode repo discovery](SKILL.md#opencode-repo-discovery)。只讀必要結構化 metadata；不解析 command／文字／output、不新增 cache 或 DB schema。Cap 是候選列數限制，不是 DB I/O 或 latency 保證。
+
+例如 synthetic home-started parent 可保留 `pathSource=bash-workdir`、`tool=bash`、`timestamp` 歸到 `C:\synthetic\repo`；相同 session／path 只列一次。已刪 worktree 不猜 canonical repo，只揭露 aggregate warning。DB 成功空結果、失敗 fallback 順序與 probe 契約維持。
+
 Codex 從 `-CodexRoot`（否則 `CODEX_HOME`，再否則 `~/.codex`）直接定位 `sessions/yyyy/MM/dd`，採無 cache 的有界蒐集。`archived_sessions` 僅 probe、正式略過；範圍外日期分區中的跨日續行可漏收。對選中資料仍以事件 `timestamp` 比對含頭尾的指定範圍，舊檔名或 mtime 不取代事件時間。collector 合併已選 event／response 鏡像、父子重播與相同 session ID 續行，保留 session IDs、檔案與時間證據。跨來源同 repo／工作主題由 agent 合併，不自造 NLP。
 
 具體 cap、日期與停止策略的權威定義在 [`SKILL.md` 的「Codex 有界涵蓋」](SKILL.md#codex-有界涵蓋)：32 日期、2,048 entries、128 候選，預設 64 MiB total／8 MiB file／64 KiB line，固定路徑最多 64 ancestor components。指定時區的實際日期升序優先，再補 UTC 額外日期；filesystem 訪問 lazy 達限即停，不排序歷史檔案。首次、重跑與錯誤都不全掃，也不先全列再 filter。
@@ -124,6 +130,7 @@ pwsh -NoProfile -File skills/daily-work-log/tests/bounded-collection.tests.ps1 -
 pwsh -NoProfile -File skills/daily-work-log/tests/multi-source.tests.ps1 -Case all
 Invoke-Pester -Script skills/daily-work-log/tests/collect-daily-work-log.tests.ps1
 pwsh -NoProfile -File skills/daily-work-log/tests/diagnostics.tests.ps1 -EvidenceRoot "<existing-external-temp-directory>"
+pwsh -NoProfile -File skills/daily-work-log/tests/repo-discovery.tests.ps1 -Case all -EvidenceRoot "<existing-external-temp-directory>"
 npm run validate
 ```
 
@@ -138,6 +145,8 @@ npm run validate
 冷是同一測試 process 在 fixture 增量後首次呼叫，暖是重跑；不控制 OS filesystem cache。Collection 計時包含 collector 的 probe、合成 Git／gh 邊界呼叫與 JSON 序列化，排除 fixture 建立及外部測試啟動。Memory 為整個測試 process 累積 `PeakWorkingSet64`，包含 fixture 建立與 reference，不代表 collector-only、child processes 或每次配置量。Entries 是 application-level MoveNext，bytes 是 FileStream.Read 回傳量，排除 OS metadata／prefetch。Reference 不執行 Git／gh 或完整 collector，耗時不能當作同等流程的速度提升比例；其 output size 不適用。日期候選陣列隨要求日期範圍成長；4 KiB／64 KiB 只限 reader buffers，不是事件清單或整個 process 的 hard memory cap。64／8 MiB 是已確認預設，不是最佳門檻或性能 SLA；本回歸未確認真實 workload。
 
 ## 版本變更
+
+`0.5.1` 修正 CWD-dependent OpenCode 相對 path，新增單一有界當日 structured bash workdir 補證、session/path 去重、missing worktree 防誤歸與 partial 揭露。新增實際 SQLite SQL discovery boundary 與 collection/formatter 回歸；Git／gh、Codex 64／8 MiB 及其他既有 caps 維持。Boundary tests 需本機 Python 3 的標準庫 `sqlite3`，production collector 沒有 Python dependency。
 
 `0.5.0` 新增 aggregate 單檔停止／實讀分布／超長行丟棄 bytes／有範圍事件檔數，補足失敗與去重計帳、formatter 保留回歸及交付狀態摘要 evals。維持 64／8 MiB、既有排序／其他 caps、事件與 readStatus 契約；合成 fixture／stream faults／CLI stubs 並未驗證真實 workload 或實際摘要模型執行品質。
 
@@ -154,3 +163,4 @@ npm run validate
 - [`tests/multi-source.tests.ps1`](tests/multi-source.tests.ps1)：來源組合、停止條件、Codex 選中跨日／去重、archive 略過與 formatter 合成測試。
 - [`tests/collect-daily-work-log.tests.ps1`](tests/collect-daily-work-log.tests.ps1)：既有 OpenCode、Git／PR 與 formatter 回歸。
 - [`tests/diagnostics.tests.ps1`](tests/diagnostics.tests.ps1)：僅載入 production functions，注入合成 Stream 的 Read／Dispose 失敗，驗證 catch／finally 計帳；不執行真實來源 probe。
+- [`tests/repo-discovery.tests.ps1`](tests/repo-discovery.tests.ps1)：production discovery functions、synthetic SQLite SQL、CWD invariance、時間／cap／partial／missing worktree／fallback 與 formatter；[`tests/discovery-db-fixture.py`](tests/discovery-db-fixture.py) 只建立 in-memory synthetic DB。

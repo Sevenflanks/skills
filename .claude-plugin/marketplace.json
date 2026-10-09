@@ -22,7 +22,7 @@
       "name": "daily-work-log",
       "source": "skills/daily-work-log",
       "description": "先探測並合併 OpenCode／Codex 活動與 Git／GitHub 證據；Codex 有界蒐集並揭露涵蓋缺口，整理每日工作日誌。",
-      "version": "0.5.0",
+      "version": "0.5.1",
       "keywords": [
         "work-log",
         "daily-report",
