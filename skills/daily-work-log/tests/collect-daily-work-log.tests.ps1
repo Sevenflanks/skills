@@ -61,6 +61,7 @@ if ($env:DAILY_WORK_LOG_FAKE_DB_MODE -ne 'fail') {
   }
 }
 
+if ($env:DAILY_WORK_LOG_FAKE_DB_MODE -ne 'fail' -and $sql -match 'join session') { '[]'; exit 0 }
 switch ($env:DAILY_WORK_LOG_FAKE_DB_MODE) {
   'fail' {
     [Console]::Error.WriteLine('fake db unavailable')

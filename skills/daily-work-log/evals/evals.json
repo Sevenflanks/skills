@@ -2,6 +2,24 @@
   "skill_name": "daily-work-log",
   "evals": [
     {
+      "id": 33,
+      "prompt": "OpenCode parent 從 home 開始；session.path 是 Users/synthetic，當日 bash workdir 指向 C:\\synthetic\\repo。另有已刪 worktree、範圍外 part、未知 tool，補查達 2048 cap 或 failed。整理日誌並說明涵蓋缺口。",
+      "expected_output": "以明確 absolute metadata 與單一有界、當日 structured bash workdir 歸 repo；不依 CWD 解 relative，不猜 deleted worktree。保留 metadata 與 provenance，partial／cap 明講缺口。",
+      "files": [],
+      "expectations": [
+        "Relative、drive-relative、root-relative session 值不依 process CWD 解讀；合法 absolute 保留。",
+        "DB 成功非空才補查選定 overlap session 的 inclusive From/To part；只讀 bash workdir 必要 metadata，不解析 command／text／output。",
+        "最多 2048 候選 + 一列 sentinel；達限／補查失敗以 partial 與 aggregate warning 揭露，保留 metadata，不 fallback 湊資料。",
+        "Missing／deleted worktree 不靠無關 Git 父目錄猜歸屬；session/path 去重，保留 bash-workdir provenance。",
+        "DB 成功 [] 不補查、不 fallback；probe 零 DB／data 讀取。"
+      ],
+      "assertions": [
+        "相同 fixture 在 home/repo/other-repo 的歸屬一致。",
+        "Home parent 的有效 bash workdir 可歸 repo；範圍外 part 與未知 tool 不列入。",
+        "Partial／cap 不宣稱完整涵蓋，也不曝光新 unresolved fullpath。"
+      ]
+    },
+    {
       "id": 1,
       "prompt": "幫我整理今天的工作日誌。來源請從 OpenCode session 實際進過的 repo 開始，commit 不要限制 branch，再用 gh 補 PR 跟 closing issue，最後優先按 GitHub repo name 分組，每條盡量 30 字內。",
       "expected_output": "先以 PowerShell helper -ProbeOnly 產出 pure JSON，向使用者預告來源與略過理由後正式蒐集，再依 JSON 優先按 GitHub repo name 分組；保留 git log --all 與相關 gh PR／issue 補證。",

@@ -586,6 +586,82 @@ function New-OpenCodeSessionSql {
   return ('select id, directory, path, title, time_created, time_updated from session where time_created <= {1} and time_updated >= {0} order by time_updated' -f $fromMilliseconds, $toMilliseconds)
 }
 
+function ConvertTo-AbsoluteSessionPath {
+  param($Value)
+
+  # 未有來源 base 契約的相對值不可交給 GetFullPath，否則會依 collector CWD 誤歸 repo。
+  if ($Value -isnot [string] -or [string]::IsNullOrWhiteSpace($Value)) { return $null }
+  try {
+    if (-not [IO.Path]::IsPathFullyQualified($Value)) { return $null }
+    return [IO.Path]::GetFullPath($Value)
+  }
+  catch { return $null }
+}
+
+function New-OpenCodeWorkdirSql {
+  param([datetimeoffset]$FromRange, [datetimeoffset]$ToRange)
+
+  $fromMilliseconds = ConvertTo-EpochMilliseconds -Value $FromRange
+  $toMilliseconds = ConvertTo-EpochMilliseconds -Value $ToRange
+  # Session overlap 不代表每個 part 都在當日；兩個時間條件都在 SQL boundary。
+  # 2048 候選 + 一列 sentinel 揭露截斷；這限制回傳列數，不是 DB I/O 或 latency SLA。
+  return (@'
+select s.id, s.title, s.time_created, s.time_updated,
+       json_extract(p.data, '$.tool') as tool,
+       json_extract(p.data, '$.state.input.workdir') as workdir,
+       p.time_created as timestamp
+from part p join session s on s.id = p.session_id
+where s.time_created <= {1} and s.time_updated >= {0}
+  and p.time_created >= {0} and p.time_created <= {1}
+  and case when json_valid(p.data) then
+    json_extract(p.data, '$.type') = 'tool'
+    and json_extract(p.data, '$.tool') = 'bash'
+    and json_type(p.data, '$.state.input.workdir') = 'text'
+    and length(json_extract(p.data, '$.state.input.workdir')) <= 4096
+  else 0 end
+order by p.time_created, p.id
+limit 2049
+'@ -f $fromMilliseconds, $toMilliseconds)
+}
+
+function Get-OpenCodeWorkdirRowsFromDb {
+  param([datetimeoffset]$FromRange, [datetimeoffset]$ToRange, [System.Collections.Generic.List[string]]$Warnings)
+
+  try {
+    $sql = New-OpenCodeWorkdirSql -FromRange $FromRange -ToRange $ToRange
+    $result = Invoke-Native -FilePath 'opencode' -Arguments @('db', '--format', 'json', $sql)
+    if ($result.ExitCode -ne 0) { throw 'Workdir query failed' }
+    $rows = $result.StdOut | ConvertFrom-Json -NoEnumerate
+    if ($rows -isnot [array] -and $rows -isnot [pscustomobject]) { throw 'Expected workdir rows' }
+    $rows = @($rows)
+    if ($rows.Count -gt 2048) {
+      $script:OpenCodeReadFailures++
+      Add-WarningMessage -List $Warnings -Message 'OpenCode structured workdir discovery exceeded 2048 candidates; coverage is incomplete.'
+    }
+    for ($i = 0; $i -lt [Math]::Min(2048, $rows.Count); $i++) {
+      $row = $rows[$i]
+      $id = Get-ObjectPropertyValue -Object $row -Name 'id'
+      $tool = Get-ObjectPropertyValue -Object $row -Name 'tool'
+      $workdir = Get-ObjectPropertyValue -Object $row -Name 'workdir'
+      $timestamp = Get-ObjectPropertyValue -Object $row -Name 'timestamp'
+      if ($id -isnot [string] -or [string]::IsNullOrWhiteSpace($id) -or $tool -cne 'bash' -or
+          $workdir -isnot [string] -or $workdir.Length -gt 4096 -or
+          ($timestamp -isnot [long] -and $timestamp -isnot [int]) -or
+          $timestamp -lt (ConvertTo-EpochMilliseconds $FromRange) -or $timestamp -gt (ConvertTo-EpochMilliseconds $ToRange)) {
+        $script:OpenCodeReadFailures++
+        Add-WarningMessage -List $Warnings -Message 'OpenCode structured workdir discovery returned invalid row shape; coverage is incomplete.'
+        continue
+      }
+      $row
+    }
+  }
+  catch {
+    # 補證失敗不撤銷 metadata 成功，也不能改走 fallback 拼出另一個母體。
+    $script:OpenCodeReadFailures++
+    Add-WarningMessage -List $Warnings -Message 'OpenCode structured workdir discovery failed or returned invalid JSON/shape; metadata evidence was retained; coverage is incomplete.'
+  }
+}
+
 function Get-OpenCodeLogRoot {
   param([string]$OverrideLogRoot)
 
@@ -799,27 +875,21 @@ function Get-SessionDirectoriesFromDb {
   }
 
   foreach ($row in @($rows)) {
-    $seenCandidates.Clear()
+    $sessionId = [string](Get-ObjectPropertyValue -Object $row -Name 'id')
     foreach ($propertyName in @('directory', 'path')) {
       $property = $row.PSObject.Properties[$propertyName]
       if (-not $property) {
         continue
       }
 
-      $candidatePath = [string]$property.Value
-      if ([string]::IsNullOrWhiteSpace($candidatePath)) {
-        continue
-      }
-
-      try {
-        $candidatePath = [System.IO.Path]::GetFullPath($candidatePath)
-      }
-      catch {
+      $candidatePath = ConvertTo-AbsoluteSessionPath -Value $property.Value
+      if (-not $candidatePath) {
+        if ($null -eq $property.Value -or [string]::IsNullOrWhiteSpace([string]$property.Value)) { continue }
         $unresolvedCount += 1
         continue
       }
 
-      if (-not $seenCandidates.Add($candidatePath)) {
+      if (-not $seenCandidates.Add($sessionId + "`n" + $candidatePath)) {
         continue
       }
 
@@ -840,6 +910,28 @@ function Get-SessionDirectoriesFromDb {
 
   if ($unresolvedCount -gt 0) {
     Add-WarningMessage -List $Warnings -Message 'Some OpenCode DB session paths could not be resolved to git repositories.'
+  }
+
+  if (@($rows).Count -gt 0) {
+    $unresolvedWorkdirs = 0
+    foreach ($row in @(Get-OpenCodeWorkdirRowsFromDb -FromRange $FromRange -ToRange $ToRange -Warnings $Warnings)) {
+      $candidatePath = ConvertTo-AbsoluteSessionPath -Value $row.workdir
+      if (-not $candidatePath) { continue }
+      # 已刪 worktree 不可由 resolver 的 upward-search 誤歸到碰巧存在的 Git 父目錄。
+      if (-not (Test-Path -LiteralPath $candidatePath -PathType Container)) { $unresolvedWorkdirs++; continue }
+      $repoRoot = Resolve-GitRepoRootFromPath -Path $candidatePath
+      if (-not $repoRoot) { $unresolvedWorkdirs++; continue }
+      if (-not $seenCandidates.Add([string]$row.id + "`n" + $candidatePath)) { continue }
+      $evidence = New-SessionEvidence -Source 'session' -Path $candidatePath -Session $row
+      $evidence | Add-Member -NotePropertyName pathSource -NotePropertyValue 'bash-workdir'
+      $evidence | Add-Member -NotePropertyName tool -NotePropertyValue 'bash'
+      $evidence | Add-Member -NotePropertyName timestamp -NotePropertyValue $row.timestamp
+      $paths.Add((New-SessionCandidate -Path $repoRoot -Evidence $evidence))
+    }
+    if ($unresolvedWorkdirs -gt 0) {
+      $script:OpenCodeReadFailures++
+      Add-WarningMessage -List $Warnings -Message 'Some OpenCode structured workdir paths could not be resolved to git repositories; coverage is incomplete.'
+    }
   }
 
   return $paths
@@ -962,6 +1054,8 @@ function Get-SessionDirectoriesFromDirectoryReadme {
         continue
       }
 
+      $candidate = ConvertTo-AbsoluteSessionPath -Value $candidate
+      if (-not $candidate) { $unresolvedCount += 1; continue }
       $repoRoot = Resolve-GitRepoRootFromPath -Path $candidate
       if ($repoRoot -and $seen.Add($repoRoot)) {
         $paths.Add((New-SessionCandidate -Path $repoRoot -Evidence (New-SessionEvidence -Source 'directory-readme' -Path $candidate -Session $session)))
@@ -1064,6 +1158,8 @@ function Get-SessionDirectoriesFromLogs {
         }
 
         $script:OpenCodeActivityCount++
+        $candidate = ConvertTo-AbsoluteSessionPath -Value $candidate
+        if (-not $candidate) { $unresolvedCount++; continue }
         $repoRoot = Resolve-GitRepoRootFromPath -Path $candidate
         if ($repoRoot -and $seen.Add($repoRoot)) {
           $paths.Add((New-SessionCandidate -Path $repoRoot -Evidence (New-SessionEvidence -Source 'log' -Path $candidate)))
