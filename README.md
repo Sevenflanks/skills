@@ -10,6 +10,7 @@
 | --- | --- | --- | --- | --- |
 | `code-intent-comments` | `0.1.0` | stable | 引導 agent 以白話繁中撰寫高價值程式註解，補足 class 責任、核心邏輯、CR、相容性與高風險脈絡。 | [`skills/code-intent-comments/`](skills/code-intent-comments/) |
 | `daily-work-log` | `0.5.1` | stable | 合併 OpenCode／Codex 與 Git／GitHub 證據；修正相對 path 歸屬、以有界 bash workdir 補證並揭露涵蓋缺口。 | [`skills/daily-work-log/`](skills/daily-work-log/) |
+| `erp-daily-work-log` | `0.1.0` | stable | 依工作證據、本人請假與日期 mapping 填寫 ERP 日誌；預設預覽，逾期只輸出。 | [`skills/erp-daily-work-log/`](skills/erp-daily-work-log/) |
 | `gh-body-file` | `0.1.1` | stable | 在 Windows、PowerShell、OpenCode shell 環境中，安全使用 GitHub CLI 支援 `--body-file` 的指令。 | [`skills/gh-body-file/`](skills/gh-body-file/) |
 | `agent-process-lifecycle` | `1.1.1` | stable | 管理可能卡住或跨越 tool call 的本機 process；Windows 同 tool Stop 採當次 owner cleanup 契約，跨 tool Preserve 才需背景返回；缺證據的特殊路由可診斷；non-Windows 僅分類、handoff 或 launch 前 blocked。 | [`skills/agent-process-lifecycle/`](skills/agent-process-lifecycle/) |
 | `finish-and-admin-merge` | `0.1.2` | stable | 依最新 PR、review 與 checks 證據執行已授權的 admin squash merge，並安全收尾 branch／worktree。 | [`skills/finish-and-admin-merge/`](skills/finish-and-admin-merge/) |
@@ -47,6 +48,12 @@
 - 輸出適合直接貼到 standup / 日報的簡短條列。
 
 若 `gh` 不可用或未登入，此 skill 會要求 agent 預設先停止並建議安裝 GitHub CLI 或執行 `gh auth login`；只有使用者強烈堅持時才降級繼續並保留 PR / issue 補證缺口。repo 非 git、或 session 有進入但沒有 commit 時，也會要求 agent 保留資料缺口說明，而不是直接忽略。
+
+## erp-daily-work-log
+
+`erp-daily-work-log` 結合 `daily-work-log` 的 probe／預告／collect 與外部唯讀 `erp` skill 的本人 context、請假及日期 mapping。預設列出整份預覽再確認；已有日誌覆蓋是獨立授權，整日請假不寫入，超過次日 10:00 僅輸出日誌。
+
+Python standard-library helper 預設 dry-run，只對經授權的本人單日日誌 replace 寫入。每次執行須先讀官方 OpenAPI，開發契約不代表部署已支援。配置沿用外部 ERP skill 的 config root／X-API-KEY，不複製外部 skill，也不改上游 collector；詳見 [`skills/erp-daily-work-log/README.md`](skills/erp-daily-work-log/README.md)。
 
 ## gh-body-file
 
@@ -110,6 +117,13 @@ skills/
 │   │   └── evals.json
 │   └── scripts/
 │       └── collect-daily-work-log.ps1
+├── erp-daily-work-log/
+│   ├── SKILL.md
+│   ├── README.md
+│   ├── references/helper.md
+│   ├── scripts/daily_report.py
+│   ├── tests/test_daily_report.py
+│   └── evals/evals.json
 ├── gh-body-file/
 │   ├── README.md
 │   ├── SKILL.md
