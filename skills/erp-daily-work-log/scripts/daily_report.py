@@ -127,7 +127,7 @@ def timestamp(value):
     return parsed
 
 
-def prepare(plan):
+def context_gate(plan):
     if not isinstance(plan, dict) or not isinstance(plan.get('context'), dict):
         raise ReportError('invalid_plan_context')
     context = plan['context']
@@ -169,6 +169,15 @@ def prepare(plan):
         return budget
     if plan.get('expectedSnapshot', snapshot) != snapshot:
         raise ReportError('snapshot_changed')
+    return budget
+
+
+def prepare(plan):
+    budget = context_gate(plan)
+    if budget['action'] != 'continue':
+        return budget
+    context = plan['context']
+    report_date, snapshot = plan['reportDate'], context['expectedSnapshot']
     rows = plan.get('rows')
     if not isinstance(rows, list) or not rows:
         raise ReportError('empty_replacement')
@@ -244,6 +253,11 @@ def replace(base, key, payload):
     request = urllib.request.Request(url, data=json.dumps(payload, allow_nan=False).encode('utf-8'),
                                      headers={'X-API-KEY': key, 'Content-Type': 'application/json', 'Accept': 'application/json'},
                                      method='POST')
+    return _send_request(request)
+
+
+def _send_request(request):
+    # 只共用 transport；各 scoped helper 仍自行固定 method/path 與授權，不開放 CLI request。
     opener = urllib.request.build_opener(NoRedirect(), urllib.request.HTTPSHandler(context=ssl.create_default_context()))
     try:
         with opener.open(request, timeout=30) as response:

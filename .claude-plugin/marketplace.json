@@ -37,8 +37,8 @@
     {
       "name": "erp-daily-work-log",
       "source": "skills/erp-daily-work-log",
-      "description": "依每日工作證據與本人請假 context 填寫 ERP 日誌；預設預覽確認，按日期 mapping，逾期只輸出。",
-      "version": "0.1.0",
+      "description": "依工作內容選模組填寫 ERP 日誌；可獨立確認永久儲存 repo mapping，保留請假與逾期分流。",
+      "version": "0.2.0",
       "keywords": ["erp", "work-log", "daily-report", "python", "authorization"]
     },
     {
