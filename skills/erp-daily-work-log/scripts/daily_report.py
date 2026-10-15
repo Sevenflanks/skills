@@ -110,15 +110,19 @@ def validate_detail(detail):
 def timestamp(value):
     if not isinstance(value, str) or not re.fullmatch(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?\+08:00', value):
         raise ReportError('invalid_server_timezone')
+    fraction = re.search(r'\.(\d+)\+08:00$', value)
+    parse_value = value
+    if fraction:
+        digits = fraction.group(1)
+        parse_value = value[:fraction.start(1)] + digits[:6].ljust(6, '0') + value[fraction.end(1):]
     try:
-        parsed = datetime.fromisoformat(value.replace('Z', '+00:00'))
+        parsed = datetime.fromisoformat(parse_value)
     except (ValueError, TypeError, AttributeError):
         raise ReportError('invalid_server_time') from None
     if parsed.utcoffset() is None:
         raise ReportError('missing_server_timezone')
-    fraction = re.search(r'\.(\d+)\+08:00$', value)
     if fraction and any(digit != '0' for digit in fraction.group(1)[6:]):
-        # Java 可回傳 nanoseconds；向上取到 microsecond，避免 Python 截斷將逾期誤判為恰好期限。
+        # 先正規化小數位再沿用標準庫的日期驗證；奈秒尾數非零時向上取整，避免逾期被截成期限內。
         parsed += timedelta(microseconds=1)
     return parsed
 

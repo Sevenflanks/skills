@@ -2,10 +2,12 @@ import importlib.util
 import io
 import json
 import os
+import re
 import tempfile
 import subprocess
 import sys
 import ssl
+from datetime import datetime
 from unittest.mock import patch
 import urllib.error
 from pathlib import Path
@@ -255,6 +257,47 @@ class PrepareTests(unittest.TestCase):
         value = plan()
         value['context']['serverNow'] = '2026-10-15T10:00:00.000000001+08:00'
         self.assertEqual(report.prepare(value), {'action': 'output_only', 'reason': 'deadline_passed'})
+
+    def test_fractional_timestamps_use_python38_iso_parser_precision(self):
+        def strict_fromisoformat(value):
+            fraction = re.search(r'\.(\d+)(?:[+-]\d{2}:\d{2})$', value)
+            if fraction and len(fraction.group(1)) not in (3, 6):
+                raise ValueError('Invalid isoformat string')
+            return datetime.fromisoformat(value)
+
+        class Python38DateTimeBoundary:
+            fromisoformat = staticmethod(strict_fromisoformat)
+            combine = staticmethod(datetime.combine)
+
+        with patch.object(report, 'datetime', Python38DateTimeBoundary):
+            for fraction, expected in (
+                ('1', '2026-10-15T09:59:59.100000+08:00'),
+                ('12', '2026-10-15T09:59:59.120000+08:00'),
+                ('123', '2026-10-15T09:59:59.123000+08:00'),
+                ('1234', '2026-10-15T09:59:59.123400+08:00'),
+                ('12345', '2026-10-15T09:59:59.123450+08:00'),
+                ('123456', '2026-10-15T09:59:59.123456+08:00'),
+                ('1234567', '2026-10-15T09:59:59.123457+08:00'),
+                ('12345600', '2026-10-15T09:59:59.123456+08:00'),
+                ('123456001', '2026-10-15T09:59:59.123457+08:00'),
+            ):
+                with self.subTest(fraction=fraction):
+                    self.assertEqual(
+                        report.timestamp(f'2026-10-15T09:59:59.{fraction}+08:00').isoformat(), expected)
+
+            value = plan()
+            value['context']['serverNow'] = '2026-10-15T10:00:00.000000000+08:00'
+            self.assertEqual(report.prepare(value)['action'], 'ready')
+            value['context']['serverNow'] = '2026-10-15T10:00:00.000000001+08:00'
+            self.assertEqual(report.prepare(value), {'action': 'output_only', 'reason': 'deadline_passed'})
+
+            self.assertEqual(report.timestamp('2026-10-15T09:59:59.999999999+08:00').isoformat(),
+                             '2026-10-15T10:00:00+08:00')
+            self.assertEqual(report.timestamp('2026-10-15T23:59:59.999999999+08:00').isoformat(),
+                             '2026-10-16T00:00:00+08:00')
+            for malformed in ('2026-02-30T10:00:00.1+08:00', '2026-10-15T10:00:00.1Z'):
+                with self.subTest(malformed=malformed), self.assertRaises(report.ReportError):
+                    report.timestamp(malformed)
 
     def test_decimal_post_hours_reconcile_without_normalized_fields(self):
         value = plan()
