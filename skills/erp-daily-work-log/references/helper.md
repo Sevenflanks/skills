@@ -9,8 +9,12 @@
 | `GET /api/v2/daily-reports/context?reportDate=yyyy-MM-dd` | 完整本人日誌、expectedSnapshot、serverNow、replaceDeadline、canReplace、PROCESS/PASS 每日假時及打卡。 |
 | `POST /api/v2/daily-reports/replace` | body 為 reportDate／details／expectedSnapshot，nonempty、無舊日誌 id，全日原子替換。 |
 | 官方 mapping resolve（讀 OpenAPI 選 path） | query repo／branch／reportDate 選唯一 project。 |
+| 官方回報 project 選項（讀 OpenAPI 選 path） | 先確認 reportDate 的合法 project；不是 mapping 可維護清單。 |
+| `GET /api/v2/daily-reports/options/projects/{projectId}/modules` | 從已確認合法 project 的清單取 module ID／label，不能用非法 project 空 list 推論無 modules。 |
 
 執行前由 `erp` skill 讀官方 OpenAPI 及必要 schemas，核對以下實作契約、必填參照與回應語意。helper 直接驗證 context 與實際 new-detail，不執行 GET、不收集工作證據、不解析自然語言授權。部署缺 operation 或 schema 不一致時停止，不設 `--contract-verified`。
+
+可選 mapping 維護的獨立契約／plan／flags 見 [`mapping-save.md`](mapping-save.md)；缺維護 API 只停用永久儲存。report helper 保持固定 replace，不接受 mapping operation。
 
 ## 私有 plan
 
@@ -25,6 +29,8 @@
 ### New-detail 最小格式
 
 允許且僅允許 `reportType`、`hours`、`subject`、`description`、`todos`、`projectId`、`projectModuleId`、`mandateCharterId`。舊 `id`／`dailyReportId`／`reportId`、modifiedTime 或未知欄位皆拒絕，不從 existing 複製。參照欄位為 Long 整數或 null，不送 `{id}`；參照存在性、業務必填與合法關聯交給後端。
+
+agent 仍須按主流程核對選項：有 modules 的 `PROJECT` 每列（含 0h）必填該 project 的 module ID，無 modules 才 null；寫前 recheck、失效重問。這比 ERP 現有 `hours>0` 規則嚴格，不能以 helper 不查選項為由省略。
 
 - reportType 必填：COMPANY／PROJECT／RD／OTHER／LEAVE。
 - hours 必填 JSON number：0～9999、最多 2 位小數；boolean、字串、NaN／Infinity 均拒絕。工時合计須符合總數扣假與 LEAVE 配額。
