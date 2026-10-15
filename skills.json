@@ -132,6 +132,24 @@
       "status": "stable"
     },
     {
+      "name": "opencode-db-prune",
+      "path": "skills/opencode-db-prune",
+      "summary": "估算與離線維護 OpenCode DB；完整保留或近期 30 天的激進精簡，Deja 選用且自動偵測，未安裝仍可使用兩種模式。",
+      "version": "0.3.0",
+      "license": "MIT",
+      "author": "sevenflankse",
+      "tags": [
+        "opencode",
+        "sqlite",
+        "deja",
+        "maintenance",
+        "disk-space",
+        "windows",
+        "python"
+      ],
+      "status": "stable"
+    },
+    {
       "name": "push-post-pr",
       "path": "skills/push-post-pr",
       "summary": "確認工作完成後，依授權 commit／push 並發布繁中 PR，核對 title、本文與交付狀態。",
