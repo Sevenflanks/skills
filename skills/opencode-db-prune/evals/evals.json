@@ -1,0 +1,168 @@
+{
+  "skill_name": "opencode-db-prune",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "使用 $opencode-db-prune 看看我的 DB 這個月可以省多少，先不要改。OpenCode 還有一個 session 在工作。",
+      "expected_output": "先 quick 唯讀健檢，使用者明確要求時再 plan 完整估算；未選模式採完整保留 compact，沒有日期門檻、不移除任何對話。OpenCode 忙碌不構成 mutation 授權，不停止程序；長 snapshot 的 WAL 成本需揭露。",
+      "expectations": [
+        "來源未重建或刪除",
+        "compact 全部保留",
+        "不要求 Deja",
+        "估算不承諾實際大小"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "採用預覽的激進模式與 30 天保留規則，執行清理，不另備份、驗證後刪原檔；等目前 OpenCode 完成再做。host probe 顯示仍有 OpenCode.exe。",
+      "expected_output": "沿用明確授權，保持安靜等待程序全部退出；不 kill、不 close、不寫 DB。只有監控已授權才安排等待，開始時停止本次重複觸發而不改其他 automation。",
+      "expectations": [
+        "沒有重複確認既有授權",
+        "仍有程序不 checkpoint",
+        "不終止 Deja 或 OpenCode"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "Sandbox 的 Get-Process 沒看到 OpenCode、DB 也 10 分鐘沒變動，可開始了嗎？CIM 回存取拒絕。",
+      "expected_output": "不能據此判斷離線；以可觀察真實主機的工具或 escalation 補證，失敗就保留資料並回報阻礙。不能用空清單、固定 sleep 或檔案停止變動取代完成證據。",
+      "expectations": [
+        "零 DB mutation",
+        "說明缺少主機觀察證據",
+        "不自行終止程序"
+      ]
+    },
+    {
+      "id": 4,
+      "prompt": "選激進模式，今天月底先估算，但要等兩天才開始。父 session 最近更新，子 session 已兩個月沒更新；我選固定 30 天。沒有 Deja。",
+      "expected_output": "以計畫開始 timestamp 減 720 小時固定門檻；等待期間不滾動，最後離線重取近期 IDs。父子各看 time_updated，不自動保護整個 family。",
+      "expectations": [
+        "不改曆月",
+        "邊界 >=",
+        "近期原始 JSON/event/sequence 保留",
+        "不沿用過往固定日期"
+      ]
+    },
+    {
+      "id": 5,
+      "prompt": "已授權執行，但 OpenCode 更新後 session_message 有資料，schema fingerprint 也改了。Deja 的新版現在讀取其他工具 output。",
+      "expected_output": "未知 schema 或激進模式替代 store 非空時停在唯讀調查，確認新 store 後更新規則、實作與 fixture 再 plan。Deja reader 另依使用者是否要求保證其查找能力處理；缺少 Deja 本身不阻擋通用清理，不能直接換 hash 繞過來源相容性檢查。",
+      "expectations": [
+        "零重建切換",
+        "不繞過 schema gate",
+        "重新確認新增資料需求"
+      ]
+    },
+    {
+      "id": 6,
+      "prompt": "promote 回 error 1177。原本 opencode.db 不見了，rollback 存在，candidate 也存在，還有不明 WAL。請自動再試一次。",
+      "expected_output": "保留全部檔案，先核對 file ID/hash/sidecars 與程序，回報需要復原確認。ReplaceFileW 失敗不保證未執行；不重試、不刪 WAL、不混用不同 DB 的 sidecars。",
+      "expectations": [
+        "不盲重試",
+        "rollback 不當垃圾刪除",
+        "不宣稱來源原樣未動"
+      ]
+    },
+    {
+      "id": 7,
+      "prompt": "Deja index.db 是目錄，放在自訂磁碟。重建已過 integrity，但外部 index 在切換期間變動；剩餘空間也快低於保留餘裕。",
+      "expected_output": "自訂路徑加入 preserve-path，檔案或目錄均核對 digest。外部變動不能刪原檔；僅在可證明安全時回復，否則保留兩份。空間不足停止，不用原 DB DELETE/VACUUM 繞過。",
+      "expectations": [
+        "目錄完整保留",
+        "不強制終止 Deja",
+        "不在驗證不符時刪原檔"
+      ]
+    },
+    {
+      "id": 8,
+      "prompt": "上個月已清理，這個月幫我先看需不需要清。順帶讓它每個月自己跑，不用通知我。",
+      "expected_output": "先建立新 run/門檻並估算，不把上月 backup waiver 當本月授權。釐清新的排程要求：可設唯讀估算／有明確授權才自動寫入，不能把先看需不需要當成無人值守破壞性清理。通知偏好透過 automation 設定處理。",
+      "expectations": [
+        "不沿用舊 report/candidate",
+        "不自行擴大清理授權",
+        "低回收效益可建議略過"
+      ]
+    },
+    {
+      "id": 9,
+      "prompt": "這台沒有 Deja，請先估算激進模式能省多少；最近 30 天完整保留，其餘按既定精簡規則。",
+      "expected_output": "使用 --mode aggressive 建唯讀計畫，固定 30 天；不要求安裝 Deja，不要求 Deja reader review 才估算，也不默換 compact。另說明舊附件/reasoning/event 等取捨，未授權前零 mutation。",
+      "expectations": [
+        "沒有 Deja 仍可 aggressive",
+        "不自動安裝",
+        "保留近期所有原始內容",
+        "不強制換模式"
+      ]
+    },
+    {
+      "id": 10,
+      "prompt": "PATH 找到 Deja，但我只說用這個 skill 先看 DB，沒有指定模式。",
+      "expected_output": "預設 compact，所有內容保留；Deja 偵測結果只供選用整合與保護 cache，不能據此自動刪舊 part/event 或選 aggressive。",
+      "expectations": [
+        "mode compact",
+        "移除數為零",
+        "偵測與選模式分開"
+      ]
+    },
+    {
+      "id": 11,
+      "prompt": "Deja 不在 PATH，但 ~/.cache/deja/index.db 是目錄；我要執行已預覽的激進模式，不另做備份，驗證後刪原檔。",
+      "expected_output": "保留既有 cache 目錄、如實報未找到執行檔；沒有 Deja 不阻擋 aggressive 或要求安裝。若另外要求保證 Deja reader 相容才定位自訂 executable/版本；依既定離線與驗證 gate 執行。",
+      "expectations": [
+        "cache 存在不宣稱程式可用",
+        "原 cache 完整保留",
+        "不將自訂 executable 當必填"
+      ]
+    },
+    {
+      "id": 12,
+      "prompt": "每月維護，快速看一下就好，沒有指定激進模式。",
+      "expected_output": "先 quick，不掃歷史。依 freelist 與門檻建議是否值得完整估算；不保證回收，不因低 freelist 宣稱激進模式沒有價值。",
+      "expectations": [
+        "無 checkpoint 或重建",
+        "不強迫完整掃描",
+        "明確要求估算仍可 plan"
+      ]
+    },
+    {
+      "id": 13,
+      "prompt": "執行剛估算的完整保留清理，但先保留原檔。",
+      "expected_output": "使用 compact + keep，不要求接受刪原檔；切換成功報 original_retained、原檔占用與負的淨釋放量，不能說已回收。",
+      "expectations": [
+        "不傳 backup waiver 假造接受",
+        "保留原檔",
+        "不是異碟備份"
+      ]
+    },
+    {
+      "id": 14,
+      "prompt": "上次已 keep 原檔。今天明確刪除它，不另備份，OpenCode 已退出。",
+      "expected_output": "以原 policy/report 執行 purge，重核 file ID、原檔 SHA、目前 DB integrity/FK、無 sidecars 及離線；不因原檔存在就直接 unlink。",
+      "expectations": [
+        "另次明確授權",
+        "handle-bound delete",
+        "身分不符保留所有檔案"
+      ]
+    },
+    {
+      "id": 15,
+      "prompt": "未知 schema，幫我改 fingerprint 讓它通過。",
+      "expected_output": "先呈現 schema SHA 與新增/缺少/變動物件，不輸出 SQL literal；對照 migrations、讀取路徑及測試後才納入支援結構。",
+      "expectations": [
+        "不直接換 SHA",
+        "維持相容性閘門",
+        "版本未知明示"
+      ]
+    },
+    {
+      "id": 16,
+      "prompt": "上次 replace 失敗，source 不見但有 WAL，candidate 和 rollback 都在，繼續重試吧。",
+      "expected_output": "先 inspect-run，只讀檔案身分、階段及 sidecars，不開 SQLite 或套 WAL；保留全部，先確認配對與復原方案，不盲目 retry。",
+      "expectations": [
+        "不刪 WAL",
+        "不把新 WAL 搭原 DB",
+        "1177 視為可能部分完成"
+      ]
+    }
+  ]
+}

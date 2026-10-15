@@ -16,6 +16,7 @@
 | `finish-and-admin-merge` | `0.1.2` | stable | 依最新 PR、review 與 checks 證據執行已授權的 admin squash merge，並安全收尾 branch／worktree。 | [`skills/finish-and-admin-merge/`](skills/finish-and-admin-merge/) |
 | `generate-ut-report` | `0.1.1` | stable | 依時間區間與自然語言條件，產生有來源證據且格式固定的靜態 UT HTML 報告。 | [`skills/generate-ut-report/`](skills/generate-ut-report/) |
 | `make-function-manual-sop` | `0.1.1` | stable | 以版本、實機畫面與欄位證據製作操作說明書，依可用 renderer 驗證並交付。 | [`skills/make-function-manual-sop/`](skills/make-function-manual-sop/) |
+| `opencode-db-prune` | `0.3.0` | stable | 完整保留或近期 30 天的激進精簡；Deja 選用且自動偵測，未安裝仍可用兩種模式。 | [`skills/opencode-db-prune/`](skills/opencode-db-prune/) |
 | `push-post-pr` | `0.1.1` | stable | 確認工作完成後，依授權 commit／push 並發布繁中 PR，核對 title、本文與交付狀態。 | [`skills/push-post-pr/`](skills/push-post-pr/) |
 | `start-from-matt` | `0.1.1` | stable | 透過外部 ask-matt 為本次需求建議流程，先進行分析並保留實作決策邊界。 | [`skills/start-from-matt/`](skills/start-from-matt/) |
 | `to-spec-or-ticket` | `0.1.1` | stable | 判斷需求應產生 spec 或 tickets，載入選中流程；不適合時僅提出下一步建議。 | [`skills/to-spec-or-ticket/`](skills/to-spec-or-ticket/) |
@@ -89,6 +90,12 @@ Launch 前先選擇 `Stop` 或 `Preserve`。`Stop` 必須有 live identity-bound
 
 `1.1.1` 僅在 Windows 執行 lifecycle。non-Windows 僅做 bounded 分類：可辨識 owner 時 handoff，否則在 launch 前 blocked；不做 OS inspection、lifecycle shell call、launch 或 termination。
 
+## opencode-db-prune
+
+`opencode-db-prune` 用於磁碟回收與每月維護。先快速健檢、按需完整估算，明確授權後才在 OpenCode 全部退出時重建、驗證並切換。預設 `compact` 完整保留所有內容；明確選用 `aggressive` 才保留最近 30 天（720 小時）完整 session，較舊內容依已確認規則精簡。Deja 是自動偵測的選用整合，未安裝也能使用兩種模式。
+
+Python standard-library helper 建立獨立 plan，再分別 build/promote，預設保留原檔、可另行 verified purge；inspect-run 支援唯讀診斷未完成操作。核對 schema、內容、外鍵、檔案身分與 preserve paths。Windows 支援離線寫入，其他 OS 僅唯讀估算；未知 schema 會拒絕，激進模式另拒絕非空替代 store。較舊 session 不保證完整續跑／還原，月清仍會累積保留資料。用法與恢復方式見 [`skills/opencode-db-prune/README.md`](skills/opencode-db-prune/README.md)。
+
 ## OpenCode command 遷移
 
 新增七個同名 skill，保留已確認流程，按需要將長契約拆到 references；安裝時複製整個資料夾。
@@ -125,6 +132,13 @@ skills/
 │   ├── references/helper.md
 │   ├── scripts/daily_report.py
 │   ├── tests/test_daily_report.py
+│   └── evals/evals.json
+├── opencode-db-prune/
+│   ├── SKILL.md
+│   ├── README.md
+│   ├── references/
+│   ├── scripts/
+│   ├── tests/
 │   └── evals/evals.json
 ├── gh-body-file/
 │   ├── README.md

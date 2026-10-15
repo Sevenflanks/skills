@@ -34,3 +34,20 @@ jobs:
       - name: Verify checkout without Windows long paths
         shell: pwsh
         run: .\scripts\Test-WindowsGitCheckout.ps1 -SourcePath $env:GITHUB_WORKSPACE
+
+  opencode-db-tests:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+        python: ['3.11', '3.12']
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Verify SQLite retention, read-only planning and Windows recovery
+        run: python -m unittest discover -s skills/opencode-db-prune/tests -v
