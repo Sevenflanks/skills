@@ -28,7 +28,7 @@
 | 缺少 Deja 就阻擋一般維護，或完整保留模式遺失原始值／替代 store | `test_default_compact_without_deja_reclaims_space_and_retains_every_raw_row` |
 | 缺少 Deja 就拒絕激進清理 | `test_aggressive_mode_without_deja_can_plan_build_and_promote` |
 | 偵測到 Deja 就自動套激進模式 | `test_deja_present_does_not_automatically_select_lossy_mode` |
-| Deja 不在 PATH 就刪掉其既有 cache | `test_existing_deja_cache_is_preserved_even_without_executable` |
+| Deja 不在 PATH 就刪掉其既有 cache | `test_existing_deja_cache_is_preserved_even_without_executable` 與 `test_existing_deja_cache_survives_build_and_promotion_without_executable` |
 | 舊／缺少模式的 policy 被當成激進模式使用 | `test_old_or_missing_mode_policy_is_rejected_instead_of_assuming_deja` |
 | Windows PATH 的 cmd shim 未被偵測 | `test_real_path_discovery_finds_windows_cmd_shim` |
 | Python 3.11 的 which 不認 PATHEXT 未列出的 .ps1 | `test_path_ps1_discovery_survives_legacy_which_not_recognizing_extension` |

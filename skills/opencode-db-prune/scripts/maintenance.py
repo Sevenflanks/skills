@@ -69,8 +69,7 @@ def profile(source, cutoff_ms, max_seconds, mode='compact'):
         db.set_progress_handler(lambda: int(time.monotonic()-started > max_seconds), 100000)
         db.execute('BEGIN')
         schema = rebuild.check_schema(db,mode)
-        sessions = db.execute('SELECT id,time_updated FROM session').fetchall()
-        recent = {sid for sid, updated in sessions if mode=='compact' or updated >= cutoff_ms}
+        session_count,recent=rebuild.session_retention(db,mode,cutoff_ms)
         tables = {}
         payload = rows = 0
         for table in sorted(r[1] for r in schema if r[0]=='table'):
@@ -101,7 +100,7 @@ def profile(source, cutoff_ms, max_seconds, mode='compact'):
             index_bytes = logical
         lower = payload + rows*32 + index_bytes
         upper = math.ceil((payload+rows*256)*1.5) + index_bytes
-        return {'retention_mode':mode,'session_count':len(sessions), 'protected_sessions':len(recent), 'tables':tables,
+        return {'retention_mode':mode,'session_count':session_count, 'protected_sessions':len(recent), 'tables':tables,
                 'estimated_candidate_bytes':{'lower':lower, 'upper':upper},
                 'index_temp_budget_bytes':2*index_bytes,
                 'estimate_is_preliminary':True, 'elapsed_seconds':round(time.monotonic()-started,1)}

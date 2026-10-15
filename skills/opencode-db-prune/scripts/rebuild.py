@@ -276,6 +276,11 @@ def rows_for(db, table, columns, explicit_rowid, recent, mode='compact'):
         yield from db.execute('SELECT '+select+' FROM '+quote(table)+' ORDER BY rowid')
 
 
+def session_retention(db, mode, cutoff_ms):
+    sessions=db.execute('SELECT id,time_updated FROM session').fetchall()
+    return len(sessions),{sid for sid,updated in sessions if mode=='compact' or updated>=cutoff_ms}
+
+
 def retained_rows(db, table, columns, explicit, recent, mode):
     """One retention pipeline for planning and rebuilding; yield original + retained row."""
     offset=int(explicit)
@@ -409,15 +414,14 @@ def build_locked(policy,report_path,source,candidate):
         if src.execute('SELECT 1 FROM part p JOIN message m ON p.message_id=m.id WHERE p.session_id!=m.session_id LIMIT 1').fetchone():
             raise RuntimeError('Part and message session ownership disagree')
         metadata={k:src.execute('PRAGMA '+k).fetchone()[0] for k in ('user_version','application_id','page_size')}
-        sessions=src.execute('SELECT id,time_updated FROM session').fetchall()
-        recent={sid for sid,updated in sessions if mode=='compact' or updated>=policy['cutoff_ms']}
+        session_count,recent=session_retention(src,mode,policy['cutoff_ms'])
         orphan=src.execute('SELECT 1 FROM event_sequence e LEFT JOIN session s ON s.id=e.aggregate_id WHERE s.id IS NULL LIMIT 1').fetchone()
         if orphan and mode=='aggressive':
             raise RuntimeError('Event aggregate not represented by a session')
         auxiliary={p:tree_hash(p) for p in policy.get('preserve_external_paths',[])}
         report={'status':'building','source':str(source),'candidate':str(candidate),'policy_sha256':policy_hash(policy),
                 'source_identity':original,'retention_mode':mode,'cutoff':policy['cutoff_iso'],
-                'session_count':len(sessions),'protected_sessions':len(recent),
+                'session_count':session_count,'protected_sessions':len(recent),
                 'metadata':metadata,'schema_sha256':hashlib.sha256(pickle.dumps(schema,5)).hexdigest(),
                 'auxiliary':auxiliary,'tables':{}}
         write_report(report_path,report)

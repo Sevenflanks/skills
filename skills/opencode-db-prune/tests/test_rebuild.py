@@ -210,6 +210,16 @@ class RebuildTests(SQLiteFixture):
             maintenance.execute('purge',self.policy,self.report,True,True)
         self.assertTrue(self.rollback.exists())
 
+    def test_existing_deja_cache_survives_build_and_promotion_without_executable(self):
+        cache=self.folder/'cache'/'deja'/'index.db';cache.parent.mkdir(parents=True)
+        cache.write_bytes(b'old optional cache')
+        policy,_,folder=maintenance.create_plan(self.source,self.folder/'cache-runs')
+        policy.update(minimum_free_gib_before_build=0,minimum_free_gib_before_temp=0,minimum_free_gib_during_build=0)
+        report=folder/'report.json'
+        maintenance.execute('build',policy,report,True,True)
+        maintenance.execute('promote',policy,report,True,True)
+        self.assertEqual(cache.read_bytes(),b'old optional cache')
+
     def test_validated_atomic_promotion_then_deletion(self):
         build(self.policy,self.report)
         new_hash=file_hash(self.candidate)
@@ -532,11 +542,9 @@ class PortableTests(SQLiteFixture):
         cache.write_bytes(b'old optional cache')
         policy,_,folder=maintenance.create_plan(self.source,self.folder/'cache-runs')
         self.assertIn(str(cache),policy['preserve_external_paths'])
-        policy.update(minimum_free_gib_before_build=0,minimum_free_gib_before_temp=0,minimum_free_gib_during_build=0)
-        report=folder/'report.json'
-        maintenance.execute('build',policy,report,True,True)
-        maintenance.execute('promote',policy,report,True,True)
+        self.assertFalse(Path(policy['candidate_db']).exists())
         self.assertEqual(cache.read_bytes(),b'old optional cache')
+
     def test_old_or_missing_mode_policy_is_rejected_instead_of_assuming_deja(self):
         path=self.folder/'stale-policy.json'
         for stale in ({'format_version':1,'retention_mode':'deja-v1'}, {'format_version':2},
