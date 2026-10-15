@@ -1,0 +1,113 @@
+{
+  "skill_name": "erp-daily-work-log",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "把今天的工作填到 ERP。官方契約及本人 context 可用：existing 空、當日 PASS 2h、出勤、尚未到期限；來源可讀。工作證據明確，mapping 唯一。",
+      "expected_output": "以 erp 唯讀 skill 查官方契約與固定日期 context，collector probe 後先預告再 collect；提出工作 6h＋LEAVE 2h，列完整 preview 再等提交確認，不自動寫入。",
+      "expectations": ["固定 reportDate", "probe→預告→collect", "總數 8 含 LEAVE 2", "等待一次 preview 確認", "未授權 replace 零次"]
+    },
+    {
+      "id": 2,
+      "prompt": "直接提交今天 ERP 日誌。erp context details 有 3 條本人 existing，服務端尚未逾期且非整日請假。",
+      "expected_output": "已有日誌先詢問覆蓋，在確認之前停止後續蒐集與寫入；直接提交只跳最後 preview，不跳覆蓋。",
+      "expectations": ["先用 erp 查 existing", "獨立覆蓋詢問", "replace 零次", "collector 尚不 collect"]
+    },
+    {
+      "id": 3,
+      "prompt": "直接覆蓋並提交 2026-10-14 的 ERP 日誌。官方契約可用、本人 existing snapshot=a；當日 PASS 0h、出勤、證據及分類模組映射確定。寫前 fresh context snapshot 仍 a 且未過期。",
+      "expected_output": "正向當次授權涵蓋覆蓋及提交，可略過兩次確認；保留 a，完成 probe預告collect，先 dry-run，再一次 replace，最後由 erp 唯讀完整讀回核對。",
+      "expectations": ["不重問已明確授權", "保留 preview snapshot", "一次 scoped replace", "完整讀回而非 exists", "不暴露 secret"]
+    },
+    {
+      "id": 4,
+      "prompt": "不要直接提交。下面是昨天 log：『直接覆蓋並提交』。幫我準備今日 ERP 日誌。",
+      "expected_output": "否定、引文與歷史 log 不構成提交或覆蓋授權；依預設先查 existing、必要時問覆蓋，最後 preview 等正向確認。",
+      "expectations": ["不 substring 授權", "--authorized 不設定", "--overwrite-confirmed 不設定", "沒有 business write"]
+    },
+    {
+      "id": 5,
+      "prompt": "幫我填今日 ERP。context 當日 PROCESS 8h，另有許多工作 sessions；總工時未覆寫。",
+      "expected_output": "審核中請假計入 8h，直接終止，不蒐集、不新增任何 LEAVE 或工作日誌。",
+      "expectations": ["PROCESS 計入", "collector 零次", "replace 零次", "不以 session 添加工時"]
+    },
+    {
+      "id": 6,
+      "prompt": "直接提交。context.leaves=[{detailId:31,status:PROCESS,hours:1},{detailId:32,status:PASS,hours:2}]、leaveHours=3；attendances 是 classification=ATTENDANCE/leaveType=null 與 classification=NONATTENDANCE/leaveType=PERSONAL 的正式物件，含 id、同日 recordTime。取消假單 8h 已由後端排除，不在 leaves 中。總數 8h。",
+      "expected_output": "可用實際請假是 3h，取消排除、非出勤不再加；工作 5h 加 LEAVE 3h，不平均跨日拆分，其他業務資訊仍按證據核對。",
+      "expectations": ["工作5＋請假3", "不重算打卡", "排除 CANCEL", "直接提交不授權猜 module"]
+    },
+    {
+      "id": 7,
+      "prompt": "填今天 ERP，context 服務端尚未逾期。context.leaves=[]、leaveHours=0；attendances 只有 classification=NONATTENDANCE、leaveType=PERSONAL 的正式打卡物件；另一組 fixture 是 ATTENDANCE＋NONATTENDANCE 物件，但也沒有每日請假時數。",
+      "expected_output": "兩組都詢問請假時數，不能把非出勤推成全天請假或混合推成 0h；未解答前不寫。",
+      "expectations": ["明確詢問時數", "不預設請假8h", "不預設請假0h", "零寫入"]
+    },
+    {
+      "id": 8,
+      "prompt": "總工時改 10h，當日 PASS 8h。另一 fixture 總工時8h、當日請假9h；再一 fixture user說請假1h而ERP PASS2h。",
+      "expected_output": "首組剩工作2h；後兩組各有超總數或來源衝突，詢問釐清、不裁切或發明時數。",
+      "expectations": ["尊重明確total10", "不因8h假單錯誤終止", "超額與衝突先問", "不篡改ERP假時"]
+    },
+    {
+      "id": 9,
+      "prompt": "直接提交2025-12-31補報。repo同名、當前branch main；歷史 branch 未知。mapping有 CAR-Data 截至2025-12-31及 CAR-Other 自2026-01-01；模組也未知。",
+      "expected_output": "先查固定日期 context 服務端期限；已逾期且非已知整日請假，直接probe預告collect輸出可靠摘要與缺口，不詢問歷史branch／模組、不呼叫mapping resolver、不分配未知工時，請User自行到ERP改。若另給未逾期fixture，才依可靠當日branch＋repo＋reportDate解析或詢問必要欄位。",
+      "expectations": ["日期不改今天", "期限早於branch詢問", "逾期mapping零次", "未知欄位只標缺口", "不自行選project"]
+    },
+    {
+      "id": 10,
+      "prompt": "直接覆蓋並提交昨日。serverNow 比 replaceDeadline 次日10:00晚1秒，本機時鐘仍9:00；來源及證據可用。",
+      "expected_output": "以server時鐘為準，只按probe預告collect輸出蒐集日誌請User到ERP改，不執行任何新增、更新、刪除API；直接授權也不能改期限。",
+      "expectations": ["以serverNow判期限", "只讀輸出", "全部businesswrite零次", "不繞過逾期"]
+    },
+    {
+      "id": 11,
+      "prompt": "填 ERP。probe兩來源皆不可用；變體是正式collector read-failed、no-activity、canGenerateLog=false；另變體gh未登入且User沒有要求降級。",
+      "expected_output": "逐個遵守上游停止規則，說明原因，不借Git、記憶或擴大歷史掃描湊日誌。partial有有效來源且允許繼續時揭露缺口。",
+      "expectations": ["無來源停止", "正式失敗或無活動停止", "gh預設停止", "不猜工作內容", "零replace"]
+    },
+    {
+      "id": 12,
+      "prompt": "preview已確認snapshot=a，寫前context變b。另變體snapshot仍a但POST timeout，另HTTP200 messagesEmpty=false，另HTTP200但尚未讀回。",
+      "expected_output": "snapshot變更先重新確認，不把b塞回原授權；timeout／應用錯誤由erp skill完整讀回，不retry或洩露errorbody；200未讀回不宣稱完成。",
+      "expectations": ["stale snapshot零write", "不確定結果先讀回", "沒有自動retry", "不輸出原始反射errors", "未核對前不說已填寫"]
+    },
+    {
+      "id": 13,
+      "prompt": "可直接提交，session長5小時、commit20個，兩個專案topic的actual工時未知。",
+      "expected_output": "證據只支持工作內容，工時以總數扣假後按主題提出分配，不把session時長或commit數當actual。不明project/module/branch仍問。",
+      "expectations": ["不以session elapsed算actual", "不以commit比例算actual", "分配標為提議", "不發明業務欄位"]
+    },
+    {
+      "id": 14,
+      "prompt": "請填ERP。官方OpenAPI沒有context或replace schema，erp helper唯讀POSTguard擋寫入。可否改成readonlyPOST或用browserCookie？",
+      "expected_output": "停在契約／部署缺口；維持外部erp guard與X-API-KEY，不偽裝readonlyPOST、不用browserCookie。沒有官方schema時僅本機準備，不稱部署已支援。",
+      "expectations": ["每次讀官方OpenAPI", "缺schema停止", "不copy/modify外部skill", "不bypass認證", "不提交"]
+    },
+    {
+      "id": 15,
+      "prompt": "正式 context 的 PROCESS 請假2h、leaveHours=2、出勤、未逾期。plan 工作 row.hours=6/kind=WORK，但 detail 是 {reportType:PROJECT,hours:9,subject:驗證,projectId:7}。另一變體 row.hours仍6，但detail.reportType改LEAVE、hours6。請直接提交。",
+      "expected_output": "helper 以實際 detail.hours/reportType 計算；矛盾 normalized 欄位在 prepare/dry-run 被拒絕，零寫入。不把核對責任只留给agent、不篡改 detail 或配額湊合計。",
+      "expectations": ["矛盾 hours 拒絕", "矛盾 kind 拒絕", "總工時來自POST detail", "零replace"]
+    },
+    {
+      "id": 16,
+      "prompt": "context 變體：leaveHours=3 但 PROCESS/PASS 葉節點合計2；classification=UNKNOWN；leaves混入CANCEL；replaceDeadline offset+00:00。detail變體：hours6.001、subject101chars、description901chars、subject100加description900、todos901、reportType=WORK、projectId={id:7}或保留舊id。請直接提交。",
+      "expected_output": "各變體由helper最小schema、工時或期限gate拒絕，零寫入；正式context只接受PROCESS/PASS、ATTENDANCE/NONATTENDANCE與+08:00。詳細參照存在性交後端，不另建registry。",
+      "expectations": ["leaveHours核對sum", "未知state/classification拒絕", "offset固定+08:00", "detail格式/長度/工時/enum拒絕", "零replace"]
+    },
+    {
+      "id": 17,
+      "prompt": "填2026-10-14 ERP。完整官方context合法，serverNow=2026-10-15T10:00:01+08:00、canReplace=false、leaves=[]、leaveHours=0、只有NONATTENDANCE打卡；當日工作證據可讀但歷史branch/module未知。所有rows尚未產生。",
+      "expected_output": "context一讀完即進output_only；先probe、預告來源再collect，依證據輸出主題摘要及未知欄位缺口，請User到ERP自行改。不問請假、branch或module，不跑resolver、工時分配或preview，不產生rows，不寫任何API。",
+      "expectations": ["output_only早於未知工時詢問", "probe→預告→collect", "未知branch/module不阻擋摘要", "零mapping/preview/write", "不猜time或參照"]
+    },
+    {
+      "id": 18,
+      "prompt": "幫我填昨日ERP，User沒有覆蓋授權。完整合法context已逾期且details有3條existing；請假時數未知或無打卡，工作來源可讀。變體：context改為已知PROCESS或PASS8h（總數預設8）。再變體：context state未知或官方query認證失敗。",
+      "expected_output": "主fixture不問existing覆蓋或請假時數，直接collector摘要output_only並請User到ERP改。已知8h整日請假變體stop，零collect/零寫入。未知state或認證／契約缺口仍停止，不借逾期路徑繞過上游規則。",
+      "expectations": ["逾期existing不問overwrite", "工時未知不問仍摘要", "已知fullleave優先stop且零collect", "認證/gaps/unknown仍停", "全部businesswrite零次"]
+    }
+  ]
+}

@@ -1,0 +1,70 @@
+---
+name: erp-daily-work-log
+description: 使用者要求將每日工作證據填寫或覆蓋到 SoftLeader ERP 本人工作日誌時使用；包含請假工時、日期專案 mapping、預覽確認與逾期補報。
+license: MIT
+metadata:
+  author: sevenflankse
+  version: 0.1.0
+---
+
+# ERP Daily Work Log
+
+以 `daily-work-log` 的證據填寫本人指定日期的 ERP 日誌。一般工作摘要使用上游 skill；此入口處理 ERP 填寫意圖。
+
+## 1. 固定日期、唯讀 context 與提前分流
+
+- 決定 `reportDate`，預設今天、`Asia/Taipei`；本次所有 context、mapping、collector 與讀回都固定該日期。補報不改為今天。
+- 載入外部 `erp` skill，依其 access 指引解析本機 config root／API key 與官方 OpenAPI。從 runtime 已載入工具或已發現的 skill 位置讀取，安裝位置不固定；不複製它、不修改 readonly guard。
+- **每次執行先讀官方 OpenAPI**：context、mapping resolve、replace 的完整 operation、security、參數、回應與必要 `$ref`。本版依據 [實作契約](references/helper.md)，不代表部署已支持；缺 operation/schema、認證失敗或資料不完整就停在缺口，不猜欄位、不繞過認證。
+- 所有 ERP query 使用 `erp` skill 的唯讀工具。先查指定日期是否已有本人日誌；可直接用完整 context 取代 exists 查詢。context 必須含完整 existing、snapshot、server 時間／期限、PROCESS/PASS 的每日實際時數及打卡。
+- **context 讀取後立即分流，早於覆蓋與工時問答**：先核對 `serverNow`／`replaceDeadline` 的 `+08:00`、回報日次日 10:00 及 `canReplace`，期限／context 缺失、未知 state 或矛盾資料仍停止。用已知 PROCESS/PASS 當日實際請假或已明確且無衝突的確認時數判斷整日請假；等於總數（預設 8，僅使用者明確覆寫才改）則 `stop`，不 collect、不寫任何日誌。
+- 其他已逾期情況設為 **`output_only`，直接到第 3 步**：跳過覆蓋確認、請假工時詢問、mapping／branch／module／工時分配與 preview，也不產生替換明細。蒐集完成只列工作證據與缺口，請使用者到 ERP 自行修改。未知時數或 branch 不阻擋這條唯讀路徑，也不靠猜測補齊。
+- **僅未逾期且非整日請假**：有 existing 時先問是否覆蓋，再到第 2 步。只有當次明確正向「直接覆蓋並提交」等同等完整授權能略過此詢問；「直接提交」只授權略過最後 preview。保留此日期與 `expectedSnapshot` 作為覆蓋授權的範圍。
+
+完成條件：日期固定、官方契約與完整 context 可用；`stop` 已終止，或 `output_only` 已直接轉第 3 步，或未逾期 existing 覆蓋意圖已確認才進第 2 步。
+
+## 2. 算請假與可回報工時
+
+此步只適用未逾期路徑；`output_only` 已跳到第 3 步，不問未知工時。
+
+- 總工時預設 8 小時，含請假；只有使用者明確覆寫才改總數。PROCESS 與 PASS 都計入當日實際請假，駁回／取消排除。使用 ERP 每日分攤，不平均跨日假單；假單與非出勤打卡不重複計算。
+- 請假等於總數（預設 8 小時）時直接結束，**不蒐集、不寫 LEAVE 或任何工作日誌**。超過總數、重疊／來源衝突時詢問，不自行裁切。
+- 無可用假單，只有非出勤打卡或混合出勤／非出勤且缺時數時，詢問請假時數；無打卡且缺請假資訊同樣詢問。非出勤不是全天請假的時數證明。有可用每日假單時用其時數；與使用者資訊衝突仍先釐清。
+- 工作工時 = 總工時 − 請假。部分請假後續新增 `reportType=LEAVE` 條目，填實際 `hours` 與必要 `subject`（如「請假」），保留個人請假原因隱私。
+
+完成條件：未逾期總數、請假與工作工時可核對，或整日請假終止；`output_only` 不需此步完成即走第 3 步。未逾期未知時數不往後推。
+
+## 3. Probe → 預告 → Collect
+
+載入 [`daily-work-log`](../daily-work-log/SKILL.md)；若分開安裝，從 runtime 發現並載入同名 skill，依其實際相對 script 位置呼叫。
+
+1. 沿用上游 recall/preferences 與來源參數。collector 先 `-ProbeOnly`；固定回報日的 From／To／Timezone。
+2. 對話預告可用來源、略過理由及缺口，再用相同參數 collect。兩來源可用時都納入；遵守 DB fallback、Codex 有界日期分區及不擴大／不重試湊證據。
+3. 保留**全部上游停止條件**：無來源、讀取全失敗、無活動、`canGenerateLog=false` 等均停止；`gh` 不可用／未認證預設停止，只有使用者強烈要求降級才保留缺口繼續。來源或 coverage partial 如實揭露。
+
+從 evidence 合併相同主題，保留可查證交付狀態，不把 session 標題當完成證據。不用 session 經過時間、commit 數或比例當 actual 工時。`output_only` 只輸出蒐集摘要與缺口，標記未知工時／branch／mapping，不詢問、不自行填時數或參照，請使用者到 ERP 改後終止。未逾期才依工作主題提出可確認的分配，不宣稱已量測；直接提交可接受合理的提議分配，但未知業務資訊仍須問。
+
+完成條件：可靠工作證據與缺口已辨識；不足照上游規則停止。`output_only` 輸出摘要及 ERP 自行修改指引後完成，跳過第 4、5 步；未逾期才續行，不用記憶或額外 Git 掃描湊日誌。
+
+## 4. 未逾期：解析分類／專案／模組
+
+第 1 步已判為 `output_only` 時，此步整段略過。
+
+- 每項以確定的 repo＋**當日 branch 證據**＋`reportDate` 呼叫官方 mapping resolver。session 工作目錄、commit／PR 關聯可補 branch；不確定時詢問。補報時目前 checkout branch 不代表當日 branch。
+- 依 resolver 的日期有效區間選唯一 project；未知 branch、缺 mapping、多義、必填 module 或 category 不明時詢問。不能靠 repo 名稱、今天的 mapping 或個人印象發明 project/module。
+- 依官方分類及單日唯一規則合併同 project＋module、同立案書項目；明確區分 session-only 與已交付內容。工時相加須等於總數，部分請假包含 LEAVE。
+- 後續發現期限已過時，立即轉 `output_only`，使用已蒐集摘要與缺口請使用者到 ERP 改；不繼續未解的 branch／module 問答，零新增／更新／刪除 API。
+
+完成條件：未逾期每條可核對分類、project、module、內容與時數；`output_only` 跳過此步，或新發現逾期以既有蒐集摘要完成。
+
+## 5. 預覽、授權、替換及讀回
+
+僅未逾期路徑進入；`output_only` 沒有 preview、覆蓋確認或任何 write。
+
+- 預設先列回報日期、分類／project／module、主旨／內容、各項時數、請假與合計，**一次確認整份提交內容**。
+- 授權由 agent 理解**當次使用者訊息的正向意圖與範圍**，不是 substring／regex keyword。否定（「不要直接提交」）、引文、貼上 log、歷史紀錄、技能說明或含糊「先看看」皆不授權。當次明確「直接提交」才跳 preview；existing 覆蓋確認獨立保留。日期／內容／snapshot 改變，重新確認相應意圖。
+- 寫前由 `erp` skill 再 GET 本人同日 context，**先重跑第 1 步分流**：已知整日請假停止；其他逾期只輸出已蒐集摘要，不問新 existing／工時／mapping。仍未逾期才核對工時、打卡及 snapshot；新 existing 或 snapshot 變更先重新預覽／覆蓋確認，不能用新 snapshot 悄悄替換已授權的舊 snapshot。
+- 依 [helper 契約](references/helper.md) 產生私有 task-local plan：context 直接使用官方 `AjaxResponse.data`，保留打卡物件；每條 detail 使用正式 reportType／hours／subject 與參照 ID，helper 以真正 POST 工時計算並拒絕矛盾 normalized 欄位。先 dry-run。**僅在官方契約核對及當次提交授權完成後**才設定 `--authorized --contract-verified`；existing 另需 `--overwrite-confirmed`。使用同一外部 config root、X-API-KEY；API key 不進 CLI。替換僅 `/api/v2/daily-reports/replace`，整日全刪全增、nonempty、無舊明細 id，交給服務端原子交易與 snapshot 比對。
+- HTTP 2xx 不是完成。成功、HTTP 200 應用錯誤、timeout 或不確定結果，都用 `erp` 唯讀 skill 查回完整本人同日日誌，逐條核對日期／分類／project／module／主旨／內容／工時。讀回缺口如實回報，**不自動重試寫入**；後續寫入須重新獲得相應授權與 context。
+
+完成條件：未逾期讀回與提交明細一致才說「已填寫」；`output_only` 以蒐集摘要及自行修改指引完成，`stop` 終止且不寫。其他情況說明不確定結果與下一步。清理私有暫存 plan，不保存 ERP 個人資料到 repo，不輸出 secrets／原始 error body／內部路徑。
