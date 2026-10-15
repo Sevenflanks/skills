@@ -647,4 +647,3 @@ def failure_state(policy,report_path):
                 'post_switch_validation_recorded':report['status'] in ('post_switch_validated','original_retained','complete')}
     except Exception:
         return {'original_retained':'unknown','last_recorded_stage':'unknown'}
-
