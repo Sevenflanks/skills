@@ -9,7 +9,7 @@ metadata:
 
 # Daily Work Log
 
-將本機 OpenCode／Codex 活動、跨 branch Git 與 GitHub PR 證據整理成精簡日誌。同一 PowerShell collector 先輸出 probe JSON，再輸出 collection JSON；來源預告與最終摘要由 agent 在對話提供。
+將本機 OpenCode／Codex 活動、跨 branch Git 與 GitHub PR 證據整理成精簡日誌。同一 PowerShell collector 先輸出 probe JSON，再輸出 collection JSON；來源預告與最終摘要由 agent 在對話提供。開始撰寫對話或摘要前，從 runtime 發現並載入 `i-have-adhd` skill，不依賴固定安裝路徑。
 
 ## When to use
 
@@ -63,6 +63,9 @@ Do not use this skill when:
    - Keep the script output pure JSON on `stdout`.
    - Do not append human text, markdown, or logging noise to `stdout`.
    - 使用與 probe 相同參數，移除 `-ProbeOnly`；若原先省略時間，將 probe 的 `meta.from`／`to` 明確傳入，固定本次日界線。兩來源皆可用時全數蒐集，正式 collector 自身會重新檢查來源並阻擋無來源／讀取全失敗的呼叫。
+   - 呼叫正式 collect 時，工具支援等待 timeout 設定就設為 **600000 ms**；這是工具設定，不是 script 參數，也不是效能 SLA。若工具不支援，揭露實際等待限制，不以重跑補足。
+   - 逾時或未取得有效 JSON 時停止並回報，不自動重跑；工具 timeout 不改變既有來源 guard 或停止條件。
+   - 工具等待 timeout 與資料讀取額度分開；Codex 的預設總額度／單檔額度仍依「Codex 有界涵蓋」辦理。
    - Codex 入口為 `-CodexRoot`（否則 `CODEX_HOME`，再否則 `~/.codex`）；只直接定位 `sessions/yyyy/MM/dd` 日期分區，`archived_sessions` 僅 probe 可用性，正式蒐集略過並揭露缺口。具體界限與停止策略見下方「Codex 有界涵蓋」。
    - 對選中並已讀取的 JSONL 事件，以 `timestamp` 比對含頭尾的指定範圍；預設今天依 `Timezone` 計算。選中檔的舊檔名或 mtime 不取代事件時間；日期分區之外的跨日續行可漏收，不宣稱完整涵蓋。
    - collector 合併 event／response 鏡像、同 session ID 續行及父子 session 的精確重播，保留 `sessionIds`／`files`／`timestamps`；不推測自然語意主題。
@@ -90,19 +93,21 @@ Do not use this skill when:
    - Group by GitHub repo name from `repos[].githubRepo` first, such as `owner/repo`.
    - If `githubRepo` is unavailable for a repo, fall back to `repos[].name` repo folder name.
    - Never use absolute paths as final group headings.
-   - Prefer short bullets, ideally within 30 Chinese characters.
-   - Default to 2-5 bullets per repo. If a repo would exceed that, merge nearby commits into theme-level bullets instead of listing every commit-shaped fragment.
-   - Prefer bullets that preserve issue / PR numbers such as `PR #219` or `#217`.
+   - 每條以「類別（有助定位時）＋具體變更／成果」表達，結果先行，句尾保留支撐該主題的全部相關 PR 編號。完整意思優先於 30 個中文字或名詞串；同主題跨 repo 時加可辨識的 repo 前綴。
+   - 同一範圍內所有列出的 PR 都是 `MERGED` 時，可共用一次「均已合併」狀態；狀態混合時分別標明各成果／續作的 `MERGED`、`OPEN`、`Draft`、`CLOSED` 或 session-only 狀態。
+   - 保留所有支撐實際列出工作主題的 PR 編號，不把無關或低訊號 PR 塞入摘要；合併狀態不代表部署，也不據此宣稱未查證的效率或效益。
+   - Default to 2-5 bullets per repo; if there are more material changes, merge nearby commits into independently understandable theme-level bullets.
    - Each bullet should be understandable on its own. A reader should understand what changed without needing the previous bullet as context.
    - If a bullet only makes sense together with neighboring bullets, merge them into one clearer sentence or drop the weaker fragment.
    - Keep separate bullets when two changes are materially different.
     - 同 repo／worktree 的相同工作主題跨 OpenCode、Codex、父子或續行只寫一條，將對應 `sessionEvidence`、commit 與 PR 一起作為證據；不同實質工作仍分開。語意合併由 agent 判斷，不要求 collector 做 NLP。
     - 先依證據辨識交付狀態，再壓縮文字：`MERGED` 才寫「已合併」；`OPEN` 寫「待合併」，已知 `isDraft=true` 再標「Draft」。`CLOSED` 且無 merge 證據只寫「已關閉、未合併」；狀態不明明講待確認。Commit 本身不證明 PR 已合併。
-    - 同主題優先保留已交付成果與待完成部分，例如「登入修正已合併 #31；續作待合併 #33（Draft）」；不能用其中一個 merged PR 把整個主題或另一個 PR 宣稱完成。Formatter 的 `[OPEN]` 不證明 ready，未保留 Draft 資訊時維持「待合併」。
+    - 同主題分開表達已交付成果與待完成部分；不可用其中一個 merged PR 把整個主題或另一個 PR 宣稱完成。Formatter 的 `[OPEN]` 不證明 ready，未保留 Draft 資訊時維持「待合併」。
     - 只有 session 標題或未補 Git／PR 證據時，標示「session-only／僅 session 證據」，用「討論／處理／驗證中」等符合證據的用語。標題即使寫「驗收通過／部署成功」，也不是實際驗收、部署或合併證據；這些成果須有對應結果補證才可宣稱。保留有意義的待辦，不把標題當已完成清單。
    - 不公開完整私人對話、內部路徑或 secrets；只用必要的工作主題與可公開 PR／issue 編號。
 
 7. **State data gaps honestly**
+   - 對話先報目前狀態與待決事項；缺口已說明後，後續只補充變更，最終摘要仍保留相關缺口。
    - If the user strongly insisted on continuing without available/authenticated `gh`, explicitly say PR / issue links were not supplemented.
    - If a repo had session activity but no commits, say so.
    - If a directory is not a git repo, say so instead of dropping it silently.
@@ -222,16 +227,16 @@ When a repo has many commits, summarize themes instead of dumping commits. Use c
 
 ## Final output format
 
-Use grouped bullets like this:
+Use grouped bullets like this (illustrative only; not real repo results):
 
 ```text
 - **sevenflanks/repo-a**
-  - 修首建參數遺失，PR #49
-  - 新增 skills 功能
+  - 已修正初始化參數遺失並補上回歸保護（均已合併），PR #49、#52
+  - 新增 skills 功能（待合併），PR #53
 
 - **repo-b**
-  - 修付款按鈕條件邏輯
-  - 合併 PR #219，解 #217
+  - 修正付款按鈕條件邏輯（已合併），PR #219
+  - 完成查詢端修正（已合併），PR #220；續作仍待合併（Draft），PR #221
 ```
 
 If there is a global gap, append a short note after the grouped list, for example:
