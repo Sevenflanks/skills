@@ -9,10 +9,11 @@ metadata:
 
 # ERP Daily Work Log
 
-以 `daily-work-log` 的證據填寫本人指定日期的 ERP 日誌。一般工作摘要使用上游 skill；此入口處理 ERP 填寫意圖。
+以 `daily-work-log` 的證據填寫本人指定日期的 ERP 日誌。一般工作摘要使用上游 skill；此入口處理 ERP 填寫意圖。對話與日誌文案沿用上游規則；開始互動前從 runtime 發現並載入 `i-have-adhd` skill，不依賴固定安裝路徑，以涵蓋較早的覆蓋與請假問答。
 
 ## 1. 固定日期、唯讀 context 與提前分流
 
+- **唯讀準備可沿用**：同一任務、同一 `reportDate` 已核對的官方契約、context 與 options，在沒有新證據、選擇或契約漂移時沿用；連續唯讀查詢可由同一 agent 集中處理，減少 handoff。交接或使用者簡稱不同於完整 label 本身不構成重查理由。每次新執行仍先讀官方 spec；首次 context 必須完成分流，後續發現期限已過須立即分流；寫入前仍 fresh-read context／必要 options，每次 mapping write 前仍重查 context、權限、完整 list 與 `modifiedTime`。
 - 決定 `reportDate`，預設今天、`Asia/Taipei`；本次所有 context、mapping、collector 與讀回都固定該日期。補報不改為今天。
 - 載入外部 `erp` skill，依其 access 指引解析本機 config root／API key 與官方 OpenAPI。從 runtime 已載入工具或已發現的 skill 位置讀取，安裝位置不固定；不複製它、不修改 readonly guard。
 - **每次執行先讀官方 OpenAPI**：context、mapping resolve、replace 的完整 operation、security、參數、回應與必要 `$ref`。本版依據 [實作契約](references/helper.md)，不代表部署已支持；缺 operation/schema、認證失敗或資料不完整就停在缺口，不猜欄位、不繞過認證。
@@ -43,7 +44,7 @@ metadata:
 2. 對話預告可用來源、略過理由及缺口，再用相同參數 collect。兩來源可用時都納入；遵守 DB fallback、Codex 有界日期分區及不擴大／不重試湊證據。
 3. 保留**全部上游停止條件**：無來源、讀取全失敗、無活動、`canGenerateLog=false` 等均停止；`gh` 不可用／未認證預設停止，只有使用者強烈要求降級才保留缺口繼續。來源或 coverage partial 如實揭露。
 
-從 evidence 合併相同主題，保留可查證交付狀態，不把 session 標題當完成證據。不用 session 經過時間、commit 數或比例當 actual 工時。`output_only` 只輸出蒐集摘要與缺口，標記未知工時／branch／mapping，不詢問、不自行填時數或參照，請使用者到 ERP 改後終止。未逾期才依工作主題提出可確認的分配，不宣稱已量測；直接提交可接受合理的提議分配，但未知業務資訊仍須問。
+從 evidence 合併相同主題，保留可查證交付狀態，不把 session 標題當完成證據。不用 session 經過時間、commit 數或比例當 actual 工時。`output_only` 只輸出蒐集摘要與缺口，標記未知工時／branch／mapping，不詢問、不自行填時數或參照，請使用者到 ERP 改後終止。未逾期才依工作主題提出可確認的分配，不宣稱已量測；直接提交可接受合理的提議分配，但未知業務資訊仍須問。`subject` 描述該工作主題的範圍；`description` 沿用 `daily-work-log` 的具體成果在前，支撐該主題的全部相關 PR 編號置於句尾。ERP 文案使用短行純文字，不依賴 Markdown 渲染。
 
 完成條件：可靠工作證據與缺口已辨識；不足照上游規則停止。`output_only` 輸出摘要及 ERP 自行修改指引後完成，跳過第 4、5 步；未逾期才續行，不用記憶或額外 Git 掃描湊日誌。
 
@@ -53,7 +54,7 @@ metadata:
 
 ### 4.1 本次 project 與 module
 
-1. 每項以確定的 repo＋**當日 branch 證據**＋`reportDate` 呼叫官方 mapping resolver。session 工作目錄、commit／PR 關聯可補 branch；不確定時詢問。補報時目前 checkout branch 不代表當日 branch。缺 mapping／多義時請使用者選本次專案，不靠 repo 名稱或今天的 mapping 發明 ID。
+1. 每項以確定的 repo＋**當日 branch 證據**＋`reportDate` 呼叫官方 mapping resolver。session 工作目錄、commit／PR 關聯可補 branch；不確定時詢問。補報時目前 checkout branch 不代表當日 branch。缺 mapping／多義時請使用者選本次專案，不靠 repo 名稱或今天的 mapping 發明 ID。以已讀官方 ID／code 唯一辨識使用者簡稱，preview 使用官方 label；不得只因簡稱不等完整 label 而重 GET，多義仍詢問。resolver 回 `400`／`http_error` 時，回報解析失敗且原因未確認；只有官方明確回覆缺 mapping 才稱為缺 mapping，不猜原因、不改走其他 branch、不自行重試，也不以錯誤作新增永久 mapping 的理由。
 2. 先透過官方回報 project 選項確認 resolver／使用者選的 projectId 對本次 reportDate 合法，再查 `GET /api/v2/daily-reports/options/projects/{projectId}/modules`。ID／label 一律取自該 project 的 API 清單；可帶 reportDate，但它目前不是歷史模組快照。非法／無權限 project 的空 list 不代表無模組，先重新確認合法專案。
 3. singleton 可選；多 modules 時按每個工作 topic、相關 PR／issue 與名稱語意選**唯一有明確證據的合理候選**，在 preview 列依據。多義、泛稱或未知時列出 API 候選與推薦（無依據就明說），詢問使用者；不以第一筆、預設 OTHER 或發明 ID 補位。
 4. `PROJECT` 有 modules 就必填該 project 清單中的 `projectModuleId`，包含 0h 列；只有確認合法 project 無 modules 才用 null，不以 0h 規避。這是 skill 送出規則，保留 ERP 既有 `hours>0` 後端規則。一個 repo 的不同 topic 可屬不同 modules；按 project＋module 合併、按合理工作內容提議拆時數並依既有授權確認，不硬湊同模組、不把 repo 永久綁到單一 module 表。
@@ -71,7 +72,7 @@ metadata:
 
 僅未逾期路徑進入；`output_only` 沒有 preview、覆蓋確認或任何 write。
 
-- 預設先列回報日期、分類／project／module、主旨／內容、各項時數、請假與合計，**一次確認整份提交內容**。
+- 預設先以短行純文字列出回報日期、分類／project／module、主旨／內容、各項時數、請假與合計，**一次確認將送出的完整欄位內容**；不得先呈現精簡版，之後默默送出不同文字。
 - 授權由 agent 理解**當次使用者訊息的正向意圖與範圍**，不是 substring／regex keyword。否定（「不要直接提交」）、引文、貼上 log、歷史紀錄、技能說明或含糊「先看看」皆不授權。當次明確「直接提交」才跳 preview；existing 覆蓋確認獨立保留。日期／內容／snapshot 改變，重新確認相應意圖。
 - 寫前由 `erp` skill 再 GET 本人同日 context，**先重跑第 1 步分流**：已知整日請假停止；其他逾期只輸出已蒐集摘要，不問新 existing／工時／mapping。仍未逾期才核對工時、打卡及 snapshot；新 existing 或 snapshot 變更先重新預覽／覆蓋確認，不能用新 snapshot 悄悄替換已授權的舊 snapshot。
 - 仍未逾期且非整日請假才重新 GET 必要回報 project／module 選項。project／module 已失效或不屬該 project 時，重新列候選詢問並確認變更，不能默換 ID。日誌的 module ID／必填核對由 agent 完成，report helper 不另查選項或放寬此規則。永久儲存另按 mapping 指引重查權限、list／modifiedTime，且每次 write 前先重跑 context 分流。
