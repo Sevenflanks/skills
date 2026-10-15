@@ -13,7 +13,7 @@
 | 遺漏 shell/edit/write/patch input 或非 bash 工具保留規則 | `test_all_retained_edit_and_shell_inputs_survive` |
 | 移除未知 schema／非空替代 store 閘門 | `test_unknown_schema_stops_before_candidate_creation`、`test_nonempty_alternative_store_refuses_before_creating_candidate` |
 | 路徑重疊或磁碟不足仍繼續 | `test_same_path_report_in_source_directory_and_low_space_are_refused` |
-| 並行進行同一來源維護 | `test_lease_blocks_duplicate_maintenance_without_creating_candidate` |
+| 並行進行同一來源維護，或後到 build 覆寫已驗證 report | `test_lease_blocks_duplicate_maintenance_without_creating_candidate`、`test_second_build_after_preflight_cannot_overwrite_first_validated_report` |
 | Guard 改成 metadata-only handle | `test_guard_blocks_real_writer` |
 | 中斷直接污染原檔 | `test_interrupted_build_leaves_original_bytes_and_rows_intact` |
 | candidate/source 內容改變但 size/mtime 相同仍允許切換 | `test_tampered_candidate_cannot_replace_original`、`test_source_edit_with_restored_mtime_cannot_discard_new_data_during_promotion` |

@@ -220,6 +220,21 @@ class RebuildTests(SQLiteFixture):
         maintenance.execute('promote',policy,report,True,True)
         self.assertEqual(cache.read_bytes(),b'old optional cache')
 
+    def test_second_build_after_preflight_cannot_overwrite_first_validated_report(self):
+        completed={}
+        def another_build_finishes_during_host_probe():
+            with patch('rebuild.host_stopped',return_value=None):
+                build(self.policy,self.report)
+            completed['report']=self.report.read_bytes()
+            completed['candidate']=file_hash(self.candidate)
+        with patch('rebuild.host_stopped',side_effect=another_build_finishes_during_host_probe):
+            with self.assertRaises((RuntimeError,FileExistsError)):
+                build(self.policy,self.report)
+        self.assertEqual(self.report.read_bytes(),completed['report'])
+        self.assertEqual(file_hash(self.candidate),completed['candidate'])
+        self.assertEqual(json.loads(self.report.read_text(encoding='utf-8'))['status'],'candidate_validated')
+        promote(self.policy,self.report)
+
     def test_validated_atomic_promotion_then_deletion(self):
         build(self.policy,self.report)
         new_hash=file_hash(self.candidate)

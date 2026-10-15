@@ -387,12 +387,14 @@ def build(policy, report_path):
     retention_mode(policy)
     original_disposition(policy)
     source,candidate,rollback = validate_paths(policy,report_path)
-    if candidate.exists() or rollback.exists() or Path(report_path).exists():
-        raise RuntimeError('Candidate must be new and in source directory')
     host_stopped()
     check_space(source,policy['minimum_free_gib_before_build'])
     check_space(Path(tempfile.gettempdir())/'sqlite-temp-budget',policy.get('minimum_free_gib_before_temp',policy['minimum_free_gib_during_build']))
     with MaintenanceLease(source):
+        # 鎖外 preflight 可能已過時；先拿同源 lease，再拒絕既有產物，
+        # 避免後到的 build 覆寫前一次 candidate_validated report。
+        if candidate.exists() or rollback.exists() or Path(report_path).exists():
+            raise RuntimeError('Candidate, rollback and report must be new')
         return build_locked(policy,report_path,source,candidate)
 
 
