@@ -33,11 +33,21 @@ def modified_time(value):
 
 
 def prepare(plan):
-    gate = report.context_gate(plan)
-    if gate['action'] != 'continue':
-        return gate
-    if set(plan) - {'reportDate', 'context', 'totalHours', 'confirmedLeaveHours', 'mapping'}:
+    if not isinstance(plan, dict) or set(plan) - {'reportDate', 'context', 'totalHours', 'confirmedLeaveHours', 'mapping'}:
         raise report.ReportError('invalid_mapping_plan')
+    report_date = plan.get('reportDate')
+    if report_date is None:
+        raise report.ReportError('invalid_report_date')
+    try:
+        period_date(report_date)
+    except report.ReportError:
+        raise report.ReportError('invalid_report_date') from None
+    # 共用 mapping 可獨立維護；舊 plan 的 context／工時欄位保留相容，日誌期限及請假不代表維護權限。
+    if 'context' in plan:
+        if not isinstance(plan['context'], dict):
+            raise report.ReportError('invalid_plan_context')
+        if plan['context'].get('reportDate') != report_date:
+            raise report.ReportError('report_date_changed')
     item = plan.get('mapping')
     if not isinstance(item, dict) or item.get('operation') not in ('create', 'update'):
         raise report.ReportError('invalid_mapping_operation')

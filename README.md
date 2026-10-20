@@ -10,7 +10,7 @@
 | --- | --- | --- | --- | --- |
 | `code-intent-comments` | `0.1.0` | stable | 引導 agent 以白話繁中撰寫高價值程式註解，補足 class 責任、核心邏輯、CR、相容性與高風險脈絡。 | [`skills/code-intent-comments/`](skills/code-intent-comments/) |
 | `daily-work-log` | `0.5.1` | stable | 合併 OpenCode／Codex 與 Git／GitHub 證據；修正相對 path 歸屬、以有界 bash workdir 補證並揭露涵蓋缺口。 | [`skills/daily-work-log/`](skills/daily-work-log/) |
-| `erp-daily-work-log` | `0.2.0` | stable | 依內容選模組填寫 ERP 日誌；獨立確認永久 repo mapping，保留請假／逾期分流。 | [`skills/erp-daily-work-log/`](skills/erp-daily-work-log/) |
+| `erp-daily-work-log` | `0.3.0` | stable | 區分補新增／替換、一次受控重試與個人偏好；共用 repo mapping 獨立授權維護。 | [`skills/erp-daily-work-log/`](skills/erp-daily-work-log/) |
 | `gh-body-file` | `0.1.1` | stable | 在 Windows、PowerShell、OpenCode shell 環境中，安全使用 GitHub CLI 支援 `--body-file` 的指令。 | [`skills/gh-body-file/`](skills/gh-body-file/) |
 | `agent-process-lifecycle` | `1.1.1` | stable | 管理可能卡住或跨越 tool call 的本機 process；Windows 同 tool Stop 採當次 owner cleanup 契約，跨 tool Preserve 才需背景返回；缺證據的特殊路由可診斷；non-Windows 僅分類、handoff 或 launch 前 blocked。 | [`skills/agent-process-lifecycle/`](skills/agent-process-lifecycle/) |
 | `finish-and-admin-merge` | `0.1.2` | stable | 依最新 PR、review 與 checks 證據執行已授權的 admin squash merge，並安全收尾 branch／worktree。 | [`skills/finish-and-admin-merge/`](skills/finish-and-admin-merge/) |
@@ -52,11 +52,11 @@
 
 ## erp-daily-work-log
 
-`erp-daily-work-log` 結合 `daily-work-log` 的 probe／預告／collect 與外部唯讀 `erp` skill 的本人 context、請假及日期 mapping。預設列出整份預覽再確認；已有日誌覆蓋是獨立授權，整日請假不寫入，超過次日 10:00 僅輸出日誌。
+`erp-daily-work-log` 結合 `daily-work-log` 的 probe／預告／collect 與外部唯讀 `erp` skill 的本人 context、請假及日期 mapping。預設列完整預覽再確認；官方 append 可用時首次填寫／已有日誌均可補新增。只有明確替換才走 replace，保留獨立覆蓋授權及次日 10:00 期限；整日請假不 collect、不寫日誌。
 
-`0.2.0` 先驗合法回報 project，再從其官方 modules 依 topic／PR／issue 證據選擇；有 modules 必填，多義先問。可選的永久 repo mapping 儲存另有預覽／授權，不影響本次合法專案填報。
+`0.3.0` 支援可信未生效證據下一次受控 retry、確認啟用後的個人偏好記憶，仍核對當日官方 project／module／RD 參照。共用 repo mapping 儲存另有差異預覽／授權，維護不受日誌 deadline／請假 gate 影響，不宣稱跨端點 atomic。
 
-Python standard-library helpers 預設 dry-run，分別固定本人單日日誌 replace 與 mapping POST／PUT。每次執行須先讀官方 OpenAPI，開發契約不代表部署已支援；缺 mapping 維護 API 只停用儲存。配置沿用外部 ERP skill 的 config root／X-API-KEY，不複製外部 skill，也不改上游 collector；詳見 [`skills/erp-daily-work-log/README.md`](skills/erp-daily-work-log/README.md)。
+Python standard-library helpers 預設 dry-run，分別固定本人日誌 append／replace 與 mapping POST／PUT，tests 已接入 `npm run validate`。每次執行須先讀官方 OpenAPI，開發契約不代表部署已支援；缺 mapping 維護 API 只停用儲存。配置沿用外部 ERP skill 的 config root／X-API-KEY，不複製外部 skill，也不改上游 collector；詳見 [`skills/erp-daily-work-log/README.md`](skills/erp-daily-work-log/README.md)。
 
 ## gh-body-file
 

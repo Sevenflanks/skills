@@ -167,17 +167,30 @@ class MappingTests(unittest.TestCase):
             self.assertIn('readback_required', str(caught.exception))
             self.assertEqual(len(opener.requests), 1)
 
-    def test_expired_unknown_hours_and_full_leave_do_not_require_mapping_or_access(self):
-        candidate = plan()
-        candidate.pop('mapping')
-        candidate['context'].update(serverNow='2026-10-15T10:00:00.000000001+08:00',
-                                    canReplace=False, leaves=[], leaveHours=0,
-                                    attendances=[punch('NONATTENDANCE')])
-        with patch.object(mapping.report, 'load_access', side_effect=AssertionError('credential read')):
-            self.assertEqual(mapping.execute(candidate, True, True),
-                             {'action': 'output_only', 'reason': 'deadline_passed'})
-            candidate['context'].update(leaves=[leave(8, 'PROCESS')], leaveHours=8)
-            self.assertEqual(mapping.execute(candidate, True, True)['action'], 'stop')
+    def test_independent_mapping_sends_despite_report_deadline_unknown_leave_or_full_leave(self):
+        for state in ('expired_unknown_leave', 'unknown_leave', 'full_leave', 'no_report_context'):
+            candidate = plan()
+            candidate['context'].update(serverNow='2026-10-15T10:00:00.000000001+08:00',
+                                        canReplace=False, leaves=[], leaveHours=0,
+                                        attendances=[punch('NONATTENDANCE')])
+            if state == 'full_leave':
+                candidate['context'].update(serverNow='2026-10-14T18:00:00+08:00', canReplace=True,
+                                            leaves=[leave(8, 'PROCESS')], leaveHours=8)
+            elif state == 'unknown_leave':
+                candidate['context'].update(serverNow='2026-10-14T18:00:00+08:00', canReplace=True)
+            elif state == 'no_report_context':
+                candidate.pop('context')
+            opener = MappingTransport()
+            with self.subTest(state=state), patch.object(mapping.report, 'load_access', return_value=(BASE, KEY)):
+                with patch.object(mapping.report.urllib.request, 'build_opener', return_value=opener):
+                    result = mapping.execute(candidate, mapping_confirmed=True, contract_verified=True)
+            self.assertEqual(result, {'action': 'readback_required', 'httpStatus': 200})
+            self.assertEqual(len(opener.requests), 1)
+            request = opener.requests[0][0]
+            self.assertEqual(request.get_method(), 'POST')
+            self.assertEqual(json.loads(request.data), {
+                'projectId': 7, 'repo': 'acme/widget', 'branch': 'feature/billing',
+                'validFrom': '2026-10-14', 'validTo': None})
 
     def test_cli_dry_run_and_injected_flags_cannot_authorize_or_leak(self):
         with tempfile.TemporaryDirectory() as root:
@@ -197,6 +210,21 @@ class MappingTests(unittest.TestCase):
                                     capture_output=True, text=True, timeout=10)
             self.assertEqual(result.returncode, 1)
             self.assertNotIn(KEY, result.stdout + result.stderr)
+
+    def test_mapping_date_is_validated_without_report_context_and_legacy_date_cannot_drift(self):
+        variants = [None, False, '20261014', '2026-02-29', '2026-10-14T00:00:00']
+        with patch.object(mapping.report, 'load_access', side_effect=AssertionError('credential read')):
+            for value in variants:
+                candidate = plan()
+                candidate.pop('context')
+                candidate['reportDate'] = value
+                with self.subTest(value=value), self.assertRaisesRegex(
+                        mapping.report.ReportError, '^invalid_report_date$'):
+                    mapping.execute(candidate, True, True)
+            candidate = plan()
+            candidate['context']['reportDate'] = '2026-10-13'
+            with self.assertRaisesRegex(mapping.report.ReportError, '^report_date_changed$'):
+                mapping.execute(candidate, True, True)
 
     def test_update_cannot_silently_reset_omitted_old_period_to_new_defaults(self):
         for dates in ({}, {'validFrom': None}, {'validTo': None}):

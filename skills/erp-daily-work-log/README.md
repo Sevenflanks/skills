@@ -1,38 +1,40 @@
 # erp-daily-work-log
 
-將可靠每日工作證據整理成 SoftLeader ERP 本人日誌；預設先預覽再確認。`0.2.0`／MIT／sevenflankse。
+將可靠每日工作證據整理成 SoftLeader ERP 本人日誌；預設先預覽再確認。`0.3.0`／MIT／sevenflankse。
 
 ## 使用
 
-要求「把今天的工作填到 ERP」即可載入此 skill。普通工作摘要使用 `daily-work-log`。本技能依賴可發現的 `erp` 唯讀 skill 與 [`daily-work-log`](../daily-work-log/README.md)，安裝時保留整個資料夾；外部 ERP skill 不隨套件複製。
+要求「把今天的工作填到 ERP」或「補新增昨日 ERP 日誌」即可載入。一般摘要使用 `daily-work-log`。安裝時保留整個資料夾，依賴 runtime 可發現的外部 `erp` 唯讀 skill 與 [`daily-work-log`](../daily-work-log/README.md)；不複製外部 ERP skill。
 
-本人 context 讀取後立即核對服務端期限並分流：已知整日請假（預設 8 小時）直接停止，不蒐集、不寫；其他逾次日 10:00 情況直接 probe→預告→collect，只列工作摘要與缺口請使用者到 ERP 改，跳過覆蓋、工時、branch／mapping／module 問答及 preview。官方契約、認證、context 與上游 collector 缺口仍照規則停止。
+1. 固定日期並讀部署官方契約與完整本人 context。已知整日請假（總數預設 8h）停止，不蒐集、不寫日誌；未知請假／衝突先釐清。
+2. 首次填寫、補新增用官方 append，已有日誌仍追加；僅使用者明確替換時走 replace，獨立確認覆蓋。只有 replace 受次日 10:00 期限限制；所需 operation 不可用或 replace 逾期時，仍可 probe→預告→collect 輸出可靠摘要與缺口。
+3. 在確認的工作預算內自行提出合理主題分配，不逐項詢問、不冒充實測工時；呈現完整欄位全文並取得授權後送出，最後逐條讀回核對。當次直接提交可省 preview，不能省合法 options、必要未知資訊及 fresh-write context 核對。
 
-僅未逾期路徑：當日已有日誌先確認覆蓋；「直接提交」只略過最後預覽。請假與工作合計預設 8 小時；未知工時、branch、project 或 module 先詢問。
+官方契約、認證、未知 state、必要資料與 collector 停止規則始終適用。只回報新發現及必要問題，沿用同日已核對準備，減少重複 Checking 訊息。
 
-## 0.2.0：模組與可選永久對應
+## 0.3.0：補新增、受控重試與偏好
 
-- 先確認合法回報 project，再查該 project 的官方 modules；有模組的 PROJECT 含 0h 都必填。按 topic／PR／issue 選唯一有依據的候選，多義先問。不同主題可屬不同模組，寫前重查失效選項。
-- 本次選 project 不等於永久儲存。另列 repo／可靠 branch／project／日期與差異，確認 save 才用 scoped mapping POST／PUT；新增預設回報日起無上界，update 兩日期明填並保留原 modifiedTime。沿用 Web 維護權限，不更新 projectId、不加 delete/upsert。
-- 拒存、無維護權限或缺 mapping 寫入 API 不擋本次合法 report；衝突先問、不自動切期／改歸屬／重試。mapping／report 各自讀回、分開回報，保存後 report 失敗保留 mapping。細節見 [`references/mapping-save.md`](references/mapping-save.md)。
+- **append／replace 分流**：append 只送新列、無 id／modifiedTime／expectedSnapshot，合計含 existing，不改舊列、不重複 LEAVE；撞到 project＋module 或同一非 null RD 立案書的單日唯一性先問。plan snapshot 保護本地 preview 意圖，不是 server CAS 或寫入時空日原子保證。逾期新增仍遵守官方工作日／豁免及日合計至少 8h 規則；無官方假日／豁免資訊不猜放行，揭露條件並交 server validation。
+- **一次受控 retry**：本地配置／驗證失敗是 not_sent；傳輸後先讀回，已生效停止，unknown／timeout／單次空讀回不重送。只有可信未生效證據、相同原 intent（含 snapshot）、原授權與額度有效時可重試一次，每次最多一個 request，caller 沿用 count。詳見 [`helper.md`](references/helper.md)。
+- **偏好與合法參照**：先確認啟用一次，已啟用後 preview 新選擇預設覆蓋對應範圍，「僅本次」不存；保留 config 其他 keys。依 [`preferences.md`](references/preferences.md) 的 namespace／API 處理。偏好不取代每次新任務的官方 spec／options 核對。有 modules 的 PROJECT 含 0h 都必填；RD API 欄位雖可選，user 指定 code 必須解析正確 ID，未指定時唯一明確適用候選優先選用，只有確認無適用才可選 null。查無、多義或查詢失敗先處理，不能以 null 繞過。new RD row 的 local `expectedMandateCharterId` 必須明確記錄選定 ID 或已核實的 null，且不送 ERP；詳見 [`helper.md`](references/helper.md)。
+- **獨立 mapping 維護**：共用 repo mapping 與個人偏好、日誌提交分別授權；不套日誌 deadline／全天假／未知請假 gate。仍須每次重查維護權限、完整 list、有效期間、modifiedTime，預覽差異並獨立確認。module 不入 mapping；不新增 delete/upsert、不宣稱跨端點 atomic。詳見 [`mapping-save.md`](references/mapping-save.md)。
 
 ## Helper 與驗證
 
-Python 3.8+、standard library，沒有新增 production dependency。helper 預設 dry-run；網路寫入是經 agent 明確判斷授權後的獨立操作。詳細輸入、外部 config 和限制見 [`references/helper.md`](references/helper.md)。每次執行以 `erp` skill 讀官方 OpenAPI，不將開發中 operation 宣稱為已部署能力。
+Python standard library，無 production dependency；CI 使用 Python 3.12。helper 預設 dry-run，正式寫入需 agent 理解當次授權及官方契約。日期、payload、外部 access 與操作限制見 [`helper.md`](references/helper.md)。resolved base URL 沿用外部 ERP access，不猜部署，API key 不進 CLI 或輸出；個人資料 plan 留在 repo 外，用後清理。
 
-從倉庫根目錄執行：
+從 repo 根執行：
 
 ```powershell
-python -B -m unittest discover -s skills/erp-daily-work-log/tests -v
+npm run test:erp-daily-work-log
 npm run validate
 ```
 
-純函式與 transport 行為測試使用合成資料／受控 network double，零真實 ERP call。agent 語意授權、來源停止、模組、日期 mapping 與讀回流程見 [`evals/evals.json`](evals/evals.json)／[執行說明及結果](evals/README.md)。本輪 8 個選定 fresh consuming-agent 合成情境符合預期，未執行完整 32 案及變體的自動 evalrunner；結構檢查、Python unit tests 與 agent 行為評估分開計算。
+`validate` 已接 Python unittest discover；CI 設好 Python 後執行同一條 validate，不重複跑 ERP tests。unit tests 只用合成資料、暫存 config 與 fake transport，零正式 ERP call。agent 語意行為使用 [`evals/evals.json`](evals/evals.json)，執行狀態見 [`evals/README.md`](evals/README.md)，不能把 JSON 結構通過算作行為 eval 通過。
 
-## 檔案
+## 維護入口
 
-- `SKILL.md`：依序執行的流程與完成條件。
-- `scripts/daily_report.py`：正式 context／detail 格式、實際 POST 工時、+08:00 期限 gate 與 scoped replace transport。
-- `scripts/project_repo_mapping.py`：獨立永久儲存授權、嚴格 create／update payload，沿用 report 的 context gate、安全配置與 transport。
-- `tests/test_daily_report.py`／`tests/test_project_repo_mapping.py`：行為回歸；`evals/evals.json`：agent 流程案例。
-- `references/helper.md`／`references/mapping-save.md`：正式 context、plan、flags 與讀回邊界。
+- `SKILL.md`：按操作分流的流程及完成條件。
+- `scripts/daily_report.py`：正式 context／detail、append／replace、intent／retry 與 scoped transport。
+- `scripts/project_repo_mapping.py`：獨立日期／shape 驗證與 scoped create／update，維護權限及完整 list 核對由 agent 執行。
+- [`tests/README.md`](tests/README.md)：測試 seam、red→green 與 mutation list；`references/`：按分支載入的 plan／授權／偏好契約。

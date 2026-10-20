@@ -1,6 +1,6 @@
 # 永久儲存 repo mapping
 
-只在未逾期、非整日請假，且本次需要新增／更新 mapping 時使用。本次 project 選擇與永久儲存是兩個意圖；引文、歷史紀錄、否定與日誌「直接提交」不授權儲存。已有有效 mapping 不必再寫。
+在使用者需要新增／更新共用 mapping 時使用，可獨立於日誌維護。日誌 deadline、全天假或未知請假不代表維護權限，不能阻擋合法維護；日誌 stop／output_only 也不會自動授權或觸發 mapping 寫入。本次 project、個人偏好與共用 mapping 永久儲存是不同意圖；引文、歷史紀錄、否定與日誌「直接提交」不授權儲存。已有有效 mapping 不必再寫。
 
 ## 1. 讀部署契約與可維護資料
 
@@ -13,31 +13,25 @@
 | POST `/project-repo-mappings` | `ProjectRepoMappingSaveRequest {projectId,repo,branch,validFrom,validTo}` → `AjaxResponse<ProjectRepoMappingView>`。 |
 | PUT `/project-repo-mappings/{id}` | `ProjectRepoMappingUpdateRequest {repo,branch,validFrom,validTo,modifiedTime}` → 同上；不接受 projectId 更新。 |
 
-缺維護 operation／schema、無維護權限或使用者拒存：記錄「本次不永久儲存」，已確認合法 project 仍可填報。缺原 context／report API 或認證、來源缺口，仍依主流程停止。查詢都走外部 readonly helper；POST／PUT 只用本 skill scoped helper，不改 readonly guard、不偽裝 readonly POST、不用 browser Cookie。不新增 DELETE／upsert。
+缺維護 operation／schema、無維護權限或使用者拒存：記錄「本次不永久儲存」，已確認合法 project 仍可填報。獨立維護不需要 report context／日誌 operation／collector，但 mapping 自身的認證、契約、權限或必要資料缺口仍停止。查詢都走外部 readonly helper；POST／PUT 只用本 skill scoped helper，不改 readonly guard、不偽裝 readonly POST、不用 browser Cookie。不新增 DELETE／upsert。
 
 ## 2. 預覽差異與授權
 
-1. 先確認 repo 的 `owner/repo` 與當日可靠短 branch；推定 branch 不能變永久資料。用完整 list 找要更新的原 id，不從 report detail 或 module ID 借值。
+1. 固定 reportDate，以 collector canonical githubRepo（或獨立維護時已確認的 canonical owner/repo）與當日可靠短 branch 為準；資料夾名／現在 checkout 不代表補報當日證據。resolver 400 原因未明不稱缺 mapping、不換 branch 重試或據此新增。用完整 list 找要更新的原 id，不從 report detail 或 module ID 借值。
 2. 列出「新增」或「更新 id」、repo、branch、project 的 API ID／label、validFrom／validTo，以及更新前→後差異。新增缺省為 **reportDate 起、無上界**（`validTo=null`），要在預覽明說；update 明確沿用或修改舊期間，含 null 邊界，不能省略而默換。
 3. 問「本次日誌使用此專案」及「是否永久儲存上述 mapping」，可在同一預覽分別回答。只有正向明確儲存意圖才記 `--mapping-confirmed`。拒存不影響本次合法 project。
 4. 列出已知重疊／其他 project 歸屬／stale 衝突並先問。不能為了 save 自動刪舊、裁短、切分、改 project 歸屬或補另一筆。合法 reference membership、跨 project 期間鎖及樂觀鎖由 server 最終判斷。
-5. 寫前先 GET fresh context 跑主流程分流；再查可維護 projects／完整 list 並比較 id、欄位、期間、原 modifiedTime。變更先重做差異與確認，不把新 timestamp 默塞舊授權。核對後固定 plan，先 dry-run，寫入相同 payload；不要在兩次呼叫間換日期或欄位。
+5. 每次寫前重查**可維護 projects／完整 mapping list**，比較 id、project、欄位、有效期間與原 modifiedTime。維護權限不能從可填報 project、個人偏好或 report.canReplace 推定。資料變更先重做差異與確認，不把新 timestamp 默塞舊授權。核對後固定日期／plan，先 dry-run，寫入相同 payload。日誌若另有 write，仍按其 mode 獨立 fresh-read context／options。
 
 ## 3. Scoped helper plan
 
-與 report helper 共用安全 config、HTTPS、NoRedirect、timeout、去敏錯誤與 context gate；不新增 dependency。保留整個 skill 資料夾，`project_repo_mapping.py` 會載入同資料夾的 `daily_report.py`。兩個 helper 沒有共用授權 flag。
+與 report helper 共用安全 config、HTTPS、NoRedirect、timeout 與去敏 transport；不共用 report.context_gate、不新增 dependency。保留整個 skill 資料夾，`project_repo_mapping.py` 會載入同資料夾的 `daily_report.py`。兩個 helper 沒有共用授權 flag。
 
-root 只接受 `reportDate`、官方完整 `context`、可選 `totalHours`／`confirmedLeaveHours` 及 `mapping`；context 格式見 [`helper.md`](helper.md#私有-plan)。不放 report `rows` 或舊 detail。以下合成範例可直接 dry-run，請用私有 task-local JSON，清理方式同 report plan：
+root 接受必填正確 yyyy-MM-dd 的 `reportDate` 及 `mapping`。相容舊 plan 的可選 `context`／`totalHours`／`confirmedLeaveHours`；context 若帶入必須為物件且 reportDate 同日，其餘日誌欄位不參與維護判斷。獨立維護省略這些欄位，不需查日誌／請假。helper 不猜 permission、不替 agent 查 list 或判斷衝突。不放 report rows 或舊 detail。以下合成範例可直接 dry-run，用私有 task-local JSON 並用後清理：
 
 ```json
 {
   "reportDate": "2026-10-14",
-  "context": {
-    "reportDate": "2026-10-14", "details": [], "expectedSnapshot": "synthetic-snapshot",
-    "serverNow": "2026-10-14T18:00:00+08:00", "replaceDeadline": "2026-10-15T10:00:00+08:00", "canReplace": true,
-    "leaves": [], "leaveHours": 0,
-    "attendances": [{"id": 41, "recordTime": "2026-10-14T09:00:00", "classification": "ATTENDANCE", "leaveType": null}]
-  },
   "mapping": {
     "operation": "create", "projectId": 7, "repo": "acme/widget", "branch": "feature/billing",
     "validFrom": "2026-10-14", "validTo": null
@@ -51,7 +45,7 @@ root 只接受 `reportDate`、官方完整 `context`、可選 `totalHours`／`co
 
 ```powershell
 python -B "<skill>/scripts/project_repo_mapping.py" --plan "<private-mapping-plan.json>"
-# 僅永久儲存確認、部署契約與 fresh gate 都通過才執行：
+# 僅永久儲存確認、部署契約、fresh 維護權限及完整 list 核對通過才執行：
 python -B "<skill>/scripts/project_repo_mapping.py" --plan "<private-mapping-plan.json>" --mapping-confirmed --contract-verified
 ```
 
