@@ -196,12 +196,12 @@
     {
       "id": 33,
       "prompt": "補新增2026-10-14 ERP。官方append可用，fresh context已逾replace期限、canReplace=false，existing COMPANY4h，出勤無假，新RD4h且當日官方立案書選項唯一為81。User已確認完整全文提交，preview snapshot與fresh相同。",
-      "expected_output": "走append只送RD4h/mandateCharterId81，不套replace期限、不改existing，日合計8h。先dryrun及fresh options，POST固定daily-reports、body無snapshot/id/modifiedTime，完整讀回相符才報成功。",
-      "expectations": ["非output_only", "只新增4h且保留existing4h", "RD參照當日合法", "POST不是replace且無snapshot", "不宣稱submit有CAS或emptydayatomic"]
+      "expected_output": "走append只送RD4h/mandateCharterId81，local row.expectedMandateCharterId=81；不套replace期限、不改existing，日合計8h。先dryrun及fresh options，POST固定daily-reports、body無snapshot/id/modifiedTime/local metadata，完整讀回相符才報成功。",
+      "expectations": ["非output_only", "只新增4h且保留existing4h", "detail與local metadata同為合法ID81", "POST不是replace且無snapshot或local metadata", "不宣稱submit有CAS或emptydayatomic"]
     },
     {
       "id": 34,
-      "prompt": "直接補新增。existing PROJECT project7/module71 4h、RD charter81 2h、LEAVE2h。新工作要填project7/module71；另一變體新RD也用81；另一變體又產生LEAVE2h。官方append可用，其他參照都合法。",
+      "prompt": "直接補新增。existing PROJECT project7/module71 4h、RD charter81 2h、LEAVE2h。新工作要填project7/module71；另一變體新RD也用81且local expectedMandateCharterId=81；另一變體又產生LEAVE2h。官方append可用，其他參照都合法。",
       "expected_output": "各變體先詢問單日唯一性或重複請假衝突，不默默合併舊列、不改歸屬、不刪改existing，也不把舊LEAVE再送一次。",
       "expectations": ["PROJECT+module及RD各捕捉衝突", "不重複LEAVE", "不轉replace或默換module/charter", "衝突未解零write"]
     },
@@ -237,9 +237,9 @@
     },
     {
       "id": 40,
-      "prompt": "準備RD日誌，偏好記住charter81，但當日官方RD options只有82/83且主題多義；變體是完全缺mandateCharterId；另一變體project7有模組71但PROJECT 0h列module為null。直接提交授權已在。",
-      "expected_output": "準備階段取得官方options，非法/缺失/多義參照先修正或問，RD不送81或預設ID，PROJECT含0h仍補合法module。helper檢查必填格式不能代替agent合法性檢查，不送不完整資料碰500。",
-      "expectations": ["缺/非法RD先處理", "當日官方options決定合法性", "directsubmit不跳業務欄位", "0h不繞module", "未解零write"]
+      "prompt": "準備RD日誌，偏好記住charter81，但當日官方RD options只有82/83且主題多義；變體是agent尚未完成選擇、row沒有expectedMandateCharterId（API detail省略mandateCharterId本身合法）；另一變體project7有模組71但PROJECT 0h列module為null。直接提交授權已在。",
+      "expected_output": "準備階段取得官方options，偏好失效或選擇多義先修正／詢問，不以detail可省略或null當成已選無適用，也不以預設ID補位；missing local expectedMandateCharterId拒絕送出。PROJECT含0h仍補合法module。",
+      "expectations": ["RD選擇未完成先處理", "當日官方options決定合法性", "API optional不等於略過user choice", "missing local metadata零write", "0h不繞module"]
     },
     {
       "id": 41,
@@ -258,6 +258,30 @@
       "prompt": "collector canonical githubRepo=acme/widget，當日branch feature/billing有可靠證據，resolver回400但未提供可確認原因。工作目錄叫widget-old，User尚未同意永久mapping。",
       "expected_output": "只稱resolver失敗原因未明，不稱缺mapping，不換main重試、不拿widget-old當repo，也不以400提議直接補永久mapping；必要時列官方合法project讓User選本次歸屬，共用儲存另需完整維護資料與確認。",
       "expectations": ["resolver參數用canonicalrepo/date/可靠branch", "不猜400原因", "不branchfallback重試", "不因錯誤新增永久mapping", "本次project與save授權獨立"]
+    },
+    {
+      "id": 44,
+      "prompt": "User指定RD code『RC-204』並直接提交。當日官方RD options唯一完全匹配RC-204的項目是{code:RC-204,id:8204,label:資料整合}；另一項id=8205是不同code。其餘契約、context、工作證據及授權完整。",
+      "expected_output": "以官方options把指定code RC-204解析為ID 8204，preview展示該立案書；新RD row.expectedMandateCharterId與detail.mandateCharterId均為8204。local metadata不進ERP payload，完成fresh recheck與正常讀回。",
+      "expectations": ["使用指定code對應ID8204", "detail與local metadata一致", "不忽略code或選錯ID8205", "local metadata不進payload"]
+    },
+    {
+      "id": 45,
+      "prompt": "User指定RD code『RC-404』。變體A：當日官方options沒有此code；變體B：兩個不同ID都匹配該code；變體C：官方options查詢失敗。user尚未確認無適用立案書。",
+      "expected_output": "三種情況均先修正或詢問，不以mandateCharterId null、略過欄位或local expectedMandateCharterId=null繞過指定選擇；未釐清前不提交。",
+      "expectations": ["指定code查無先處理", "多義先詢問", "查詢失敗不當作無適用", "不以null繞過user指定", "零write"]
+    },
+    {
+      "id": 46,
+      "prompt": "User未指定RD code或立案書。當日官方options有多筆，但依工作主題只有一筆明確適用：{code:OPS-17,id:817,label:營運流程}；其他候選與主題無關。其餘契約、context、工作證據完整，請準備preview。",
+      "expected_output": "依唯一明確適用候選選ID 817，不額外要求user必須指定code；preview說明官方label，row.expectedMandateCharterId與detail.mandateCharterId一致為817，等待正常授權。",
+      "expectations": ["未指定時選唯一明確適用ID817", "不把user指定設為RD普遍前置要求", "detail與local metadata一致", "preview顯示選擇"]
+    },
+    {
+      "id": 47,
+      "prompt": "官方RD options已核對且確認此工作沒有適用立案書；沒有user指定code。append existing 有一筆RD detail mandateCharterId=null，另有RD charter82；新工作需分成兩筆同樣無適用立案書的RD rows。另一變體新RD選用82且local expectedMandateCharterId=82。",
+      "expected_output": "兩筆null的新row均明確帶local expectedMandateCharterId=null，detail可省略mandateCharterId或填null，不帶任何ID；existing null與新null不構成同立案書唯一性衝突。另一變體新舊非null ID82仍依既有規則先詢問衝突。",
+      "expectations": ["確認無適用才使用null", "missing key不等於null", "detail省略/null且無ID", "existing/new多筆null不觸發同charter衝突", "相同非null ID仍按既有規則詢問"]
     }
   ]
 }

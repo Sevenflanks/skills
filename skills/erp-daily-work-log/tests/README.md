@@ -47,7 +47,7 @@ Python unit tests 在 plan→dry-run／scoped transport seam 執行真實 helper
 | update 省略日期就偷偷套 reportDate／null | `test_update_cannot_silently_reset_omitted_old_period_to_new_defaults` |
 | 把合法 `.github` 類 repo 誤當 traversal | `test_dot_prefixed_repository_is_not_confused_with_traversal` |
 
-agent 的語意授權、唯一模組證據、report／維護 membership、完整 list／resolver 比對、retry 證據可信度、偏好 scope 及跨端點結果等**不由 mapping unit tests 證明**。對應 [`../evals/evals.json`](../evals/evals.json)，執行狀態見 [`../evals/README.md`](../evals/README.md)。helper 不猜權限或自行 GET 清單；agent 必須依文件完成 fresh 維護權限、完整 list、期間與 modifiedTime 核對。正式 server 權限／period lock／concurrency 與部署契約未連線驗證。
+agent 的語意授權、唯一模組證據、RD code／適用性解析與 local metadata、report／維護 membership、完整 list／resolver 比對、retry 證據可信度、偏好 scope 及跨端點結果等**不由 mapping unit tests 證明**。對應 [`../evals/evals.json`](../evals/evals.json)，執行狀態見 [`../evals/README.md`](../evals/README.md)。helper 不猜權限或自行 GET 清單；agent 必須依文件完成 fresh 維護權限、完整 list、期間與 modifiedTime 核對。正式 server 權限／period lock／concurrency 與部署契約未連線驗證。
 
 ## 重跑
 

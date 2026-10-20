@@ -111,7 +111,7 @@ def validate_references(detail):
         if detail.get(field) is not None and not valid_id(detail[field]):
             raise ReportError('invalid_reference_id')
     # 格式與必要欄位可在本地拒送；可用性與 module 必填性仍由 agent 核對當日官方 options。
-    required_reference = {'PROJECT': 'projectId', 'RD': 'mandateCharterId'}.get(detail.get('reportType'))
+    required_reference = {'PROJECT': 'projectId'}.get(detail.get('reportType'))
     if required_reference and detail.get(required_reference) is None:
         raise ReportError('missing_reference_id')
 
@@ -186,7 +186,8 @@ def context_gate(plan):
 def unique_reference(detail):
     if detail.get('reportType') == 'PROJECT':
         return ('PROJECT', detail.get('projectId'), detail.get('projectModuleId'))
-    if detail.get('reportType') == 'RD':
+    # 無立案書的 RD 不代表同一立案書；只以合法 non-null ID 判斷每日重複。
+    if detail.get('reportType') == 'RD' and valid_id(detail.get('mandateCharterId')):
         return ('RD', detail.get('mandateCharterId'))
     return None
 
@@ -218,10 +219,22 @@ def prepare(plan):
                 references.add(reference)
     details = []
     for row in rows:
-        if not isinstance(row, dict) or set(row) - {'detail', 'hours', 'kind'}:
+        if not isinstance(row, dict) or set(row) - {'detail', 'hours', 'kind', 'expectedMandateCharterId'}:
             raise ReportError('invalid_new_detail')
         detail = row.get('detail')
         amount, kind = validate_detail(detail)
+        if detail['reportType'] == 'RD':
+            # null 是 agent 核對官方 options 後的明確選擇，不能把缺少選擇當成 null。
+            # metadata 只核對預覽與 POST；options／code 的語意解析仍由 agent 負責。
+            if 'expectedMandateCharterId' not in row:
+                raise ReportError('selection_required')
+            expected = row['expectedMandateCharterId']
+            if expected is not None and not valid_id(expected):
+                raise ReportError('invalid_reference_id')
+            if detail.get('mandateCharterId') != expected:
+                raise ReportError('mandate_charter_selection_mismatch')
+        elif 'expectedMandateCharterId' in row:
+            raise ReportError('invalid_new_detail')
         if kind == 'LEAVE' and existing_leave:
             return {'action': 'ask', 'reason': 'existing_leave_conflict'}
         reference = unique_reference(detail)

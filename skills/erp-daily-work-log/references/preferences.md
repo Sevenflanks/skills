@@ -29,10 +29,10 @@
         "topic": "偏好記憶"
       },
       "choice": {
-        "reportType": "PROJECT",
-        "projectId": 101,
-        "projectModuleId": 202,
-        "mandateCharterId": null
+        "reportType": "RD",
+        "projectId": null,
+        "projectModuleId": null,
+        "mandateCharterId": 202
       }
     }
   ]
@@ -43,7 +43,7 @@
 - `branch`：caller 由可靠證據取得的確切 branch 名稱，前後空白、wildcard、`HEAD`、`unknown`、不合法 ref 形式等拒絕。語法驗證不能證明歷史 branch；來源可靠性由 caller 確認。不同 branch 不自動合併。
 - `topic`：使用者已釐清且穩定的短主題識別（1–120 字元、無前後空白／控制字元／wildcard），不是工作日誌內容。不同主題不自動合併。`reportDate` 不作永久 key，但每次套用前仍依所報日期建立 scope 證據。
 - `choice` 必須恰有上述四欄，不保存 auth、subject、description、todos 或其他日誌文字。`reportType` 只接受 COMPANY／PROJECT／RD／OTHER／LEAVE；ID 為正整數且不超過 signed Long 上限，非適用欄位填 `null`。
-- PROJECT 必須有 `projectId`，可記 `projectModuleId`；RD 必須有 `mandateCharterId`。其他分類的三個參照必須皆為 `null`。這些只是基本形狀檢查；module 的實際必填與合法關聯、RD 可用性及 LEAVE 的實際請假資料仍依本次官方契約核對。
+- PROJECT 必須有 `projectId`，可記 `projectModuleId`，`mandateCharterId` 為 null；RD 的 `projectId`／`projectModuleId` 為 null，記已選 charter ID，或僅在已確認無適用立案書時記 `mandateCharterId: null`；其餘分類的三個參照皆為 null。已存 RD null 只是該 scope 的偏好提示，不代表未來任務都無適用選項，也不取代當次 user choice、官方 spec 或 fresh options；當次選擇優先，options 每次核對。這些只是偏好形狀；module 的實際必填與合法關聯、RD 可用性及 LEAVE 的實際請假資料仍依本次官方契約核對。
 
 ## Python API（Python 3.8+，standard library only）
 

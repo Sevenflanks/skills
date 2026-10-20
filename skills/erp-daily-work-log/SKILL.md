@@ -54,14 +54,14 @@ metadata:
 1. 以 collector 的 canonical `githubRepo`＋**可靠當日 branch**＋固定 `reportDate` 呼叫官方 resolver。資料夾名不代表 repo；session／commit／PR 可補當日 branch 證據，補報不能用現在 checkout 代替。缺證據或多義先問。resolver `400`／http_error 原因未明時只報解析失敗，不稱缺 mapping、不換 branch 重試、不據此新增永久 mapping。
 2. 先用官方回報 project 選項驗證當日合法 project，再查 `GET /api/v2/daily-reports/options/projects/{projectId}/modules`。非法 project 的空 list 不代表無模組；modules 可帶日期但不是歷史快照。使用者簡稱可由已讀 ID／code 唯一辨識，preview 用官方 label，多義才問。
 3. singleton 可選；多 modules 按 topic／PR／issue 選唯一有依據的候選並於 preview 列依據。多義／泛稱／未知時列 API 候選與推薦（無依據明說）詢問，不取 first／OTHER／虛構 ID。有 modules 的 PROJECT 每列（含 0h）必填該 project 的 module ID；僅合法 project 確認無 modules 才 null。一個 repo 可分多 modules，不把 module 存入共用 mapping。
-4. RD 從官方當日可用的立案書 options 完整解析 `mandateCharterId`；缺失、非法、多義先修正／詢問，不能用固定預設 ID。分類不明也須問。helper 只驗 PROJECT／RD 必填參照及格式，合法性、module 必填與 membership 仍由 agent 按官方 options 核對，不能送去碰 HTTP 500。
+4. RD 每次新任務先核對部署官方 spec 與當日立案書 options。API 的 `mandateCharterId` 可選，不代表忽略參照：user 指定 code 時必須用官方 options 找到正確 ID；查無、多義或查詢失敗先修正／詢問，不能以 null 繞過。未指定時，唯一明確適用候選優先選用；只有確認無適用立案書才選 null。不能要求所有 RD 一律由 user 指定，也不能填固定預設 ID。分類／適用性不明先問。agent 在私有 plan 的 local `row.expectedMandateCharterId` 記錄已選 ID 或經核實的 null，由 helper 比對送出內容；合法性仍由 agent 按官方 options 核對。
 5. 新工作中可按唯一參照整理主題；append 若同 project＋module 或同立案書撞到 existing／其他新列，先問，不默默合併、刪改或換歸屬。本次 project 選擇與個人偏好不授權共用 mapping；需要永久維護時按 [mapping-save.md](references/mapping-save.md) 完整 list、權限、期間、modifiedTime、差異預覽及獨立儲存確認執行。拒存／缺維護 API 不擋合法日誌。
 
 完成條件：每條分類、參照、內容與時數合法且可核對；必要選項缺失先解決，`output_only` 跳過此步。
 
 ## 5. 預覽、送出與讀回
 
-- 一次列將提交的**完整欄位全文**：操作、日期、分類／project／module／立案書、主旨、內容、todos、各項時數、請假與合計；append 列 existing 保留、新增及日合計，replace 列全日替換範圍。取得正向授權後才提交，不先給縮略版再送不同文字。只有**當次明確直接提交**才略 preview；否定、引文、歷史 log、技能說明及含糊「先看看」皆不授權。日期／內容／歸屬／snapshot 改變須重 preview／確認相應意圖。
+- 一次列將提交的**完整欄位全文**：操作、日期、分類／project／module／立案書（含 RD 選定 ID 或已核實無適用的 null）、主旨、內容、todos、各項時數、請假與合計；append 列 existing 保留、新增及日合計，replace 列全日替換範圍。取得正向授權後才提交，不先給縮略版再送不同文字。只有**當次明確直接提交**才略 preview；否定、引文、歷史 log、技能說明及含糊「先看看」皆不授權。日期／內容／歸屬／snapshot 改變須重 preview／確認相應意圖。
 - 寫前 fresh GET 同日 context、必要 project／module／RD options，重核日期、假時、工時、唯一性與 preview snapshot；已知全天假 stop，unknown／衝突先釐清。僅 replace 重核期限；append 不套 replace deadline。選項失效重新列候選問，不能默換 ID 或 snapshot。
 - 依 [helper.md](references/helper.md) 在 repo 外產生私有 task-local plan，context 放完整官方 `AjaxResponse.data`，保留預覽的 `expectedSnapshot`，先 dry-run。append 明填 `mode=append`、只送無 id／modifiedTime 的新 detail；POST body **不含 expectedSnapshot**，本地 snapshot 比對只保護 preview 意圖，不是 server CAS，也不保證寫入當下仍空日。replace 才將 snapshot 送 `/replace` 做全日原子替換。僅契約與當次授權完成才用 `--authorized --contract-verified`，replace existing 另需 `--overwrite-confirmed`。
 - 沿用外部 access 的 config root 與 resolved base URL，API key 不進 CLI；本地配置／驗證失敗是 `not_sent`，修正後可續作。傳輸後任何 2xx、應用拒絕、500、timeout 都先用 `erp` 完整讀回同日日誌，逐條核對日期、分類、project／module／立案書、主旨、內容與工時；2xx 本身不代表完成。

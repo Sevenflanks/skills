@@ -14,9 +14,9 @@
 
 ## 0.3.0：補新增、受控重試與偏好
 
-- **append／replace 分流**：append 只送新列、無 id／modifiedTime／expectedSnapshot，合計含 existing，不改舊列、不重複 LEAVE；撞到 project＋module 或 RD 立案書單日唯一性先問。plan snapshot 保護本地 preview 意圖，不是 server CAS 或寫入時空日原子保證。逾期新增仍遵守官方工作日／豁免及日合計至少 8h 規則；無官方假日／豁免資訊不猜放行，揭露條件並交 server validation。
+- **append／replace 分流**：append 只送新列、無 id／modifiedTime／expectedSnapshot，合計含 existing，不改舊列、不重複 LEAVE；撞到 project＋module 或同一非 null RD 立案書的單日唯一性先問。plan snapshot 保護本地 preview 意圖，不是 server CAS 或寫入時空日原子保證。逾期新增仍遵守官方工作日／豁免及日合計至少 8h 規則；無官方假日／豁免資訊不猜放行，揭露條件並交 server validation。
 - **一次受控 retry**：本地配置／驗證失敗是 not_sent；傳輸後先讀回，已生效停止，unknown／timeout／單次空讀回不重送。只有可信未生效證據、相同原 intent（含 snapshot）、原授權與額度有效時可重試一次，每次最多一個 request，caller 沿用 count。詳見 [`helper.md`](references/helper.md)。
-- **偏好與合法參照**：先確認啟用一次，已啟用後 preview 新選擇預設覆蓋對應範圍，「僅本次」不存；保留 config 其他 keys。依 [`preferences.md`](references/preferences.md) 的 namespace／API 處理。偏好不取代當日 project／module／RD options 核對；有 modules 的 PROJECT 含 0h 都必填，RD 必填合法立案書，不以預設 ID 補位。
+- **偏好與合法參照**：先確認啟用一次，已啟用後 preview 新選擇預設覆蓋對應範圍，「僅本次」不存；保留 config 其他 keys。依 [`preferences.md`](references/preferences.md) 的 namespace／API 處理。偏好不取代每次新任務的官方 spec／options 核對。有 modules 的 PROJECT 含 0h 都必填；RD API 欄位雖可選，user 指定 code 必須解析正確 ID，未指定時唯一明確適用候選優先選用，只有確認無適用才可選 null。查無、多義或查詢失敗先處理，不能以 null 繞過。new RD row 的 local `expectedMandateCharterId` 必須明確記錄選定 ID 或已核實的 null，且不送 ERP；詳見 [`helper.md`](references/helper.md)。
 - **獨立 mapping 維護**：共用 repo mapping 與個人偏好、日誌提交分別授權；不套日誌 deadline／全天假／未知請假 gate。仍須每次重查維護權限、完整 list、有效期間、modifiedTime，預覽差異並獨立確認。module 不入 mapping；不新增 delete/upsert、不宣稱跨端點 atomic。詳見 [`mapping-save.md`](references/mapping-save.md)。
 
 ## Helper 與驗證

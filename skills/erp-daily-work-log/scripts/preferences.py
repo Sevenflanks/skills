@@ -66,8 +66,9 @@ def _choice(choice):
         if value is not None and (type(value) is not int or not 0 < value <= 9223372036854775807):
             raise PreferenceError('invalid_choice_id')
     project, module, charter = (choice[k] for k in ('projectId', 'projectModuleId', 'mandateCharterId'))
+    # RD null 也能保存已確認的歷史選擇；日後套用前仍須由 agent fresh 核對官方 options。
     if ((kind == 'PROJECT' and (project is None or charter is not None))
-            or (kind == 'RD' and (charter is None or project is not None or module is not None))
+            or (kind == 'RD' and (project is not None or module is not None))
             or (kind not in ('PROJECT', 'RD') and any(v is not None for v in (project, module, charter)))):
         raise PreferenceError('invalid_choice_references')
 

@@ -12,7 +12,7 @@
 | 官方 mapping resolve（讀 OpenAPI 選 path） | query repo／branch／reportDate 選唯一 project。 |
 | 官方回報 project 選項（讀 OpenAPI 選 path） | 先確認 reportDate 的合法 project；不是 mapping 可維護清單。 |
 | `GET /api/v2/daily-reports/options/projects/{projectId}/modules` | 從已確認合法 project 的清單取 module ID／label，不能用非法 project 空 list 推論無 modules。 |
-| 官方 RD 立案書 options（讀 OpenAPI 選 path） | 核對 reportDate 的合法 mandateCharterId，不用預設 ID。 |
+| 官方 RD 立案書 options（讀 OpenAPI 選 path） | 依本次需求核對 reportDate 的適用 mandateCharterId；API 欄位可選不代表跳過解析。 |
 
 執行前由 `erp` skill 讀官方 OpenAPI 及必要 schemas，核對以下實作契約、必填參照與回應語意。helper 直接驗證 context 與實際 new-detail，不執行 GET、不收集工作證據、不解析自然語言授權。部署缺 operation 或 schema 不一致時停止，不設 `--contract-verified`。
 
@@ -27,13 +27,19 @@
 - `context.reportDate`：原查詢日期；`details`：當日本人完整 existing 清單；`expectedSnapshot`：fresh GET 字串；`serverNow`／`replaceDeadline`：正式 ISO timestamp，offset 必須 `+08:00`；期限固定次日 10:00，恰等於期限可寫；`canReplace`：boolean。無時區或不同 offset 均拒絕，不能猜／轉換本機時區。
 - `context.leaves`：每筆 `{ "detailId": 31, "status": "PASS", "hours": 2 }`，status 僅 PROCESS／PASS；後端已排除 REJECT／CANCEL。未知狀態、重複 detailId、缺欄位或衝突停止。`leaveHours` 若提供，必須等於全部 leaves 的 hours 合計；不能用彙總值取代葉節點或填未知時數。
 - `context.attendances`：保留 `{ "id": 41, "recordTime": "2026-10-14T09:00:00", "classification": "ATTENDANCE", "leaveType": null }`。`recordTime` 為同回報日、不帶 offset 的完整秒數；classification 僅 ATTENDANCE／NONATTENDANCE，前者 leaveType 為 null，後者為官方 LeaveType enum。未知分類／state／衝突停止；非出勤不直接代表任何請假時數。
-- `rows`：每筆 `{ "detail": 官方 new-detail object }`；helper **只以 detail.hours 計算真正 POST 工時**，`detail.reportType == LEAVE` 算請假，其他合法分類算工作。若舊 plan 仍帶 `row.hours`／`row.kind`，必須與 detail 相等；矛盾一律拒絕，不交給 agent 自行保證。
+- `rows`：每筆 `{ "detail": 官方 new-detail object }`；RD 列另須帶 local 必填 `expectedMandateCharterId`（Long ID 或明確 `null`）。這是 agent 已完成官方選項判斷的本地預期值，不是 detail/server 欄位，也不會送到 ERP。有效 ID 時 `detail.mandateCharterId` 必須相同；預期為 null 時 detail 可省略或為 null，不能帶 ID。缺 key 代表選擇未完成、拒絕送出；非 RD 不得帶此 metadata。helper **只以 detail.hours 計算真正 POST 工時**，`detail.reportType == LEAVE` 算請假，其他合法分類算工作。若舊 plan 仍帶 `row.hours`／`row.kind`，必須與 detail 相等；矛盾一律拒絕，不交給 agent 自行保證。
 
 ### New-detail 最小格式
 
-允許且僅允許 `reportType`、`hours`、`subject`、`description`、`todos`、`projectId`、`projectModuleId`、`mandateCharterId`。舊 `id`／`dailyReportId`／`reportId`、modifiedTime 或未知欄位皆拒絕，不從 existing 複製。參照欄位為 Long 整數或 null，不送 `{id}`；PROJECT 必填 projectId，RD 必填 mandateCharterId。helper 只驗必填與格式，agent 須先用官方 options 核對參照存在性、合法關聯及業務必填，不能將可預先發現的缺口交給 HTTP 500。
+允許且僅允許 `reportType`、`hours`、`subject`、`description`、`todos`、`projectId`、`projectModuleId`、`mandateCharterId`。舊 `id`／`dailyReportId`／`reportId`、modifiedTime 或未知欄位皆拒絕，不從 existing 複製。參照欄位為 Long 整數或 null，不送 `{id}`；PROJECT 必填 projectId。RD 的 `mandateCharterId` 依部署官方 schema 可選；若 detail 帶值，必須是核實的 Long ID。helper 只驗格式及下述 local metadata 一致性，agent 須先按當次需求用官方 options/resolver 核對參照及適用性，不能將選擇缺口交給 HTTP 500。
 
-agent 仍須按主流程核對選項：先合法 project，再查其 modules；有 modules 的 PROJECT 每列（含 0h）必填該 project 的 module ID，無 modules 才 null；RD 核對當日官方立案書 options。寫前 recheck、失效重問，不能以 helper 不查選項或個人偏好為由省略。
+### RD 選擇與 local metadata
+
+每次新任務仍先核對部署官方 spec 與當日立案書 options。user 指定 code 時，用官方 options/resolver 解析出相符 ID；查無、多義或查詢失敗先修正／詢問，不能以 null 繞過。user 未指定時，若有唯一明確適用候選，優先選它；只有確認沒有適用立案書才用 null。不得把 user 指定要求擴大成所有 RD 都須由 user 指定。
+
+每筆新 RD row 的 local `expectedMandateCharterId` 是必填選擇紀錄：Long 表示已選定 ID，明確 null 表示 agent 已按官方 options 確認無適用立案書；missing key 表示尚未完成選擇，拒絕送出。detail 的有效 ID 必須和 local 預期相同；預期 null 時 detail 可省略或為 null，不得帶 ID。此 metadata 不放進 detail、不屬 server 欄位、不發送 ERP。非 RD row 不可帶它。existing RD detail 沒有這項 local metadata 仍可讀；existing null 不與其他 null 觸發同立案書唯一性衝突，existing 非 null ID 仍依既有規則先詢問衝突。
+
+agent 仍須按主流程核對選項：先合法 project，再查其 modules；有 modules 的 PROJECT 每列（含 0h）必填該 project 的 module ID，無 modules 才 null；RD 依本次需求核對當日官方立案書 options。寫前 recheck、失效重問，不能以 helper 不查選項或個人偏好為由省略。
 
 - reportType 必填：COMPANY／PROJECT／RD／OTHER／LEAVE。
 - hours 必填 JSON number：0～9999、最多 2 位小數；boolean、字串、NaN／Infinity 均拒絕。replace 只加 new rows；append 加 existing＋new，合計工作／LEAVE 須符合總數扣假與請假配額。append 不重送既有 LEAVE，遇到 `existing_leave_conflict` 或 project＋module／RD 單日唯一性衝突 `daily_uniqueness_conflict` 回 ask，先詢問、不改舊列或默默換歸屬。

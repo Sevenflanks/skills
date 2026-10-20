@@ -125,6 +125,36 @@ class PreferencesTests(unittest.TestCase):
              '--config', str(self.config)] + list(args),
             capture_output=True, text=True, encoding='utf-8')
 
+    def test_confirmed_rd_null_choice_remembers_overwrites_and_only_this_time_keeps_history(self):
+        self.seed()
+        choice = {'reportType': 'RD', 'projectId': None, 'projectModuleId': None, 'mandateCharterId': None}
+        store = self.store()
+        before = self.config.read_bytes()
+        store.remember(SCOPE, choice, confirmed=True)
+        self.assertEqual(self.config.read_bytes(), before)
+        store.set_enabled(True, consent=True)
+        enabled = self.config.read_bytes()
+        with self.assertRaisesRegex(preferences.PreferenceError, '^confirmed_choice_required$'):
+            store.remember(SCOPE, choice)
+        self.assertEqual(self.config.read_bytes(), enabled)
+        store.remember(SCOPE, choice, only_this_time=True)
+        self.assertEqual(self.config.read_bytes(), enabled)
+        store.remember(SCOPE, choice, confirmed=True)
+        self.assertEqual(self.store().choice(SCOPE), choice)
+        store.remember(SCOPE, RD, confirmed=True)
+        self.assertEqual(self.store().choice(SCOPE), RD)
+        result = self.cli('remember', '--scope', json.dumps(SCOPE), '--choice', json.dumps(choice), '--confirmed')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout), {'enabled': True, 'choices': [
+            {'scope': SCOPE, 'choice': choice}]})
+        self.assertEqual(self.store().choice(SCOPE), choice)
+        remembered = self.config.read_bytes()
+        result = self.cli('remember', '--scope', json.dumps(SCOPE), '--choice', json.dumps(RD),
+                          '--confirmed', '--only-this-time')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.config.read_bytes(), remembered)
+        self.assertEqual(self.store().choice(SCOPE), choice)
+
     def test_preview_override_and_only_this_time_cli_keep_secrets_and_numbers(self):
         self.seed('{"apiKey":900719925474099312345,"fraction":0.123456789012345678901234567890,'
                   '"future":{"nested":[true,null],"n":1e-9999}}')
@@ -176,8 +206,11 @@ class PreferencesTests(unittest.TestCase):
         choices = [dict(PROJECT, apiKey='synthetic'), dict(PROJECT, description='private'),
                    dict(PROJECT, reportType='UNKNOWN'), dict(PROJECT, projectId=True),
                    dict(PROJECT, projectId=1.5), dict(PROJECT, projectId=9223372036854775808),
-                   dict(PROJECT, projectId=None), dict(RD, mandateCharterId=None),
-                   dict(RD, projectModuleId=202)]
+                   dict(PROJECT, projectId=None), dict(PROJECT, mandateCharterId=303),
+                   dict(RD, mandateCharterId='303'), dict(RD, mandateCharterId=True),
+                   dict(RD, mandateCharterId=9223372036854775808), dict(RD, projectId=101),
+                   dict(RD, projectModuleId=202), dict(RD, mandateCharterId=None, projectId=101),
+                   dict(RD, mandateCharterId=None, projectModuleId=202)]
         for choice in choices:
             with self.subTest(choice=choice):
                 with self.assertRaises(preferences.PreferenceError):

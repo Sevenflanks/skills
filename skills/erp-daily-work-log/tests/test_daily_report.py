@@ -224,6 +224,7 @@ class PrepareTests(unittest.TestCase):
             value = plan()
             value['rows'][0]['detail']['reportType'] = report_type
             if report_type == 'RD':
+                value['rows'][0]['expectedMandateCharterId'] = 901
                 value['rows'][0]['detail']['mandateCharterId'] = 901
             self.assertEqual(report.prepare(value)['action'], 'ready')
 

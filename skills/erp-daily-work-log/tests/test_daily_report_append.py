@@ -198,20 +198,25 @@ class AppendTests(unittest.TestCase):
 
     def test_append_rejects_unusable_existing_references_and_hours(self):
         for update in ({'projectId': []}, {'projectId': None}, {'projectModuleId': {}},
-                       {'reportType': 'RD', 'mandateCharterId': None},
+                       {'reportType': 'RD', 'projectId': None, 'mandateCharterId': '901'},
                        {'hours': None}, {'hours': True}, {'reportType': 'UNKNOWN'}):
             value = append_plan()
             value['context']['details'][0].update(update)
             with self.subTest(update=update), self.assertRaises(report.ReportError):
                 report.prepare(value)
 
-    def test_project_and_rd_missing_references_are_rejected_before_transport(self):
+    def test_project_required_reference_and_malformed_rd_ids_are_rejected_before_transport(self):
         for mode in ('replace', 'append'):
-            for report_type, reference in (('RD', 'mandateCharterId'), ('PROJECT', 'projectId')):
-                for missing in (None, True, '901', {}):
+            for report_type, reference, invalid_values in (
+                ('PROJECT', 'projectId', (None, True, '901', {})),
+                ('RD', 'mandateCharterId', (True, '901', {})),
+            ):
+                for missing in invalid_values:
                     value = plan()
                     value['mode'] = mode
                     value['rows'][0]['detail'].update(reportType=report_type)
+                    if report_type == 'RD':
+                        value['rows'][0]['expectedMandateCharterId'] = 901
                     value['rows'][0]['detail'][reference] = missing
                     with self.subTest(mode=mode, report_type=report_type, missing=missing), \
                             self.assertRaisesRegex(report.ReportError, 'missing_reference_id|invalid_reference_id'):
@@ -232,6 +237,8 @@ class AppendTests(unittest.TestCase):
             value = append_plan()
             value['context']['details'][0].update(reportType=report_type, **references)
             value['rows'][0]['detail'].update(reportType=report_type, **references)
+            if report_type == 'RD':
+                value['rows'][0]['expectedMandateCharterId'] = 901
             with self.subTest(report_type=report_type):
                 self.assertEqual(report.execute(value, authorized=True, contract_verified=True),
                                  {'action': 'ask', 'reason': 'daily_uniqueness_conflict'})
