@@ -326,7 +326,7 @@ def _send_request(request):
         raise ReportError('unexpected_response_readback_required')
     try:
         result = json.loads(body)
-    except (ValueError, UnicodeError):
+    except (ValueError, UnicodeError, RecursionError):
         raise ReportError('invalid_response_readback_required') from None
     if not isinstance(result, dict):
         raise ReportError('unexpected_response_readback_required')

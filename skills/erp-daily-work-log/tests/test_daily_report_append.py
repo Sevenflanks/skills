@@ -119,6 +119,44 @@ class AppendTests(unittest.TestCase):
                                  {'action': 'readback_required', 'reason': 'retry_outcome_unknown'})
                 self.assertEqual(len(requests), 1)
 
+    def test_cli_deep_json_response_after_post_is_unknown_and_does_not_retry(self):
+        value = append_plan()
+        requests = []
+
+        class Opener:
+            def open(self, request, timeout):
+                requests.append(request)
+                response = io.BytesIO(b'[' * 2000 + b'0' + b']' * 2000)
+                response.status = 200
+                return response
+
+        with tempfile.TemporaryDirectory() as root:
+            path, config = Path(root) / 'plan.json', Path(root) / 'config.json'
+            path.write_text(json.dumps(value), encoding='utf-8')
+            config.write_text('{"apiToken":"fixture-only","baseUrl":"https://erp.example.test/backend/"}',
+                              encoding='utf-8')
+            argv = [str(SCRIPT), '--plan', str(path), '--authorized', '--contract-verified',
+                    '--config', str(config)]
+            output = io.StringIO()
+            with patch.object(sys, 'argv', argv), redirect_stdout(output), \
+                    patch.object(report.urllib.request, 'build_opener', return_value=Opener()):
+                self.assertEqual(report.main(), 1)
+            result = json.loads(output.getvalue())
+            self.assertEqual(result, {'ok': False, 'reason': 'invalid_response_readback_required',
+                                      'requestState': 'unknown', 'retriesUsed': 0})
+            self.assertEqual(len(requests), 1)
+
+            value['retry'] = {'outcome': 'unknown', 'trusted': True, 'evidence': '已讀回交易狀態',
+                              'retriesUsed': 0, 'originalIntent': report.execute(value)['intent']}
+            path.write_text(json.dumps(value), encoding='utf-8')
+            output = io.StringIO()
+            with patch.object(sys, 'argv', argv), redirect_stdout(output), \
+                    patch.object(report.urllib.request, 'build_opener', return_value=Opener()):
+                self.assertEqual(report.main(), 0)
+            self.assertEqual(json.loads(output.getvalue()),
+                             {'action': 'readback_required', 'reason': 'retry_outcome_unknown'})
+            self.assertEqual(len(requests), 1)
+
     def test_cli_pretransport_configuration_failure_is_not_sent_and_can_be_corrected(self):
         with tempfile.TemporaryDirectory() as root:
             path = Path(root) / 'plan.json'
