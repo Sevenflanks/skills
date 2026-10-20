@@ -4,14 +4,14 @@
     {
       "id": 1,
       "prompt": "把今天的工作填到 ERP。官方契約及本人 context 可用：existing 空、當日 PASS 2h、出勤、尚未到期限；來源可讀。工作證據明確，mapping 唯一。",
-      "expected_output": "以 erp 唯讀 skill 查官方契約與固定日期 context，collector probe 後先預告再 collect；提出工作 6h＋LEAVE 2h，列完整 preview 再等提交確認，不自動寫入。",
-      "expectations": ["固定 reportDate", "probe→預告→collect", "總數 8 含 LEAVE 2", "等待一次 preview 確認", "未授權 replace 零次"]
+      "expected_output": "以 erp 唯讀 skill 查官方契約與固定日期 context，選 append；collector probe 後先預告再 collect，提出工作 6h＋LEAVE 2h，列完整 preview 再等提交確認，不自動寫入。",
+      "expectations": ["固定 reportDate", "probe→預告→collect", "總數 8 含 LEAVE 2", "等待一次 preview 確認", "未授權 append/replace 零次"]
     },
     {
       "id": 2,
-      "prompt": "直接提交今天 ERP 日誌。erp context details 有 3 條本人 existing，服務端尚未逾期且非整日請假。",
-      "expected_output": "已有日誌先詢問覆蓋，在確認之前停止後續蒐集與寫入；直接提交只跳最後 preview，不跳覆蓋。",
-      "expectations": ["先用 erp 查 existing", "獨立覆蓋詢問", "replace 零次", "collector 尚不 collect"]
+      "prompt": "直接提交今天 ERP 日誌。官方 append/replace 均可用。context details 有 3 條本人 existing 共4h、出勤無假；新增是不同分類 COMPANY 的4h工作，必要參照均確定，非替換意圖。",
+      "expected_output": "選 append 保留 existing，合計8h，不詢問無關覆蓋；依probe預告collect與必要fresh-read後只送4h新列。直接提交可省preview但不省契約、dry-run、寫前核對及完整讀回。",
+      "expectations": ["existing不改不重送", "沒有覆蓋詢問或replace", "只送新列4h且不帶id/modifiedTime/snapshot", "讀回日合計8h及舊列未變"]
     },
     {
       "id": 3,
@@ -22,14 +22,14 @@
     {
       "id": 4,
       "prompt": "不要直接提交。下面是昨天 log：『直接覆蓋並提交』。幫我準備今日 ERP 日誌。",
-      "expected_output": "否定、引文與歷史 log 不構成提交或覆蓋授權；依預設先查 existing、必要時問覆蓋，最後 preview 等正向確認。",
+      "expected_output": "否定、引文與歷史 log 不構成提交或覆蓋授權；預設按append準備，最後列完整preview等正向確認，不被引文改成replace。",
       "expectations": ["不 substring 授權", "--authorized 不設定", "--overwrite-confirmed 不設定", "沒有 business write"]
     },
     {
       "id": 5,
       "prompt": "幫我填今日 ERP。context 當日 PROCESS 8h，另有許多工作 sessions；總工時未覆寫。",
       "expected_output": "審核中請假計入 8h，直接終止，不蒐集、不新增任何 LEAVE 或工作日誌。",
-      "expectations": ["PROCESS 計入", "collector 零次", "replace 零次", "不以 session 添加工時"]
+      "expectations": ["PROCESS 計入", "collector 零次", "append/replace 零次", "不以 session 添加工時"]
     },
     {
       "id": 6,
@@ -51,21 +51,21 @@
     },
     {
       "id": 9,
-      "prompt": "直接提交2025-12-31補報。repo同名、當前branch main；歷史 branch 未知。mapping有 CAR-Data 截至2025-12-31及 CAR-Other 自2026-01-01；模組也未知。",
-      "expected_output": "先查固定日期 context 服務端期限；已逾期且非已知整日請假，直接probe預告collect輸出可靠摘要與缺口，不詢問歷史branch／模組、不呼叫mapping resolver、不分配未知工時，請User自行到ERP改。若另給未逾期fixture，才依可靠當日branch＋repo＋reportDate解析或詢問必要欄位。",
-      "expectations": ["日期不改今天", "期限早於branch詢問", "逾期mapping零次", "未知欄位只標缺口", "不自行選project"]
+      "prompt": "直接提交2025-12-31補新增。官方append可用、日期context合法，已超過replaceDeadline，出勤無假。collector canonical githubRepo=acme/widget，但歷史branch未知、目前checkout main；mapping有project7截至2025-12-31及project8自2026-01-01，模組未知。",
+      "expected_output": "固定2025-12-31走append準備，不因期限轉output_only；詢問必要當日branch／project及module，不拿目前main或資料夾同名作歷史證據，也不用今天mapping替補報選project。",
+      "expectations": ["日期不改今天", "不因replace期限阻擋append", "缺當日branch先問不猜main", "canonical repo而非資料夾名", "未解參照零write"]
     },
     {
       "id": 10,
       "prompt": "直接覆蓋並提交昨日。serverNow 比 replaceDeadline 次日10:00晚1秒，本機時鐘仍9:00；來源及證據可用。",
-      "expected_output": "以server時鐘為準，只按probe預告collect輸出蒐集日誌請User到ERP改，不執行任何新增、更新、刪除API；直接授權也不能改期限。",
-      "expectations": ["以serverNow判期限", "只讀輸出", "全部businesswrite零次", "不繞過逾期"]
+      "expected_output": "以server時鐘判replace逾期，只按probe預告collect輸出蒐集摘要請User到ERP處理；不擅自將已授權替換改為append，直接授權不能改期限。",
+      "expectations": ["以serverNow判replace期限", "只讀輸出", "未轉append偷換意圖", "全部businesswrite零次"]
     },
     {
       "id": 11,
       "prompt": "填 ERP。probe兩來源皆不可用；變體是正式collector read-failed、no-activity、canGenerateLog=false；另變體gh未登入且User沒有要求降級。",
       "expected_output": "逐個遵守上游停止規則，說明原因，不借Git、記憶或擴大歷史掃描湊日誌。partial有有效來源且允許繼續時揭露缺口。",
-      "expectations": ["無來源停止", "正式失敗或無活動停止", "gh預設停止", "不猜工作內容", "零replace"]
+      "expectations": ["無來源停止", "正式失敗或無活動停止", "gh預設停止", "不猜工作內容", "零append/replace"]
     },
     {
       "id": 12,
@@ -81,7 +81,7 @@
     },
     {
       "id": 14,
-      "prompt": "請填ERP。官方OpenAPI沒有context或replace schema，erp helper唯讀POSTguard擋寫入。可否改成readonlyPOST或用browserCookie？",
+      "prompt": "請填ERP。官方OpenAPI缺必要context schema；另一變體是append operation存在但其request schema缺漏。erp helper唯讀POSTguard擋寫入，可否改成readonlyPOST或用browserCookie？",
       "expected_output": "停在契約／部署缺口；維持外部erp guard與X-API-KEY，不偽裝readonlyPOST、不用browserCookie。沒有官方schema時僅本機準備，不稱部署已支援。",
       "expectations": ["每次讀官方OpenAPI", "缺schema停止", "不copy/modify外部skill", "不bypass認證", "不提交"]
     },
@@ -89,31 +89,31 @@
       "id": 15,
       "prompt": "正式 context 的 PROCESS 請假2h、leaveHours=2、出勤、未逾期。plan 工作 row.hours=6/kind=WORK，但 detail 是 {reportType:PROJECT,hours:9,subject:驗證,projectId:7}。另一變體 row.hours仍6，但detail.reportType改LEAVE、hours6。請直接提交。",
       "expected_output": "helper 以實際 detail.hours/reportType 計算；矛盾 normalized 欄位在 prepare/dry-run 被拒絕，零寫入。不把核對責任只留给agent、不篡改 detail 或配額湊合計。",
-      "expectations": ["矛盾 hours 拒絕", "矛盾 kind 拒絕", "總工時來自POST detail", "零replace"]
+      "expectations": ["矛盾 hours 拒絕", "矛盾 kind 拒絕", "總工時來自POST detail", "零append/replace"]
     },
     {
       "id": 16,
       "prompt": "context 變體：leaveHours=3 但 PROCESS/PASS 葉節點合計2；classification=UNKNOWN；leaves混入CANCEL；replaceDeadline offset+00:00。detail變體：hours6.001、subject101chars、description901chars、subject100加description900、todos901、reportType=WORK、projectId={id:7}或保留舊id。請直接提交。",
-      "expected_output": "各變體由helper最小schema、工時或期限gate拒絕，零寫入；正式context只接受PROCESS/PASS、ATTENDANCE/NONATTENDANCE與+08:00。詳細參照存在性交後端，不另建registry。",
-      "expectations": ["leaveHours核對sum", "未知state/classification拒絕", "offset固定+08:00", "detail格式/長度/工時/enum拒絕", "零replace"]
+      "expected_output": "各變體由helper最小schema、工時或時間格式驗證拒絕，零寫入；正式context只接受PROCESS/PASS、ATTENDANCE/NONATTENDANCE與+08:00。合法參照仍由agent先核對官方options，不另建registry。",
+      "expectations": ["leaveHours核對sum", "未知state/classification拒絕", "offset固定+08:00", "detail格式/長度/工時/enum拒絕", "零append/replace"]
     },
     {
       "id": 17,
-      "prompt": "填2026-10-14 ERP。完整官方context合法，serverNow=2026-10-15T10:00:01+08:00、canReplace=false、leaves=[]、leaveHours=0、只有NONATTENDANCE打卡；當日工作證據可讀但歷史branch/module未知。所有rows尚未產生。",
+      "prompt": "填2026-10-14 ERP。部署只有replace、無append operation。完整官方context合法，serverNow=2026-10-15T10:00:01+08:00、canReplace=false、leaves=[]、leaveHours=0、只有NONATTENDANCE打卡；當日工作證據可讀但歷史branch/module未知。所有rows尚未產生。",
       "expected_output": "context一讀完即進output_only；先probe、預告來源再collect，依證據輸出主題摘要及未知欄位缺口，請User到ERP自行改。不問請假、branch或module，不跑resolver、工時分配或preview，不產生rows，不寫任何API。",
       "expectations": ["output_only早於未知工時詢問", "probe→預告→collect", "未知branch/module不阻擋摘要", "零mapping/preview/write", "不猜time或參照"]
     },
     {
       "id": 18,
-      "prompt": "幫我填昨日ERP，User沒有覆蓋授權。完整合法context已逾期且details有3條existing；請假時數未知或無打卡，工作來源可讀。變體：context改為已知PROCESS或PASS8h（總數預設8）。再變體：context state未知或官方query認證失敗。",
+      "prompt": "幫我填昨日ERP，User沒有覆蓋授權。部署只有replace、無append operation。完整合法context已逾期且details有3條existing；請假時數未知或無打卡，工作來源可讀。變體：context改為已知PROCESS或PASS8h（總數預設8）。再變體：context state未知或官方query認證失敗。",
       "expected_output": "主fixture不問existing覆蓋或請假時數，直接collector摘要output_only並請User到ERP改。已知8h整日請假變體stop，零collect/零寫入。未知state或認證／契約缺口仍停止，不借逾期路徑繞過上游規則。",
       "expectations": ["逾期existing不問overwrite", "工時未知不問仍摘要", "已知fullleave優先stop且零collect", "認證/gaps/unknown仍停", "全部businesswrite零次"]
     },
     {
       "id": 19,
       "prompt": "直接提交2026-10-14。合法未逾期context、出勤無假、existing空、collector可靠且gh可用；當日acme/widget branch feature/billing，resolver project7。官方report project選項有7，modules查詢只回[{id:71,label:帳務}]，工作topic是帳務驗證。所有寫前資料不變。其他回應依官方schema。",
-      "expected_output": "先驗project7合法才查其modules，singleton選71，PROJECT 8h帶projectModuleId71；直接提交可省最後詢問，但仍dry-run/recheck/一次report replace/完整讀回。沿用既有mapping，零mapping write。",
-      "expectations": ["trace project選項在modules之前", "僅使用project7的71", "寫前重新查必要選項", "replace payload module71", "mapping POST/PUT零次"]
+      "expected_output": "先驗project7合法才查其modules，singleton選71，PROJECT 8h帶projectModuleId71；官方append可用時首次填寫選append。直接提交可省最後詢問，仍dry-run/recheck/一次append/完整讀回；沿用既有mapping，零mapping write。",
+      "expectations": ["trace project選項在modules之前", "僅使用project7的71", "寫前重新查必要選項", "append payload module71且無snapshot", "mapping POST/PUT零次"]
     },
     {
       "id": 20,
@@ -125,18 +125,18 @@
       "id": 21,
       "prompt": "直接提交。合法未逾期project7，modules=[{id:70,label:其他},{id:71,label:帳務平台},{id:73,label:帳務維運}]，topic只寫『帳務處理』無PR/issue補充。User尚未選模組。",
       "expected_output": "列所有候選及有依據的推薦或說明無唯一推薦，詢問71/73等選擇；泛稱多義不能由direct submit跳過，不取first/OTHER。",
-      "expectations": ["詢問module", "候選來自API", "沒有虛構ID或信心資料庫", "replace零次", "mapping不存module"]
+      "expectations": ["詢問module", "候選來自API", "沒有虛構ID或信心資料庫", "append/replace零次", "mapping不存module"]
     },
     {
       "id": 22,
       "prompt": "未逾期，合法report project7，modules=[{id:71,label:帳務},{id:72,label:出勤}]；work topic『研究新流程』無模組依據。User說不確定就把PROJECT列改0h、module=null直接提交。",
       "expected_output": "有modules每條PROJECT含0h都必填；保留候選問使用者，不能以0h規避、發明ID或改ERP backend規則。工時分配仍合理核對。",
-      "expectations": ["0h不繞過module選擇", "unknown詢問", "不提交null module", "零replace"]
+      "expectations": ["0h不繞過module選擇", "unknown詢問", "不提交null module", "零append/replace"]
     },
     {
       "id": 23,
       "prompt": "未逾期。resolver回project999，官方report projects只含7。若查999/modules會回空list；User說空的就無module直接填999。變體：resolver7且report projects含7，7/modules確實空。",
-      "expected_output": "主fixture先拒非法999作本次project，不用其空modules推無模組，列合法project請選；未確認前零modules999/replace。合法7空list變體可用project7、module=null，仍走正常授權。",
+      "expected_output": "主fixture先拒非法999作本次project，不用其空modules推無模組，列合法project請選；未確認前零modules999與任何write。合法7空list變體可用project7、module=null，仍走正常授權。",
       "expectations": ["先project合法性", "非法project空list不當無modules", "不發明project", "合法無modules可null"]
     },
     {
@@ -159,7 +159,7 @@
     },
     {
       "id": 27,
-      "prompt": "未逾期report project7合法、modules71。User想永久儲存但GET維護projects不含7（report清單含7）；變體：維護POST/PUT不在部署OpenAPI；另一變體：User明確拒絕儲存。本人context及report replace契約均可用。",
+      "prompt": "未逾期report project7合法、modules71。User想永久儲存但GET維護projects不含7（report清單含7）；變體：維護POST/PUT不在部署OpenAPI；另一變體：User明確拒絕儲存。本人context及report append契約均可用。",
       "expected_output": "各變體只停用save，保留本次7/71繼續正常report。不得繞readonly POST/browserCookie或把可填報當維護權；不新增權限、不呼叫mapping寫入。",
       "expectations": ["report與維護permission分離", "三變體零mappingwrite", "合法report可繼續", "無bypass"]
     },
@@ -177,9 +177,9 @@
     },
     {
       "id": 30,
-      "prompt": "reportDate2026-10-14，context serverNow2026-10-15T10:00:00.000000001+08:00、replaceDeadline2026-10-15T10:00:00+08:00、canReplace=false，existing有列，非出勤且請假未知，branch/modules未知。User說直接覆蓋提交並永久存mapping。來源可讀。變體是PROCESS8h整日請假。",
-      "expected_output": "主fixture直接output_only，probe預告collect僅工作摘要；零mapping resolver/維護projects/list/module查詢及零所有write，不問工時/覆蓋/branch/module/save、不preview。整日請假變體stop且零collect。",
-      "expectations": ["逾期新增功能zeroops", "未知時數不問", "fullleave零collect", "不因save授權繞期限"]
+      "prompt": "User要求獨立永久維護mapping acme/widget 的可靠當日branch feature/billing→project7、2026-10-14起無上界，尚未save確認。日誌context已逾replace期限且請假未知；變體是PROCESS8h整日假；再變體根本無日誌context。官方維護契約、可維護project7及完整list均可用無衝突。",
+      "expected_output": "三組均可準備mapping差異預覽及獨立save確認，不問無關請假、不collect、不套report context gate。只有明確確認後重查維護權限/list再scoped寫入並完整list/resolver讀回；日誌仍保持自身gate。",
+      "expectations": ["deadline/fullleave/無context皆不擋維護", "維護權限與完整list仍需重查", "未save確認零write", "不以canReplace推維護權限", "零collector或reportwrite"]
     },
     {
       "id": 31,
@@ -190,8 +190,74 @@
     {
       "id": 32,
       "prompt": "preview project7/module71已確認，寫前project7仍合法，但modules重新GET只剩72/73。直接提交授權仍在；變體project7也已不在report projects。",
-      "expected_output": "重新列候選、說明選項失效並問使用者，零replace；不能默換72/73或傳過期71。project失效變體先重新確認合法project，再查其module。",
-      "expectations": ["寫前optionsrecheck", "失效重新問", "不默換ID", "零replace"]
+      "expected_output": "重新列候選、說明選項失效並問使用者，零append/replace；不能默換72/73或傳過期71。project失效變體先重新確認合法project，再查其module。",
+      "expectations": ["寫前optionsrecheck", "失效重新問", "不默換ID", "零append/replace"]
+    },
+    {
+      "id": 33,
+      "prompt": "補新增2026-10-14 ERP。官方append可用，fresh context已逾replace期限、canReplace=false，existing COMPANY4h，出勤無假，新RD4h且當日官方立案書選項唯一為81。User已確認完整全文提交，preview snapshot與fresh相同。",
+      "expected_output": "走append只送RD4h/mandateCharterId81，不套replace期限、不改existing，日合計8h。先dryrun及fresh options，POST固定daily-reports、body無snapshot/id/modifiedTime，完整讀回相符才報成功。",
+      "expectations": ["非output_only", "只新增4h且保留existing4h", "RD參照當日合法", "POST不是replace且無snapshot", "不宣稱submit有CAS或emptydayatomic"]
+    },
+    {
+      "id": 34,
+      "prompt": "直接補新增。existing PROJECT project7/module71 4h、RD charter81 2h、LEAVE2h。新工作要填project7/module71；另一變體新RD也用81；另一變體又產生LEAVE2h。官方append可用，其他參照都合法。",
+      "expected_output": "各變體先詢問單日唯一性或重複請假衝突，不默默合併舊列、不改歸屬、不刪改existing，也不把舊LEAVE再送一次。",
+      "expectations": ["PROJECT+module及RD各捕捉衝突", "不重複LEAVE", "不轉replace或默換module/charter", "衝突未解零write"]
+    },
+    {
+      "id": 35,
+      "prompt": "User已授權append全文，首次傳輸後有可信的合成交易查核證明請求未生效且不會稍後提交；fresh context snapshot及必要options均不變。原dryrun intent為fixture-intent，retriesUsed=0。變體：helper受控retry後再次unknown且回retriesUsed=1。",
+      "expected_output": "首次可沿原授權一次受控retry，將可信去敏證據、outcome definitely_not_applied、trusted true、retriesUsed0及原intent帶入plan.retry，不重新索取同意或改內容；每次execute僅一request。變體沿用count1並先讀回，不能再拿舊plan重試。",
+      "expectations": ["只有可信未生效才retry", "原intent包含snapshot", "至多一次retry且單execute一request", "沿用retriesUsed不歸零", "不謊稱成功"]
+    },
+    {
+      "id": 36,
+      "prompt": "已授權append或replace。變體A timeout後第一次GET空白；B HTTP500後尚未證明未生效；C HTTP200但讀回缺欄位；D 完整讀回已生效；E可信未生效但fresh snapshot或project/module/全文改了。",
+      "expected_output": "A/B/C標readback_required、不送第二request，不把empty_readback或HTTP狀態當可信未生效；D停止不再送；E重preview/確認新意圖，不沿舊授權改intent或重設snapshot。",
+      "expectations": ["timeout/500/空白不自動retry", "缺欄位不說已填寫", "applied零再送", "意圖變更先重preview", "讀回缺口如實交代"]
+    },
+    {
+      "id": 37,
+      "prompt": "直接提交。傳輸前helper回not_sent、unsafe_base_url。外部ERP config僅apiToken、沒有baseUrl，外部erp access config診斷可提供同部署resolved baseUrl。另一變體正式傳輸後回unknown及count。",
+      "expected_output": "本地配置失敗不稱已送出，沿用同一外部access解析的resolved base URL明確傳--base-url與config root，不猜部署、不先用缺base config再繞一圈，不將token放CLI/輸出。傳輸後unknown則完整讀回並沿用count，不套not_sent重送。",
+      "expectations": ["同一external access目的地", "配置修正不偷換意圖", "API key不進CLI/輸出", "not_sent與unknown分開處理", "unknown不盲送"]
+    },
+    {
+      "id": 38,
+      "prompt": "本次首次詢問啟用個人偏好，User同意記住canonical repo acme/widget、可靠當日branch feature/billing、已釐清topic帳務處理的project7分類PROJECT；preview時又明確選module72取代舊71。既有config含認證與其他工具keys；options確認7/72對reportDate合法，未授權共用mapping。",
+      "expected_output": "依preferences reference確認啟用一次，按明確scope記錄新選擇，preview改選72預設覆蓋對應偏好不再問是否覆寫；寫回保留認證及其他keys且不曝光。仍核對當日options，零共用mapping寫入。",
+      "expectations": ["啟用只問一次", "preview新選擇更新同scope", "無多餘覆寫確認", "保留未知config keys及認證", "個人偏好不授權mapping"]
+    },
+    {
+      "id": 39,
+      "prompt": "偏好已啟用，精確scope為canonical repo acme/widget、可靠當日branch feature/billing、topic帳務處理，記住project7/module71。User說『僅本次改72』，當日options有72；另一變體舊config沒有偏好區塊且尚未同意啟用；再變體偏好71已不在project7模組清單；另變體補報當日branch未知但目前checkout main。",
+      "expected_output": "僅本次用72可走日誌但不持久覆蓋71；舊config可用於認證，不默默新增啟用；失效71列官方候選詢問，不以偏好繞module必填或默換ID。補報當日branch未知先問，不以目前main套用或儲存偏好。",
+      "expectations": ["onlythis零偏好write", "舊config不阻擋access也不默啟用", "過期偏好不跳options", "當日branch未知先問而非套用main", "不擴大scope或儲存module入sharedmapping"]
+    },
+    {
+      "id": 40,
+      "prompt": "準備RD日誌，偏好記住charter81，但當日官方RD options只有82/83且主題多義；變體是完全缺mandateCharterId；另一變體project7有模組71但PROJECT 0h列module為null。直接提交授權已在。",
+      "expected_output": "準備階段取得官方options，非法/缺失/多義參照先修正或問，RD不送81或預設ID，PROJECT含0h仍補合法module。helper檢查必填格式不能代替agent合法性檢查，不送不完整資料碰500。",
+      "expectations": ["缺/非法RD先處理", "當日官方options決定合法性", "directsubmit不跳業務欄位", "0h不繞module", "未解零write"]
+    },
+    {
+      "id": 41,
+      "prompt": "同任務同reportDate已完成官方spec/context/options與probe預告collect，交接後User只用已能唯一辨識的專案簡稱；沒新證據或漂移。User確認preview，準備write。",
+      "expected_output": "沿用已確認的同日準備與完整label，不因handoff或簡稱重跑整串讀取/collector，不重複Checking訊息；仍在本次新執行讀官方spec，write前fresh context與必要options，核對全文授權/snapshot。只報新資訊或必要問題。",
+      "expectations": ["collector不重跑", "沒有無資訊Checking連發", "不重問已確認工時分配", "fresh-write context及必要options保留", "新執行契約讀取仍在"]
+    },
+    {
+      "id": 42,
+      "prompt": "逾期補新增，User把totalHours改6，existing2h/new4h。官方確認是非豁免工作日且遲報合計須>=8h。變體是context完全沒有官方holiday/exemption資訊；再變體existing4h+new4h。",
+      "expected_output": "主fixture說明6h不符官方遲報規則，不把自訂總數當豁免或虛構2h。無官方資訊變體不猜假日/豁免放行，揭露必要條件並交server validation；合計8h變體仍核對其他條件及授權後可append，不要求新列自己8h。",
+      "expectations": ["官方workday/nonexempt>=8含existing", "不虛構缺少工時", "無資訊不宣稱豁免", "servervalidation不等於保證通過", "new4+existing4可對帳"]
+    },
+    {
+      "id": 43,
+      "prompt": "collector canonical githubRepo=acme/widget，當日branch feature/billing有可靠證據，resolver回400但未提供可確認原因。工作目錄叫widget-old，User尚未同意永久mapping。",
+      "expected_output": "只稱resolver失敗原因未明，不稱缺mapping，不換main重試、不拿widget-old當repo，也不以400提議直接補永久mapping；必要時列官方合法project讓User選本次歸屬，共用儲存另需完整維護資料與確認。",
+      "expectations": ["resolver參數用canonicalrepo/date/可靠branch", "不猜400原因", "不branchfallback重試", "不因錯誤新增永久mapping", "本次project與save授權獨立"]
     }
   ]
 }

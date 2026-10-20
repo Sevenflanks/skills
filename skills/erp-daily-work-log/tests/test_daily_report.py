@@ -223,6 +223,8 @@ class PrepareTests(unittest.TestCase):
         for report_type in ('COMPANY', 'PROJECT', 'RD', 'OTHER'):
             value = plan()
             value['rows'][0]['detail']['reportType'] = report_type
+            if report_type == 'RD':
+                value['rows'][0]['detail']['mandateCharterId'] = 901
             self.assertEqual(report.prepare(value)['action'], 'ready')
 
     def test_text_limits_include_join_separator_leading_linebreaks_and_utf16(self):

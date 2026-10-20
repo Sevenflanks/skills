@@ -7,20 +7,23 @@
 | Operation | 用途 |
 | --- | --- |
 | `GET /api/v2/daily-reports/context?reportDate=yyyy-MM-dd` | 完整本人日誌、expectedSnapshot、serverNow、replaceDeadline、canReplace、PROCESS/PASS 每日假時及打卡。 |
+| `POST /api/v2/daily-reports` | append：body 為 reportDate／details，只送新列，不帶 id／modifiedTime／expectedSnapshot。 |
 | `POST /api/v2/daily-reports/replace` | body 為 reportDate／details／expectedSnapshot，nonempty、無舊日誌 id，全日原子替換。 |
 | 官方 mapping resolve（讀 OpenAPI 選 path） | query repo／branch／reportDate 選唯一 project。 |
 | 官方回報 project 選項（讀 OpenAPI 選 path） | 先確認 reportDate 的合法 project；不是 mapping 可維護清單。 |
 | `GET /api/v2/daily-reports/options/projects/{projectId}/modules` | 從已確認合法 project 的清單取 module ID／label，不能用非法 project 空 list 推論無 modules。 |
+| 官方 RD 立案書 options（讀 OpenAPI 選 path） | 核對 reportDate 的合法 mandateCharterId，不用預設 ID。 |
 
 執行前由 `erp` skill 讀官方 OpenAPI 及必要 schemas，核對以下實作契約、必填參照與回應語意。helper 直接驗證 context 與實際 new-detail，不執行 GET、不收集工作證據、不解析自然語言授權。部署缺 operation 或 schema 不一致時停止，不設 `--contract-verified`。
 
-可選 mapping 維護的獨立契約／plan／flags 見 [`mapping-save.md`](mapping-save.md)；缺維護 API 只停用永久儲存。report helper 保持固定 replace，不接受 mapping operation。
+可選 mapping 維護的獨立契約／plan／flags 見 [`mapping-save.md`](mapping-save.md)；缺維護 API 只停用永久儲存。report helper 僅按 `mode` 選固定 append／replace，不接受 mapping operation 或任意 endpoint。個人偏好的啟用、作用範圍、儲存 API 見 [`preferences.md`](preferences.md)，不放入 report payload。
 
 ## 私有 plan
 
 保存在 repo／已安裝 skill 外的私有 task-local JSON，用後清理。`context` 直接放官方 `AjaxResponse.data` 的完整物件；外部 `erp` transport 的 envelope 依其規範取出，無須手動轉換打卡或假單：
 
 - `reportDate`：固定 yyyy-MM-dd；`expectedSnapshot`：**預覽／確認時**的字串，不由 fresh context 覆蓋。
+- `mode`：`append` 或 `replace`，省略維持舊版 replace 相容；agent 首次填寫／補新增須明填 append。append 的 plan.expectedSnapshot 仍與 fresh context 比對，但不送 server，只防止偷換已預覽意圖；不是 server CAS、idempotency key 或 empty-day atomic check。
 - `context.reportDate`：原查詢日期；`details`：當日本人完整 existing 清單；`expectedSnapshot`：fresh GET 字串；`serverNow`／`replaceDeadline`：正式 ISO timestamp，offset 必須 `+08:00`；期限固定次日 10:00，恰等於期限可寫；`canReplace`：boolean。無時區或不同 offset 均拒絕，不能猜／轉換本機時區。
 - `context.leaves`：每筆 `{ "detailId": 31, "status": "PASS", "hours": 2 }`，status 僅 PROCESS／PASS；後端已排除 REJECT／CANCEL。未知狀態、重複 detailId、缺欄位或衝突停止。`leaveHours` 若提供，必須等於全部 leaves 的 hours 合計；不能用彙總值取代葉節點或填未知時數。
 - `context.attendances`：保留 `{ "id": 41, "recordTime": "2026-10-14T09:00:00", "classification": "ATTENDANCE", "leaveType": null }`。`recordTime` 為同回報日、不帶 offset 的完整秒數；classification 僅 ATTENDANCE／NONATTENDANCE，前者 leaveType 為 null，後者為官方 LeaveType enum。未知分類／state／衝突停止；非出勤不直接代表任何請假時數。
@@ -28,12 +31,12 @@
 
 ### New-detail 最小格式
 
-允許且僅允許 `reportType`、`hours`、`subject`、`description`、`todos`、`projectId`、`projectModuleId`、`mandateCharterId`。舊 `id`／`dailyReportId`／`reportId`、modifiedTime 或未知欄位皆拒絕，不從 existing 複製。參照欄位為 Long 整數或 null，不送 `{id}`；參照存在性、業務必填與合法關聯交給後端。
+允許且僅允許 `reportType`、`hours`、`subject`、`description`、`todos`、`projectId`、`projectModuleId`、`mandateCharterId`。舊 `id`／`dailyReportId`／`reportId`、modifiedTime 或未知欄位皆拒絕，不從 existing 複製。參照欄位為 Long 整數或 null，不送 `{id}`；PROJECT 必填 projectId，RD 必填 mandateCharterId。helper 只驗必填與格式，agent 須先用官方 options 核對參照存在性、合法關聯及業務必填，不能將可預先發現的缺口交給 HTTP 500。
 
-agent 仍須按主流程核對選項：有 modules 的 `PROJECT` 每列（含 0h）必填該 project 的 module ID，無 modules 才 null；寫前 recheck、失效重問。這比 ERP 現有 `hours>0` 規則嚴格，不能以 helper 不查選項為由省略。
+agent 仍須按主流程核對選項：先合法 project，再查其 modules；有 modules 的 PROJECT 每列（含 0h）必填該 project 的 module ID，無 modules 才 null；RD 核對當日官方立案書 options。寫前 recheck、失效重問，不能以 helper 不查選項或個人偏好為由省略。
 
 - reportType 必填：COMPANY／PROJECT／RD／OTHER／LEAVE。
-- hours 必填 JSON number：0～9999、最多 2 位小數；boolean、字串、NaN／Infinity 均拒絕。工時合计須符合總數扣假與 LEAVE 配額。
+- hours 必填 JSON number：0～9999、最多 2 位小數；boolean、字串、NaN／Infinity 均拒絕。replace 只加 new rows；append 加 existing＋new，合計工作／LEAVE 須符合總數扣假與請假配額。append 不重送既有 LEAVE，遇到 `existing_leave_conflict` 或 project＋module／RD 單日唯一性衝突 `daily_uniqueness_conflict` 回 ask，先詢問、不改舊列或默默換歸屬。
 - subject 必填非空字串、最多 100；description／todos 為字串或 null、各最多 900。
 - subject 與移除開頭 CR／LF 後的 description 合併不超過 1000；description 非空時計入中間一個換行。長度沿用 Java UTF-16 code units，包括 emoji。
 
@@ -41,6 +44,7 @@ agent 仍須按主流程核對選項：有 modules 的 `PROJECT` 每列（含 0h
 
 ```json
 {
+  "mode": "append",
   "reportDate": "2026-10-14",
   "expectedSnapshot": "fixture-snapshot",
   "context": {
@@ -57,9 +61,13 @@ agent 仍須按主流程核對選項：有 modules 的 `PROJECT` 每列（含 0h
 }
 ```
 
-`totalHours` 可省略（8），`confirmedLeaveHours` 僅使用者明確提供請假時數才填，不是從打卡／session 推算。helper 先核對 context 服務端期限與資料格式，再按 **已知整日請假 stop → 其他 expired output_only → 未逾期 budget／rows** 的優先序分流。合法 context 中無可用假單、無打卡／非出勤且時數未知，不阻擋逾期摘要；未知 enum、錯誤格式、context 衝突仍停止。
+此例 append 的實際 POST body 只有 `reportDate` 與 `details`（6h COMPANY＋2h LEAVE）；plan.expectedSnapshot 不進 body。改 mode=replace 才在 POST body 加 expectedSnapshot。
 
-`output_only` 不需 `rows`、已預覽的 plan.expectedSnapshot、覆蓋授權或任何 mapping；agent 跳過所有相關詢問，只依上游 probe→預告→collect 輸出可靠工作摘要及缺口，請使用者到 ERP 自行改。不發明請假／工作時數或 project/module。`stop` 不 collect；未逾期工時未知才詢問，existing 仍先問覆蓋。兩者與其他非 ready gate 都不產生 API payload、不讀 credential、不進 transport。
+`totalHours` 可省略（8），`confirmedLeaveHours` 僅使用者明確提供請假時數才填。helper 仍驗 context 時間／state 格式，先已知整日假 stop；**只有 replace** expired 才 output_only，append 即使 canReplace=false 仍驗 budget／rows。append 未知請假先 ask。未知 enum、錯誤格式、資料衝突仍拒絕。
+
+逾期 append 不代表豁免：agent 仍遵守官方工作日／遲報／豁免及非豁免日總數至少 8h（含 existing）的規則。context 沒有 holiday／exemption 欄位，helper 的自訂預算不是 server eligibility 證明；沒有官方資訊時揭露必要條件並交 server validation，不猜假日／豁免、不發明時數。
+
+`output_only` 不需 rows、預覽 snapshot 或覆蓋授權，依上游 probe→預告→collect 輸出可靠摘要與缺口，不發明時數／參照；`stop` 不 collect。agent 另可在所需 operation 不可用時選 output_only，不將它誤用於合法 append。所有非 ready gate 均不產生 API payload、不讀 credential、不進 transport。獨立 mapping 維護不套此 gate。
 
 ## 命令與配置
 
@@ -69,7 +77,7 @@ agent 仍須按主流程核對選項：有 modules 的 `PROJECT` 每列（含 0h
 python -B "<skill>/scripts/daily_report.py" --plan "<private-plan.json>"
 # 只有當次提交授權、官方 schema 核對及 fresh context gate 全通過：
 python -B "<skill>/scripts/daily_report.py" --plan "<private-plan.json>" --authorized --contract-verified
-# existing 另需獨立覆蓋授權：在上列命令加 --overwrite-confirmed
+# 僅 replace existing 另需 --overwrite-confirmed；append 保留 existing、不需要覆蓋授權
 ```
 
 與外部 `erp` skill 共用 `<config-root>/erp/config.json`，預設 `~/.config/softleader/agent-skills/erp/config.json`。active user instructions 有 config root 時每次傳 `--config-root "<config-root>"`；明確檔案覆寫用 `--config "<config-file>"`。helper 僅讀取，不建檔或改配置。
@@ -78,11 +86,25 @@ python -B "<skill>/scripts/daily_report.py" --plan "<private-plan.json>" --autho
 
 若 config 已有 `baseUrl`，沿用同一部署根，例如合成 `https://erp.example.test/erp/`，不是加上 `/api/v2/` 的 operation URL。若省略，由 `erp` skill 本機 `config` 診斷取得其 project default 的 resolved baseUrl，再明確傳 `--base-url "<resolved-https-root>"`；不把部署 URL 保存到本套件。兩者同時有值而不一致拒絕。根含 backend context path，HTTPS；operation append 在同一 host/context，不允許 absolute path override、redirect、TLS 忽略或任意 method/path。
 
-`--authorized` 是 agent 已理解本次提交授權的紀錄；`--overwrite-confirmed` 獨立記錄已有日誌覆蓋確認；`--contract-verified` 記錄實際官方 operation/schema 已核對。它們不是自然語言授權 parser、不是服務端 permission 證明。正式呼叫前再以 `erp` GET 更新 context，先重跑上述分流；`output_only` 跳過所有確認直接輸出既有蒐集摘要。仍未逾期才核對 preview snapshot，資料或工時變更需重新確認。
+`--authorized` 是 agent 已理解本次提交授權的紀錄；`--overwrite-confirmed` 只供 replace existing；`--contract-verified` 記錄實際官方 operation/schema 已核對。它們不是自然語言授權 parser 或 server permission 證明。正式呼叫前以 `erp` GET fresh context 及必要 options，重跑所選 mode 分流並核對 preview snapshot；日期／內容／歸屬／snapshot 變更須重新預覽／確認，不能把新值塞進舊授權。
+
+## 一次受控 retry
+
+dry-run 回傳 payload 與 `intent`，intent 涵蓋 mode、完整 payload 及 context snapshot。保留原 dry-run intent、授權與每次返回的 retriesUsed；不是 server idempotency／持久重試紀錄。`execute` 每次最多送一個 request，不在 transport 內 retry。
+
+傳輸前配置／驗證失敗，CLI 回 `requestState=not_sent`，修正後可續作。傳輸後出錯回 `requestState=unknown`、`retriesUsed`，一律先讀回；成功 transport 亦只回 readback_required、intent、retriesUsed（首次 0、retry 1）。caller 必須沿用 count，不能用舊 plan 重新歸零。
+
+只有可信證據確認先前請求**未生效且不會稍後提交**，才可在相同意圖、fresh context／必要 options 仍吻合且原授權有效時使用：
+
+```json
+{"retry":{"outcome":"definitely_not_applied","trusted":true,"evidence":"可信未生效摘要","retriesUsed":0,"originalIntent":"原 dry-run intent"}}
+```
+
+將 retry 物件加入原 plan；evidence 是 agent 核對後的去敏摘要，不是把 HTTP 500 或空讀回包裝成可信證明。outcome=applied 回 stop；unknown／timeout／empty_readback 等一律 readback_required，零送出；缺可信證據回 ask。retriesUsed 非 0 或 intent（含 snapshot）不同回 ask，須重新 preview／取得相應授權。新內容不屬舊授權重試。
 
 ## 結果
 
-- dry-run 只輸出檢查後 payload，零 credential read／network。
+- dry-run 輸出檢查後 payload 與 intent，零 credential read／network。
 - HTTP 回應限制 1 MiB，default TLS 憑證驗證；禁止 redirect。錯誤只回穩定 reason，不回 reflected body、Location、原始 exception 或 credentials。
 - HTTP 200 的 `messagesEmpty=false`／`ok=false`／`success=false` 視為應用錯誤；實際回應語意仍以官方 OpenAPI 解讀。任何 2xx 都只回 `readback_required`，不宣稱 business success。
-- 網路不確定、snapshot conflict、應用拒絕均無 automatic retry。使用 `erp` skill 查回完整本人同日日誌核對；讀回與明細一致才完成。helper 沒有 browser、Cookie、readonly POST 或 generic write fallback。
+- 網路不確定、snapshot conflict、應用拒絕不盲目 retry；僅上述可信未生效情境可一次受控重試。用 `erp` 完整讀回逐條核對日期、分類、參照、主旨、內容及工時，append 亦核對 existing 未被改寫，吻合才完成。單次空讀回不能證明在途請求不會提交。helper 沒有 browser、Cookie、readonly POST 或 generic write fallback。

@@ -1,8 +1,9 @@
-"""本人日誌替換 gate；直接驗證正式 context 與實際 POST 工時。"""
+"""本人日誌新增／替換 gate；直接驗證正式 context 與實際 POST 工時。"""
 
 from decimal import Decimal, InvalidOperation
 from datetime import date, datetime, time, timedelta
 import argparse
+import hashlib
 import http.client
 import json
 import os
@@ -101,10 +102,18 @@ def validate_detail(detail):
     description = (detail.get('description') or '').lstrip('\r\n')
     if java_length(subject) + (1 + java_length(description) if description else 0) > 1000:
         raise ReportError('content_too_long')
+    validate_references(detail)
+    return amount, 'LEAVE' if report_type == 'LEAVE' else 'WORK'
+
+
+def validate_references(detail):
     for field in ('projectId', 'projectModuleId', 'mandateCharterId'):
         if detail.get(field) is not None and not valid_id(detail[field]):
             raise ReportError('invalid_reference_id')
-    return amount, 'LEAVE' if report_type == 'LEAVE' else 'WORK'
+    # 格式與必要欄位可在本地拒送；可用性與 module 必填性仍由 agent 核對當日官方 options。
+    required_reference = {'PROJECT': 'projectId', 'RD': 'mandateCharterId'}.get(detail.get('reportType'))
+    if required_reference and detail.get(required_reference) is None:
+        raise ReportError('missing_reference_id')
 
 
 def timestamp(value):
@@ -131,6 +140,8 @@ def context_gate(plan):
     if not isinstance(plan, dict) or not isinstance(plan.get('context'), dict):
         raise ReportError('invalid_plan_context')
     context = plan['context']
+    if plan.get('mode', 'replace') not in ('replace', 'append'):
+        raise ReportError('invalid_mode')
     required = {'reportDate', 'leaves', 'attendances', 'details', 'expectedSnapshot', 'serverNow', 'replaceDeadline', 'canReplace'}
     if not required <= set(context):
         raise ReportError('incomplete_context')
@@ -163,13 +174,21 @@ def context_gate(plan):
     # 整日請假優先；其他逾期只需證據摘要，不讓工時／mapping 問答卡住唯讀輸出。
     if budget['action'] == 'stop':
         return budget
-    if expired:
+    if expired and plan.get('mode', 'replace') == 'replace':
         return {'action': 'output_only', 'reason': 'deadline_passed'}
     if budget['action'] != 'continue':
         return budget
     if plan.get('expectedSnapshot', snapshot) != snapshot:
         raise ReportError('snapshot_changed')
     return budget
+
+
+def unique_reference(detail):
+    if detail.get('reportType') == 'PROJECT':
+        return ('PROJECT', detail.get('projectId'), detail.get('projectModuleId'))
+    if detail.get('reportType') == 'RD':
+        return ('RD', detail.get('mandateCharterId'))
+    return None
 
 
 def prepare(plan):
@@ -182,12 +201,34 @@ def prepare(plan):
     if not isinstance(rows, list) or not rows:
         raise ReportError('empty_replacement')
     totals = {'WORK': Decimal(0), 'LEAVE': Decimal(0)}
+    references = set()
+    existing_leave = False
+    if plan.get('mode', 'replace') == 'append':
+        # append 不重送既有列，但既有工時仍占當日預算，不能要求新列自行湊足全天。
+        # 這是使用者工時預算，不是遲報豁免判定；context 沒有工作日／豁免欄位，仍需官方核對及 server validation。
+        for detail in context['details']:
+            if detail.get('reportType') not in ('COMPANY', 'PROJECT', 'RD', 'OTHER', 'LEAVE'):
+                raise ReportError('invalid_existing_details')
+            validate_references(detail)
+            kind = 'LEAVE' if detail['reportType'] == 'LEAVE' else 'WORK'
+            existing_leave = existing_leave or kind == 'LEAVE'
+            totals[kind] += hours(detail.get('hours'))
+            reference = unique_reference(detail)
+            if reference is not None:
+                references.add(reference)
     details = []
     for row in rows:
         if not isinstance(row, dict) or set(row) - {'detail', 'hours', 'kind'}:
             raise ReportError('invalid_new_detail')
         detail = row.get('detail')
         amount, kind = validate_detail(detail)
+        if kind == 'LEAVE' and existing_leave:
+            return {'action': 'ask', 'reason': 'existing_leave_conflict'}
+        reference = unique_reference(detail)
+        if reference is not None:
+            if reference in references:
+                return {'action': 'ask', 'reason': 'daily_uniqueness_conflict'}
+            references.add(reference)
         # 預覽的舊 normalized 欄位若仍在，只能做交叉檢查，不能取代真正 POST 的值。
         if ('hours' in row and hours(row['hours']) != amount) or ('kind' in row and row['kind'] != kind):
             raise ReportError('normalized_row_mismatch')
@@ -195,7 +236,10 @@ def prepare(plan):
         details.append(detail)
     if totals['WORK'] != hours(budget['workHours']) or totals['LEAVE'] != hours(budget['leaveHours']):
         raise ReportError('hours_not_reconciled')
-    return {'action': 'ready', 'payload': {'reportDate': report_date, 'details': details, 'expectedSnapshot': snapshot}}
+    payload = {'reportDate': report_date, 'details': details}
+    if plan.get('mode', 'replace') == 'replace':
+        payload['expectedSnapshot'] = snapshot
+    return {'action': 'ready', 'payload': payload}
 
 
 def safe_base(value):
@@ -256,6 +300,16 @@ def replace(base, key, payload):
     return _send_request(request)
 
 
+def append(base, key, payload):
+    # submit 帶 id 會更新資料；此入口僅可新增，不提供任意 path 或更新既有列。
+    base = safe_base(base)
+    request = urllib.request.Request(base + 'api/v2/daily-reports',
+                                     data=json.dumps(payload, allow_nan=False).encode('utf-8'),
+                                     headers={'X-API-KEY': key, 'Content-Type': 'application/json', 'Accept': 'application/json'},
+                                     method='POST')
+    return _send_request(request)
+
+
 def _send_request(request):
     # 只共用 transport；各 scoped helper 仍自行固定 method/path 與授權，不開放 CLI request。
     opener = urllib.request.build_opener(NoRedirect(), urllib.request.HTTPSHandler(context=ssl.create_default_context()))
@@ -286,16 +340,40 @@ def execute(plan, authorized=False, overwrite=False, contract_verified=False, co
     prepared = prepare(plan)
     if prepared['action'] != 'ready':
         return prepared
+    # 只識別原授權的日期、完整內容、歸屬與快照；不是 server idempotency key 或持久重試紀錄。
+    intent = hashlib.sha256(json.dumps({
+        'mode': plan.get('mode', 'replace'), 'payload': prepared['payload'],
+        'expectedSnapshot': plan['context']['expectedSnapshot'],
+    }, sort_keys=True, ensure_ascii=True, allow_nan=False).encode('utf-8')).hexdigest()
+    if 'retry' in plan:
+        retry = plan['retry']
+        if not isinstance(retry, dict):
+            raise ReportError('invalid_retry')
+        if retry.get('outcome') == 'applied':
+            return {'action': 'stop', 'reason': 'already_applied'}
+        # HTTP 狀態、timeout 或讀回空白都不能證明先前請求不會再提交。
+        if retry.get('outcome') != 'definitely_not_applied':
+            return {'action': 'readback_required', 'reason': 'retry_outcome_unknown'}
+        if (retry.get('trusted') is not True or not isinstance(retry.get('evidence'), str)
+                or not retry['evidence'].strip()):
+            return {'action': 'ask', 'reason': 'retry_evidence_required'}
+        if type(retry.get('retriesUsed')) is not int or retry['retriesUsed'] != 0:
+            return {'action': 'ask', 'reason': 'retry_authorization_required'}
+        if retry.get('originalIntent') != intent:
+            return {'action': 'ask', 'reason': 'retry_intent_changed'}
     if authorized is not True:
-        return {'action': 'dry_run', 'payload': prepared['payload']}
-    if plan['context']['details'] and overwrite is not True:
+        return {'action': 'dry_run', 'payload': prepared['payload'], 'intent': intent}
+    if plan.get('mode', 'replace') == 'replace' and plan['context']['details'] and overwrite is not True:
         raise ReportError('overwrite_confirmation_required')
     if 'expectedSnapshot' not in plan:
         raise ReportError('preview_snapshot_required')
     if contract_verified is not True:
         raise ReportError('official_contract_required')
     base, key = load_access(config_root, config_file, base_url)
-    return replace(base, key, prepared['payload'])
+    operation = append if plan.get('mode', 'replace') == 'append' else replace
+    result = operation(base, key, prepared['payload'])
+    result.update(intent=intent, retriesUsed=1 if 'retry' in plan else 0)
+    return result
 
 
 class SafeParser(argparse.ArgumentParser):
@@ -305,7 +383,7 @@ class SafeParser(argparse.ArgumentParser):
 
 
 def main():
-    parser = SafeParser(description='預設 dry-run；只有已確認的本人單日日誌替換可寫入。')
+    parser = SafeParser(description='預設 dry-run；plan.mode 為 append 或 replace（預設），僅寫入已確認的本人單日日誌。')
     parser.add_argument('--plan', required=True)
     parser.add_argument('--authorized', action='store_true')
     parser.add_argument('--overwrite-confirmed', action='store_true')
@@ -321,9 +399,15 @@ def main():
         print(json.dumps(result, ensure_ascii=False, allow_nan=False))
         return 0
     except ReportError as error:
-        print(json.dumps({'ok': False, 'reason': str(error)}))
+        reason = str(error)
+        result = {'ok': False, 'reason': reason,
+                  'requestState': 'unknown' if reason.endswith('readback_required') else 'not_sent'}
+        if result['requestState'] == 'unknown':
+            # 發出後失敗也消耗這次受控重試；caller 必須沿用回傳計數，不可重新使用舊 plan。
+            result['retriesUsed'] = 1 if 'retry' in plan else 0
+        print(json.dumps(result))
     except (OSError, ValueError, TypeError, KeyError, AttributeError, RuntimeError):
-        print(json.dumps({'ok': False, 'reason': 'invalid_local_input'}))
+        print(json.dumps({'ok': False, 'reason': 'invalid_local_input', 'requestState': 'not_sent'}))
     return 1
 
 

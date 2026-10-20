@@ -1,35 +1,25 @@
 # Consuming-agent eval
 
-`evals.json` 是 agent 情境，不是搜尋 SKILL.md 文字的 unit test。每案以乾淨 agent context、載入本 skill，使用合成的唯讀 ERP／collector／scoped write doubles；不要連真 ERP。以 `prompt` 提供輸入，依 `expected_output` 與 `expectations` 判定**實際對話及 tool trace**。
+`evals.json` 驗證 consuming agent 的**實際對話及 tool trace**，不是搜尋 SKILL.md 原文或比對實作常量。JSON parse／unit tests 通過不代表 agent 行為通過。
 
-1. mock 官方 OpenAPI、context、options、mapping list／resolver 及 collector。未明示錯誤的未逾期基準用 reportDate `2026-10-14`、serverNow `2026-10-14T18:00:00+08:00`、deadline `2026-10-15T10:00:00+08:00`、canReplace=true、existing空／snapshot固定、出勤／0h假；保留官方 envelope 與完整 DTO。prompt 中的 id／label 清單是語意 fixture，依當次正式 schema 包裝，不讓 agent 發明欄位。
-2. 只回傳該情境允許的資料；攔截全部 writes，記錄 method/path/payload/次數及兩個 helper flags。凡意外連外一律失敗。report 與 mapping 的 readback 也記錄，不能用 POST double 的成功當 oracle。
-3. 問答案執行到 agent 等待使用者即判；已授權案跑到 readback／結果。每個「變體」獨立重設 session/fixtures；記實際輸出、trace、pass/fail與理由，不把 JSON結構通過當 consuming-agent 通過。
+## 執行
 
-## 新增 coverage（19–32）
+1. 每案用乾淨 agent context 載入本 skill，以合成 ERP 官方 OpenAPI、context、options、mapping list／resolver、collector、config fixtures 代替外部服務。未明示缺口時 append／replace 官方契約均可用；基準日期 `2026-10-14`、serverNow `2026-10-14T18:00:00+08:00`、deadline `2026-10-15T10:00:00+08:00`、canReplace=true、existing 空／snapshot 固定、出勤／0h 假。保留完整 envelope／DTO，prompt 中簡寫的 options 依正式 schema 包裝。
+2. 攔截全部 writes（report、共用 mapping、個人偏好），只允許 fixture 暫存 config，記錄 method／path／payload、次數、flags、intent 及 retriesUsed。意外連真 ERP、實際 config 或外網即失敗。讀回用獨立 fixture，不能以 POST double 成功當 oracle。
+3. 問答案跑到等待使用者即判；授權案跑到完整讀回／結果。每個變體獨立重設，依 expected_output／expectations 檢查行為，記錄輸出、trace 與判定理由。評估者保留答案，consuming agent 只讀 prompt、skill 及所需 references。
+
+## 行為 coverage
 
 | 案例 | 必須觀察的分歧 |
 | --- | --- |
-| 19–23 | singleton、不同 topics 多模組、唯一名稱證據、多義／未知候選詢問、0h必填、非法project空list與合法無modules。 |
-| 24–27 | 只本次不存、預設日期與差異、獨立save授權、完整list/resolver讀回、無維護權限／缺API／拒存仍可report。 |
-| 28–29 | PUT不改projectId、原timestamp精度、重疊/stale/timeout不自動重試或改期。 |
-| 30–32 | 逾期所有mapping/module操作為零、fullleave零collect、mapping/report獨立結果、寫前選項失效重問。 |
+| 1–8、11、13、15–16 | 正向授權與引文、整日假／未知假、工時預算與來源停止、真實 detail 驗證。 |
+| 2–4、9–10、12、14、17–18、33–34、42 | 首次／已有日誌 append、explicit replace、期限只限 replace、operation 缺口、snapshot 意圖邊界、唯一性及 LEAVE、遲報日合計。 |
+| 19–29、31–32、40、43 | 合法 project→modules、0h 必填、RD 官方立案書、resolver 400 不猜、mapping 權限／完整 list／期間／modifiedTime、分開授權及結果。 |
+| 30、35–37 | mapping 與日誌 gate 解耦；可信未生效一次 retry、unknown／空讀回不重送、count 沿用、not_sent 與 external access。 |
+| 38–39、41 | 偏好啟用／preview 覆蓋／onlythis／舊 config／scope；沿用準備、必要 fresh context/options 與低噪音訊息。 |
 
-## 本輪選定情境結果（2026-10-15）
+## 驗證狀態
 
-主 agent 以 fresh consuming-agent contexts 載入實際 skill／reference，提供合成 ERP／collector fixtures；consuming agent 未讀本檔、`evals.json` 的期待或測試答案。業務 operations 以受控 action trace 代替，未執行 helper、連網或寫入 ERP；由主 agent 依既有 expectations 另行判定。
+0.3.0 共 43 案（含多個獨立變體），本輪完成情境更新及 JSON 結構檢查，**尚未執行完整 consuming-agent eval**；沒有啟動新 session、遞迴委派或連正式 ERP。
 
-| 對應情境 | 實際觀察／判定 |
-| --- | --- |
-| 20：同 repo 兩主題 | 依發票對帳／出勤證據選 71／72，預覽列理由與提議 4h／4h，未選第一筆「其他」，未寫入。符合。 |
-| 21–22：未知模組、要求 0h／null | 列合法候選詢問，未以 0h 或直接提交繞過模組條件。符合。 |
-| 32：寫前模組失效 | snapshot 相同，重新查 project／module 後辨識 71 已失效，詢問 72／73，不默換、不提交。符合。 |
-| 24：只供本次、不存 mapping | 保留合法手選 project 7／module 71，完成 dry-run、單次模擬 report write 及獨立完整讀回；mapping write 為零。符合。 |
-| 25：尚未同意永久存 | 預覽新增日期 `reportDate..null`、repo／可靠 branch／project，日誌與永久儲存分開詢問，沒有 POST／PUT。符合。 |
-| 30：逾期且未知工時／branch | 先分流 output_only，再 probe→預告→collect；mapping／module queries、所有 writes、未知欄位問答皆為零。符合。 |
-| 26／31：mapping 已存、report timeout | mapping 單次模擬 POST 後以完整 list＋resolver 核對；report timeout 後獨立查回，分別報成功與不確定，不重試或刪 mapping 回滾。符合。 |
-| 27：無維護權仍可回報 | 維護 projects 空時只停用 save，保留合法 report project／module，單次模擬 report write 與完整讀回；mapping write 為零。符合。 |
-
-共 **8 個有效合成情境**符合觀察條件。初次「模組失效」fixture 的 prior／fresh snapshot 字串意外不同，未計入結果；修正為逐字相同後，以新 context 重跑，確認不是靠 snapshot 衝突而停止。
-
-這是選定情境的 consuming-agent／mock action-trace 評估，**不是完整 32 案及所有變體的自動 evalrunner，也不代表真實 ERP、helper transport 或部署驗證**。Python transport regression 與 `npm validate` 是另外的驗證證據，不互相替代。
+0.2.0 曾在 2026-10-15 以 mock action-trace 跑過 8 個選定情境，涵蓋模組、選項失效、mapping 授權與分開讀回。該版逾期一律 output_only 的期待已被 #39 修正，舊結果不能作為 0.3.0 通過證據。Python transport 回歸與 repository validate 另行記錄於 [`../tests/README.md`](../tests/README.md)。
