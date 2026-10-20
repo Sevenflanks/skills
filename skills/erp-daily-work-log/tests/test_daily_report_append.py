@@ -122,13 +122,21 @@ class AppendTests(unittest.TestCase):
     def test_cli_deep_json_response_after_post_is_unknown_and_does_not_retry(self):
         value = append_plan()
         requests = []
+        response_body = b'{"decoder":"failure fixture"}'
 
         class Opener:
             def open(self, request, timeout):
                 requests.append(request)
-                response = io.BytesIO(b'[' * 2000 + b'0' + b']' * 2000)
+                response = io.BytesIO(response_body)
                 response.status = 200
                 return response
+
+        original_loads = json.loads
+
+        def loads_with_recursion_error(body, *args, **kwargs):
+            if body == response_body:
+                raise RecursionError('fixture-only decoder failure')
+            return original_loads(body, *args, **kwargs)
 
         with tempfile.TemporaryDirectory() as root:
             path, config = Path(root) / 'plan.json', Path(root) / 'config.json'
@@ -139,12 +147,15 @@ class AppendTests(unittest.TestCase):
                     '--config', str(config)]
             output = io.StringIO()
             with patch.object(sys, 'argv', argv), redirect_stdout(output), \
-                    patch.object(report.urllib.request, 'build_opener', return_value=Opener()):
+                    patch.object(report.urllib.request, 'build_opener', return_value=Opener()), \
+                    patch.object(report.json, 'loads', side_effect=loads_with_recursion_error):
                 self.assertEqual(report.main(), 1)
             result = json.loads(output.getvalue())
             self.assertEqual(result, {'ok': False, 'reason': 'invalid_response_readback_required',
                                       'requestState': 'unknown', 'retriesUsed': 0})
             self.assertEqual(len(requests), 1)
+            self.assertEqual(requests[0].get_method(), 'POST')
+            self.assertEqual(requests[0].full_url, 'https://erp.example.test/backend/api/v2/daily-reports')
 
             value['retry'] = {'outcome': 'unknown', 'trusted': True, 'evidence': '已讀回交易狀態',
                               'retriesUsed': 0, 'originalIntent': report.execute(value)['intent']}
