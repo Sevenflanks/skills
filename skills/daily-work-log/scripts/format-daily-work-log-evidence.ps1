@@ -2,7 +2,10 @@
 param(
   [Parameter(ValueFromPipeline = $true)]
   [string]$InputJson,
-  [int]$MaxCommitsPerRepo = 8
+  [int]$MaxCommitsPerRepo = 8,
+  [ValidateSet('summary', 'erp')]
+  [string]$View = 'summary',
+  [string]$InputPath
 )
 
 begin {
@@ -97,7 +100,11 @@ end {
 
   try {
     $rawInput = ($inputChunks -join [Environment]::NewLine).Trim()
-    if ([string]::IsNullOrWhiteSpace($rawInput) -and -not [Console]::IsInputRedirected) {
+    if (-not [string]::IsNullOrWhiteSpace($InputPath)) {
+      if (-not [string]::IsNullOrWhiteSpace($rawInput)) { throw 'Provide InputPath or stdin JSON, not both.' }
+      $rawInput = [IO.File]::ReadAllText($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($InputPath))
+    }
+    elseif ([string]::IsNullOrWhiteSpace($rawInput) -and -not [Console]::IsInputRedirected) {
       $rawInput = ''
     }
     elseif ([string]::IsNullOrWhiteSpace($rawInput)) {
@@ -120,6 +127,20 @@ end {
     }
 
     foreach ($repo in (ConvertTo-Array -Value (Get-PropertyValue -Object $collector -Name 'repos'))) {
+      if ($View -eq 'erp') {
+        # ERP 歸屬需 refs、PR 結構及全部來源續行；只省不需要的 repo path 與排版，不能套 summary 上限。
+        $repos.Add([ordered]@{
+          name = Get-PropertyValue -Object $repo -Name 'name'
+          githubRepo = Get-PropertyValue -Object $repo -Name 'githubRepo'
+          source = @(ConvertTo-Array -Value (Get-PropertyValue -Object $repo -Name 'source'))
+          isGitRepo = Get-PropertyValue -Object $repo -Name 'isGitRepo'
+          commits = @(ConvertTo-Array -Value (Get-PropertyValue -Object $repo -Name 'commits'))
+          prs = @(ConvertTo-Array -Value (Get-PropertyValue -Object $repo -Name 'prs'))
+          sessionEvidence = @(ConvertTo-Array -Value (Get-PropertyValue -Object $repo -Name 'sessionEvidence'))
+          warnings = @(ConvertTo-Array -Value (Get-PropertyValue -Object $repo -Name 'warnings'))
+        })
+        continue
+      }
       $repoWarnings = [System.Collections.Generic.List[string]]::new()
       foreach ($warning in (ConvertTo-Array -Value (Get-PropertyValue -Object $repo -Name 'warnings'))) {
         $repoWarnings.Add([string]$warning)
@@ -175,7 +196,7 @@ end {
       warnings = @($warnings)
       errors = @($errors)
       repos = $repos
-    } | ConvertTo-Json -Depth 8
+    } | ConvertTo-Json -Depth $(if ($View -eq 'erp') { 100 } else { 8 }) -Compress:($View -eq 'erp')
   }
   catch {
     $errors.Add($_.Exception.Message)

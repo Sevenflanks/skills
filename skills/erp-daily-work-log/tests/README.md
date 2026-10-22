@@ -49,6 +49,31 @@ Python unit tests 在 plan→dry-run／scoped transport seam 執行真實 helper
 
 agent 的語意授權、唯一模組證據、RD code／適用性解析與 local metadata、report／維護 membership、完整 list／resolver 比對、retry 證據可信度、偏好 scope 及跨端點結果等**不由 mapping unit tests 證明**。對應 [`../evals/evals.json`](../evals/evals.json)，執行狀態見 [`../evals/README.md`](../evals/README.md)。helper 不猜權限或自行 GET 清單；agent 必須依文件完成 fresh 維護權限、完整 list、期間與 modifiedTime 核對。正式 server 權限／period lock／concurrency 與部署契約未連線驗證。
 
+## #42：同 plan preview／本地 readback
+
+本輪在 `test_daily_report_review.py` 的公開函式／CLI seam 做 red→green，使用手工合成 plan、完整官方 data 形狀與實際 helper；不讀文件原文當測試 oracle、不連真 ERP。description 的預設撰寫與狀態判讀是 agent 責任，這裡只證明 helper 不改寫原文，行為 eval 狀態另見 [`../evals/README.md`](../evals/README.md)。
+
+| Slice | 實際 red | Green |
+| --- | --- | --- |
+| 完整 preview | `AttributeError: module 'daily_report' has no attribute 'preview'` | 同 plan 的日期／mode／snapshot／intent、完整欄位、替換範圍及合計可核對，修改輸出不改 plan。 |
+| 本地 readback | `AttributeError: module 'daily_report' has no attribute 'compare_readback'` | 全欄位／全文比對，列順序與 server-only metadata 不影響相符結果。 |
+| append 既有列 | 正確讀回仍回 mismatch、既有列全成 unexpected | 先依既有 ID 核對內容，再比對新列，缺列／額外列／同內容不同 ID 不會冒充保留。 |
+| 日期／ID | 逐列錯日期及重複 ID 錯回 matched（2 failures） | 固定日期與合法唯一讀回 ID 皆核對。 |
+| 本地 CLI | `--preview` 回 exit 2／invalid_arguments | preview、readback matched exit 0；差異 exit 1，列 todos 等具體差異。 |
+| 空 readback 路徑＋write flag | 回 `official_contract_required` 而非本地模式衝突，意外走進 write 分支 | 以 flag 是否出現分流，空路徑仍是本地模式，混用 write/access flags 在 credential／network 前拒絕。 |
+
+red／green 命令：`python -B -m unittest discover -s skills/erp-daily-work-log/tests -p test_daily_report_review.py -v`；CLI／空路徑 red 使用同命令的 `-k test_cli_preview_and_readback_have_actionable_exit_codes`／`-k test_local_modes_reject_write_access_flags_before_credentials_or_network`（後者 `-q`）。最終相關回歸命令 `python -B -m unittest discover -s skills/erp-daily-work-log/tests -p "test_daily_report*.py" -q`：**74 tests 通過，2.765s**，含本輪 12 tests、既有 core／append／RD guard。evals JSON parse：52 案、ID 唯一；不代表 consuming-agent 行為通過。完整 repository validate／其他 helper suite 由主 agent 在交付節點執行，本輪未跑。
+
+| Plausible mutation | 會失敗的 `test_daily_report_review.py` 測試 |
+| --- | --- |
+| preview 送不同全文、丟欄位／範圍／合計、讀 credential／network、改寫 plan 或合法非條列字串 | `test_preview_exposes_full_authorized_text_and_replace_scope_from_same_plan`、`test_authorized_multiline_and_legal_nonbullet_text_are_not_rewritten` |
+| append 不顯示 existing 或錯算合計、description／todos／subject／module 改了仍同 intent、忽略 snapshot 漂移；RD preview 丟 repo 群組或 charter | `test_append_preview_preserves_existing_and_changed_text_changes_intent`、`test_shared_rd_charter_preview_keeps_both_repo_groups_and_selected_reference` |
+| 依列排序、漏分類／參照／主旨／全文／todos／hours、missing-null 當 null、偷偷正規化換行／空白、接受浮點 reference | `test_replace_matches_full_official_data_without_row_order_or_server_metadata_dependency`、`test_readback_reports_every_changed_business_field_and_missing_null_field`、`test_optional_expected_null_numeric_hours_and_exact_text_are_compared_semantically` |
+| append 不核既有 ID／業務內容、把相同內容列去重、漏日期／缺列／額外列／重複 ID 或允許不完整 baseline | `test_append_matches_both_existing_ids_and_new_rows_in_any_order`、`test_wrong_date_partial_empty_and_extra_readback_never_prove_success_or_retry_safety`、`test_duplicate_equal_new_rows_count_as_two_and_incomplete_append_baseline_is_rejected` |
+| 本地 CLI 意外走 write/access、空路徑回到 write 分支、錯誤 exit code 或漏 todos 診斷 | `test_cli_preview_and_readback_have_actionable_exit_codes`、`test_local_modes_reject_write_access_flags_before_credentials_or_network` |
+
+未啟動 mutation framework，不宣稱 mutation score。**Unprotected by unit tests**：agent 寫出的 repo 條列／PR 狀態、授權語意與低噪音；以 eval 48–52 規格涵蓋但尚未執行。測試 subprocess 皆同步結束、新增 CLI subprocess 有 15 秒 timeout，沒有殘留 process；全部資料合成，未查真 ERP 或實際認證。
+
 ## 重跑
 
 ```powershell

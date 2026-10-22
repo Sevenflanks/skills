@@ -22,7 +22,7 @@
       "name": "daily-work-log",
       "source": "skills/daily-work-log",
       "description": "先探測並合併 OpenCode／Codex 活動與 Git／GitHub 證據；Codex 有界蒐集並揭露涵蓋缺口，整理每日工作日誌。",
-      "version": "0.5.1",
+      "version": "0.6.0",
       "keywords": [
         "work-log",
         "daily-report",
@@ -38,7 +38,7 @@
       "name": "erp-daily-work-log",
       "source": "skills/erp-daily-work-log",
       "description": "依工作內容選模組填寫 ERP 日誌；可獨立確認永久儲存 repo mapping，保留請假與逾期分流。",
-      "version": "0.3.0",
+      "version": "0.4.0",
       "keywords": ["erp", "work-log", "daily-report", "python", "authorization"]
     },
     {

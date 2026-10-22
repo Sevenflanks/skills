@@ -2,6 +2,51 @@
   "skill_name": "daily-work-log",
   "evals": [
     {
+      "id": 34,
+      "prompt": "補報 2026-05-29。合成 collector 已回 repos githubRepo=fixture/shared、commits=[]、sessionEvidence 有當日處理登入的證據，remote 是有效 github.com remote；目前 checkout=feature/today，但當日 branch 不明。另一 repo remote 缺失，只有資料夾 synthetic-shared。請整理並處理 ERP 歸屬問題。不要重 collect。",
+      "expected_output": "有效 remote 的 session-only 依 fixture/shared 歸組，不詢問已知 canonical identity；保留無 commit/PR 缺口，不稱已交付。另一 repo 只用資料夾標籤 fallback 並指出 remote 缺口；當日 branch 不明才精準詢問，不以今天 checkout 補報。",
+      "files": [],
+      "expectations": [
+        "操作 trace 不重 collect，不對已知 canonical repo 再向使用者詢問 remote。",
+        "不從 synthetic-shared、已刪 worktree 或父目錄猜 canonical mapping。",
+        "Session-only 不自造 commit、MERGED 或驗收成果；缺失 branch 精準詢問。"
+      ],
+      "assertions": [
+        "實際 resolver 呼叫未使用 feature/today 代替 2026-05-29 的 branch。",
+        "摘要以 fixture/shared 分組，明示 session-only 及尚無 commit/PR 證據。"
+      ]
+    },
+    {
+      "id": 35,
+      "prompt": "合成補報證據：fixture/shared 的當日兩條 branch feature/a、feature/b 各有工作，但主題歸屬多義；PR #1 已 merged 且 hash 連到 a，PR #2 Draft/open 連到 b；同 repo #99 最近 updated 卻無當日關聯。resolver 對已選 feature/a 回 HTTP400/http_error，原因未知。請繼續，試其他 branch 看能不能成功？",
+      "expected_output": "保留 #1 已合併與 #2 Draft 待合併的分開狀態，#99 不列成果。Resolver 原因未知時停止同類 branch 嘗試，回報解析失敗，詢問尚未能判定的歸屬或要求可診斷錯誤資訊。",
+      "files": [],
+      "expectations": [
+        "觀察工具 trace：HTTP400 後 resolver 同類嘗試次數為零，沒有逐 branch 猜測。",
+        "不把 HTTP400 稱為 missing mapping，也不新增永久 mapping。",
+        "先重用已知當日 hash/branch/PR；多義只詢問未解主題，不將目前 checkout 代入。"
+      ],
+      "assertions": [
+        "回覆明示解析失敗且原因未知；不聲稱 collector 內建逐 branch retry。",
+        "成果只引用有當日關聯的 #1/#2，分別保留 merged/Draft，無 #99。"
+      ]
+    },
+    {
+      "id": 36,
+      "prompt": "整理大型合成 ERP 證據。已完成 probe 與來源預告；OpenCode/Codex 均可讀，Codex partial/complete=false；有雙 worktree、10 commits、7 session 列且最後一列是 Codex 續行。正式 collect 尚未執行。請保留 refs、PR head/Draft/closing issues，避免大 JSON 先進 context。",
+      "expected_output": "正式 collection stdout 直接落到私有 task-local 檔，再用 formatter -InputPath -View erp；先讀缺口/索引，再按 repo/source/session 按需讀完整證據，任務完成清理。",
+      "files": [],
+      "expectations": [
+        "工具 trace 的正式 collector 原始 stdout 沒有先印入主上下文；只 collect 一次，無自動增加 Codex limits。",
+        "ERP view 保留10 commits/refs、全部7 sessions與第二來源續行、PR head/Draft/issue及所有 source coverage/gaps。",
+        "缺值保持缺值；預設 summary 的8 commits上限不用於ERP視圖。"
+      ],
+      "assertions": [
+        "公開摘要不含 private path/conversation/raw JSON；partial不稱完整。",
+        "可按需讀回原始證據，完成後清理本次暫存，不建立跨任務history cache。"
+      ]
+    },
+    {
       "id": 33,
       "prompt": "OpenCode parent 從 home 開始；session.path 是 Users/synthetic，當日 bash workdir 指向 C:\\synthetic\\repo。另有已刪 worktree、範圍外 part、未知 tool，補查達 2048 cap 或 failed。整理日誌並說明涵蓋缺口。",
       "expected_output": "以明確 absolute metadata 與單一有界、當日 structured bash workdir 歸 repo；不依 CWD 解 relative，不猜 deleted worktree。保留 metadata 與 provenance，partial／cap 明講缺口。",

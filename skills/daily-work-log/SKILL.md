@@ -4,7 +4,7 @@ description: 整理每日工作日誌或跨 repo 今日工作時使用。先探�
 license: MIT
 metadata:
   author: sevenflankse
-  version: 0.5.1
+  version: 0.6.0
 ---
 
 # Daily Work Log
@@ -87,7 +87,10 @@ Do not use this skill when:
    - Check repo `warnings` and top-level `warnings` / `errors`.
    - Note repos that are not git repos, repos with session activity but no commits, and repos with commits but no PR/issue supplement.
    - Only include paths that resolve to git repo or worktree roots. Surface skipped or unresolved paths through warnings or final notes.
-   - Treat PR supplement as relevant only when it can be tied back to the day's commit / branch / hash evidence; do not attach every updated PR from the same repo.
+    - PR 補證須連回該 worktree 當日 commit／branch／hash 或可靠 session 證據；同作者、同 repo、近期更新只作候選，不能全收。collector 沒有 commit 關聯時保留 session-only；必要手動補證也須記錄當日關聯及 Draft／實際交付狀態。
+    - 有效 repo／worktree 即使沒有當日本人 commit，仍由 `origin` remote 解析 canonical `githubRepo`。remote 缺失／無法確認時揭露缺口；`name` 只作顯示 fallback，不反推 mapping，也不從已刪 worktree 或父目錄猜 repo。
+    - 分類／resolver 優先重用已有可靠當日 branch／PR 證據；可查 remote 就先查，不把可自行確認的 identity 轉問使用者。補報不以目前 checkout 代替當日 branch；無當日 branch 或多義時，只詢問未解的歸屬。
+    - resolver 回傳原因未明的 HTTP 400／`http_error` 時，回報「解析失敗，原因未知」並停止同類 branch 嘗試；不稱為 missing mapping、不逐 branch 猜結果，也不因此新增永久 mapping。
 
 6. **Summarize by GitHub repo name**
    - Group by GitHub repo name from `repos[].githubRepo` first, such as `owner/repo`.
@@ -182,16 +185,13 @@ Treat collector JSON as source of truth:
 
 這組上限限制 filesystem 訪問與 transcript 讀取；日期候選陣列仍隨要求範圍成長，reader buffers 不隨 byte 額度成長，但不限制事件清單或整個 PowerShell process 記憶體。64／8 MiB 是已確認預設，不是最佳門檻或 latency SLA；合成量測界線見 [`README.md`](README.md#有界驗證與量測)。
 
-## Optional evidence compaction
+## Evidence views 與私有原始證據
 
-For high-volume evidence, pipe collector JSON through `scripts/format-daily-work-log-evidence.ps1`. It reads collector JSON from stdin, emits pure JSON, preserves `meta`, `warnings`, `errors`, and returns compact repo evidence: `name`, `githubRepo`, `commitCount`, `shownCommits`, `prs`, `lowSignalPrRefs`, `sessionEvidence`, `warnings`.
+大型 collection 與 ERP 整理先依 [`references/evidence-views.md`](references/evidence-views.md) 的可執行流程，將原始 JSON 直接存入私有 task-local 暫存，再以 formatter `-InputPath` 按需讀取。不可先把整份原始 JSON 送入主上下文再壓縮。私有檔只供當次任務，完成後清理，不提交或公開。
 
-formatter 只限制 shown commits；完整保留 session 證據，避免截斷掉第二來源或續行。管線前仍必須完成 probe 與來源預告。
-
-```powershell
-pwsh -NoProfile -File "<path-to-skill>\scripts\collect-daily-work-log.ps1" |
-  pwsh -NoProfile -File "<path-to-skill>\scripts\format-daily-work-log-evidence.ps1" -MaxCommitsPerRepo 8
-```
+- 預設 `summary` 保持原格式：`shownCommits` 最多 8、PR 文字引用、全部 `sessionEvidence`、`meta`／warnings／errors。適合一般日報，但不保證 ERP 歸屬證據保真。
+- ERP 使用 `-View erp`：不套 commit 上限；以無縮排 JSON 保留每個 repo 的 `githubRepo`、`source`、`isGitRepo`、完整 commits（refs／branchHints）、PR（head／Draft／state／closing issues）、全部 session／續行、warnings 及完整頂層 meta／sources／coverage／errors。省略 repo `path`，缺值維持缺值；這仍是私有證據，不是公開用的去識別輸出。
+- 單次 collection 只解析一次 viewer，並共用同 canonical repo 的 PR list／detail 結果；每個 worktree 仍獨立依當日證據過濾。重用只活在此次執行，不跨任務保存。
 
 ## High-commit repos
 

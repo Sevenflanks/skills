@@ -46,6 +46,19 @@ agent 仍須按主流程核對選項：先合法 project，再查其 modules；�
 - subject 必填非空字串、最多 100；description／todos 為字串或 null、各最多 900。
 - subject 與移除開頭 CR／LF 後的 description 合併不超過 1000；description 非空時計入中間一個換行。長度沿用 Java UTF-16 code units，包括 emoji。
 
+### Description 欄位範例
+
+以下是同一 RD 立案書合成一列時，**description 字串本身**的合成示例；狀態須有來源證據，不從 session 標題推論。這不是 preview 外框：
+
+```text
+acme/widget
+- 完成日期解析；PR #31 MERGED，issue #44 CLOSED。
+acme/tools
+- 補上驗證案例；PR #32 OPEN，待合併。
+```
+
+此格式由 agent 在產生文案時使用；helper 僅驗合法字串、長度與工時，不強制 bullet schema、不插入換行或重寫已授權文案。合法非條列 description 可原文通過。若須精簡到欄位上限，先改 plan 再完整 preview／重新取得相應授權。
+
 最小私有 plan 範例（合成資料；不是已部署能力證明）：
 
 ```json
@@ -61,7 +74,7 @@ agent 仍須按主流程核對選項：先合法 project，再查其 modules；�
     "attendances": [{"id": 41, "recordTime": "2026-10-14T09:00:00", "classification": "ATTENDANCE", "leaveType": null}]
   },
   "rows": [
-    {"detail": {"reportType": "COMPANY", "hours": 6, "subject": "整理作業說明", "description": "完成欄位核對", "todos": null}},
+    {"detail": {"reportType": "COMPANY", "hours": 6, "subject": "整理作業說明", "description": "acme/docs\n- 完成欄位核對。", "todos": null}},
     {"detail": {"reportType": "LEAVE", "hours": 2, "subject": "請假", "description": null, "todos": null}}
   ]
 }
@@ -94,6 +107,21 @@ python -B "<skill>/scripts/daily_report.py" --plan "<private-plan.json>" --autho
 
 `--authorized` 是 agent 已理解本次提交授權的紀錄；`--overwrite-confirmed` 只供 replace existing；`--contract-verified` 記錄實際官方 operation/schema 已核對。它們不是自然語言授權 parser 或 server permission 證明。正式呼叫前以 `erp` GET fresh context 及必要 options，重跑所選 mode 分流並核對 preview snapshot；日期／內容／歸屬／snapshot 變更須重新預覽／確認，不能把新值塞進舊授權。
 
+## 本地 preview 與 readback
+
+兩個入口只讀指定的私有 JSON 檔，不讀 ERP config／credential、不發 request，且拒絕與寫入／access flags 混用：
+
+```powershell
+python -B "<skill>/scripts/daily_report.py" --plan "<private-plan.json>" --preview
+python -B "<skill>/scripts/daily_report.py" --plan "<original-submitted-plan.json>" --readback "<private-official-data.json>"
+```
+
+- **Preview**：沿用 prepare／dry-run gates，由同一 plan 產生 mode、reportDate、snapshot、intent、每列分類／三種參照 ID／subject／description 全文／todos／hours（省略的可選欄位顯示 null），列 `impact.preserved`／`impact.replaced` 全文及 append 保留或 replace 全日範圍。`hours` 的 existing／new 及工作／請假／日合計以實際 payload 計算；replace 的 existing 為 0，因舊列不計入替換後工時。官方 label 由 agent 用已核對 options 展示，不能改寫 description。preview 回傳深拷貝，不修改 plan 或排版；原 dry-run payload 仍是送出依據。
+- **意圖一致**：保留原 preview／dry-run intent，與寫前同 plan 的 dry-run 比對；mode、日期、subject／description／todos／工時、參照或 snapshot 改變都須重新預覽／取得相應授權。CLI flags 仍只是 agent 的授權紀錄，hash 不是自然語言授權或 server CAS；不因產生 preview 自動授權。
+- **Readback 輸入**：外部 `erp` 唯讀工具先取得固定日期的**完整**官方 `AjaxResponse.data`（含 reportDate、details；不是 response envelope、POST 回應或 exists 結果），存於 repo 外。保留**原送出 plan**，尤其 append 的寫前 existing baseline；不能用寫後 context 取代，否則會把新列當既有列。helper 不自行 GET，也不核實 caller 是否取得完整資料。
+- **比對**：新列依分類、projectId／projectModuleId／mandateCharterId、subject、description、todos、hours 做不依排序的逐列比對，保留相同內容列的筆數。optional 省略的預期值視為 null，但讀回缺欄位不能當 null 通過；空白、縮排與換行須完全相同，工時用 Decimal 比較合法數值。append 先以原 ID 找回每筆 existing，核對全部上述業務欄位；baseline 缺 ID／欄位或重複 ID 拒絕，不能用新列冒充舊列。讀回 ID 須合法唯一，逐列若帶 reportDate 亦須同日；server-only content／modifiedTime 等衍生 metadata 不作業務內容 oracle。
+- **結果**：`action=matched`、exit 0 表示提供的完整資料與原 plan 相符；`action=mismatch`、exit 1 的 `differences` 列 scope／field／expected／actual／missing，可見新舊列缺漏、額外列或欄位差異。格式錯誤 exit 1；既有 stop／ask／output_only gate 原樣保留，不能當 matched。差異配對只供診斷，不推論請求未生效，不授權 retry；空讀回尤其不能證明在途請求不會提交。這些輸出含本人全文，同樣留在私有 task-local 路徑並用後清理。
+
 ## 一次受控 retry
 
 dry-run 回傳 payload 與 `intent`，intent 涵蓋 mode、完整 payload 及 context snapshot。保留原 dry-run intent、授權與每次返回的 retriesUsed；不是 server idempotency／持久重試紀錄。`execute` 每次最多送一個 request，不在 transport 內 retry。
@@ -110,7 +138,7 @@ dry-run 回傳 payload 與 `intent`，intent 涵蓋 mode、完整 payload 及 co
 
 ## 結果
 
-- dry-run 輸出檢查後 payload 與 intent，零 credential read／network。
+- dry-run 輸出檢查後 payload 與 intent；`--preview` 另產生全文與影響範圍，`--readback` 比對已取得的完整官方 data；三者均零 credential read／network。
 - HTTP 回應限制 1 MiB，default TLS 憑證驗證；禁止 redirect。錯誤只回穩定 reason，不回 reflected body、Location、原始 exception 或 credentials。
 - HTTP 200 的 `messagesEmpty=false`／`ok=false`／`success=false` 視為應用錯誤；實際回應語意仍以官方 OpenAPI 解讀。任何 2xx 都只回 `readback_required`，不宣稱 business success。
-- 網路不確定、snapshot conflict、應用拒絕不盲目 retry；僅上述可信未生效情境可一次受控重試。用 `erp` 完整讀回逐條核對日期、分類、參照、主旨、內容及工時，append 亦核對 existing 未被改寫，吻合才完成。單次空讀回不能證明在途請求不會提交。helper 沒有 browser、Cookie、readonly POST 或 generic write fallback。
+- 網路不確定、snapshot conflict、應用拒絕不盲目 retry；僅上述可信未生效情境可一次受控重試。用 `erp` 完整讀回，再以本地 comparator 逐條核對日期、分類、參照、主旨、description、todos 及工時，append 亦核對 existing 未被改寫，吻合才完成。單次空讀回不能證明在途請求不會提交。helper 沒有 browser、Cookie、readonly POST 或 generic write fallback。

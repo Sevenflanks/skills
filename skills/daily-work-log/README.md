@@ -28,7 +28,7 @@
 7. `session` discovery 可將安全的彙總目錄展開成巢狀 git repo / worktree。
 8. 預設 `authorScope` 是 `current`；若無法解析 identity，helper 會提出 warning 並 fallback 到 all authors。
 9. 目前使用者過濾採用寬鬆 identity matching；`release` / `deploy` bot commit 只有在 PR-chain 證據連回目前使用者工作時才保留。
-10. 有 session evidence 但沒有目前使用者 commit 的 repo，仍會透過 `sessionEvidence` 保留在 JSON，供 agent 產生一條摘要。
+10. 有 session evidence 但沒有目前使用者 commit 的 repo，仍由有效 `origin` remote 解析 canonical `githubRepo`，保留 `sessionEvidence` 與無 commit 缺口。缺失／無法確認 remote 時不猜 mapping，資料夾名稱只作顯示 fallback。
 11. 讓 helper 只輸出純 JSON，不混入說明文字。PowerShell collector 不產生自然語言摘要；agent 只能從 `sessionEvidence` 寫一條短摘要。
 12. 由 skill 檢查 JSON 內的 warning / error / `ghAvailable` / `ghViewer` 狀態；若 `gh` 不可用或未登入，預設先停止並建議安裝 GitHub CLI 或執行 `gh auth login`。
 13. 只納入可解析成 git repo 或 worktree root 的路徑，其他缺口要透過 warning 或最終註記說清楚。
@@ -104,6 +104,12 @@ pwsh -NoProfile -File "<skill>\scripts\collect-daily-work-log.ps1" -From "<probe
 
 `-OpenCodeLogRoot`、`-OpenCodeStorageRoot`、`-CodexRoot` 可覆寫紀錄入口；collector／formatter stdout 均為純 JSON。formatter 保留新增 metadata 與全部 `sessionEvidence`，只對 shown commits 做上限 compaction。
 
+### ERP 精簡結構視圖與私有落檔
+
+大型原始 JSON 直接落入當次私有暫存，依 [`references/evidence-views.md`](references/evidence-views.md) 的完整流程，用 formatter `-InputPath '<private-task-file>' -View erp` 產生結構視圖並按需查閱。預設 summary 格式維持相容；ERP 視圖保留全部 commits／refs／branchHints、PR head／Draft／closing issues／交付狀態、來源／續行、meta／coverage／warnings／errors，只移除 repo path 與排版空白，不任意截斷。證據檔仍是私有資料，完成後清理。
+
+同次 collection 重用 viewer 與 canonical repo 的 PR 查詢，worktree 關聯仍獨立判斷。同作者的當日 PR commit 若無該 worktree hash／branch 關聯也不收；session-only 不自造完成成果。Resolver 原因未明的 HTTP 400 只回報解析失敗，不逐 branch 猜、不當作 missing mapping。
+
 ### 調整 Codex 讀取額度
 
 PowerShell 7+ 使用 `-CodexTotalBytes`／`-CodexFileBytes` 指定**正整數 bytes**，預設為 64／8 MiB。以下例子明確使用 128／16 MiB，probe 與 collection 共用範圍及額度：
@@ -131,10 +137,13 @@ pwsh -NoProfile -File skills/daily-work-log/tests/multi-source.tests.ps1 -Case a
 Invoke-Pester -Script skills/daily-work-log/tests/collect-daily-work-log.tests.ps1
 pwsh -NoProfile -File skills/daily-work-log/tests/diagnostics.tests.ps1 -EvidenceRoot "<existing-external-temp-directory>"
 pwsh -NoProfile -File skills/daily-work-log/tests/repo-discovery.tests.ps1 -Case all -EvidenceRoot "<existing-external-temp-directory>"
+pwsh -NoProfile -File skills/daily-work-log/tests/evidence-view.tests.ps1 -Case all -EvidenceRoot "<existing-external-temp-directory>"
 npm run validate
 ```
 
 ## 有界驗證與量測
+
+`evidence-view.tests.ps1` 以合成雙 worktree／OpenCode＋Codex 續行、git／gh 公開邊界替身驗證 canonical、查詢次數、worktree PR 隔離、錯誤缺口、ERP 欄位與 default 相容。`-Case reuse -BaselineRevision 9ff9580 -MeasureOnly -EvidenceRoot '<external-temp>'` 可對同一 fixture 量測基線，移除 baseline／MeasureOnly 即測目前版。保留 sanitized `collection.json`、`query-counts.json`；`-Case formatter` 保留合成 input／ERP view／UTF-8 bytes。界限與 mutation 對應見 [`tests/evidence/README.md`](tests/evidence/README.md)；沒有真實 GitHub、個人歷史或 latency 結論。
 
 `bounded-collection.tests.ps1` 只建立並清除本次合成來源，隔離 OpenCode、Git／gh；驗證額度 binding、日期飢餓、多日／負時區、巨大日期跨度、entries／files／bytes、ancestor／junction、UTC／時區含頭尾、選中父子／續行去重與狀態。串流案例涵蓋 UTF8 跨 chunk、BOM／CRLF、64 KiB exact／超限、超長行 EOF／丟棄期間達 cap、完整壞 UTF8／JSON、真正 EOF 與 capped tail。增加 2,000 範圍外壞檔，選中 4 檔的訪問與 bytes 保持不變。
 

@@ -282,6 +282,36 @@
       "prompt": "官方RD options已核對且確認此工作沒有適用立案書；沒有user指定code。append existing 有一筆RD detail mandateCharterId=null，另有RD charter82；新工作需分成兩筆同樣無適用立案書的RD rows。另一變體新RD選用82且local expectedMandateCharterId=82。",
       "expected_output": "兩筆null的新row均明確帶local expectedMandateCharterId=null，detail可省略mandateCharterId或填null，不帶任何ID；existing null與新null不構成同立案書唯一性衝突。另一變體新舊非null ID82仍依既有規則先詢問衝突。",
       "expectations": ["確認無適用才使用null", "missing key不等於null", "detail省略/null且無ID", "existing/new多筆null不觸發同charter衝突", "相同非null ID仍按既有規則詢問"]
+    },
+    {
+      "id": 48,
+      "prompt": "準備2026-10-14 ERP預覽，尚未授權提交。可靠collector含兩repo：acme/widget完成日期解析，PR #31 MERGED、issue #44 CLOSED；acme/tools補上驗證案例，PR #32 OPEN，尚未合併。兩者當日官方唯一適用RD立案書均為{code:RC-81,id:81,label:工具研發}，不得拆成兩條相同charter的列。出勤無假、existing空、總數8h，其餘契約和選項完整。session標題另寫『全部上線完成』，但無上線證據。",
+      "expected_output": "同一RD81合成一列8h，detail.description本身用acme/widget及acme/tools作群組行，各組以'- '短行純文字列出有證據成果、PR/issue編號及核實狀態；PR32保留OPEN/待合併，不推論上線。用同一plan --preview列完整欄位全文、RD81與官方label、todos待合併、請假0及日合計8，再等確認；不是只讓preview外框條列。",
+      "expectations": ["檢查plan及實際dry-run payload的description含兩repo群組與短行條列", "保留PR31 MERGED、issue44 CLOSED及PR32 OPEN/待合併", "只有一筆RD81且local selection一致", "description無Markdown標題/表格/HTML且不以session標題宣稱上線", "同plan完整preview後零write"]
+    },
+    {
+      "id": 49,
+      "prompt": "User已確認同plan產生的append預覽：existing COMPANY4h保留，新RD81 4h、原description『acme/tools\\n- 補上驗證；PR #32 OPEN，待合併。』、todos『等待合併』，總8h。接著可靠新證據PR32已MERGED，agent準備改description及todos。變體是只改todos、只改mode為replace、只改參照或日期、或fresh snapshot改變；其餘未變。User尚未授權新意圖。",
+      "expected_output": "各變體均用改後plan重新產生完整preview並等待相應正向授權，明示新差異，不能沿舊授權設定authorized或偷改snapshot。全文、todos、mode、日期、歸屬改變使intent不同；preview需列分類、三種參照、subject、description、todos、各項hours、請假、existing/new及日合計。append說明保留既有；replace明示全日範圍並保留必要覆蓋確認。",
+      "expectations": ["未授權新意圖前零businesswrite", "從同一plan產生preview與dry-run payload而非手寫另一套縮略稿", "description或todos單獨變更也重preview/授權", "mode/date/reference/snapshot各變體不沿舊授權", "append既有保留及replace全日範圍完整可見"]
+    },
+    {
+      "id": 50,
+      "prompt": "已有原送出append plan：原existing id80 COMPANY4h全文固定、新RD81 4h；先前固定日期2026-10-14。外部erp已取得完整官方AjaxResponse.data，置於合成私有fixture。變體A所有欄位相符但新舊列順序反轉；B新列todos錯誤；C既有id80的description被改；D分類/參照/主旨/工時錯、缺description/null欄位、缺列、額外列、重複id或日期錯；E單次空讀回。所有資料已提供，不需查API，網路及credential存取皆攔截。",
+      "expected_output": "以原送出plan和已取得的官方data執行本地--readback，不把寫後context覆蓋原existing baseline。A matched，可在完整來源核實後報相符；B/C/D mismatch或格式缺口，指出新/既有scope及差異欄位；E待確認，不認定未生效或retry安全。comparator零API/credential access，不因列順序不同誤報，不把HTTP200或POST response當讀回。",
+      "expectations": ["同原plan比較且append既有ID與全文未變", "A列排序無關仍matched", "B核todos、C核舊列description、D日期/參照/分類/全文/hours及缺額外列均不漏", "helper零network/credential且不接POST結果代替官方data", "mismatch/empty不宣稱完成或授權重試"]
+    },
+    {
+      "id": 51,
+      "prompt": "User已看過同plan的完整ERP預覽。日期、工時、RD81官方label及模組選項已釐清，snapshot未變，現在正向確認提交原全文。可靠來源無新活動，已有collector輸出，沒有新缺口。使用者只需知道本輪結果；write及讀回均用攔截的合成fixture。",
+      "expected_output": "沿用既有準備與全文，不重問已回答欄位、不重跑collector或連發Checking。必要fresh context/options及授權snapshot核對仍做；執行一次既定scoped write後以完整官方data本地讀回比較，回報日期/模式及已核對結果。若fixture改為snapshot/options失效仍停寫並只問必要新選擇，低噪音不省guard。",
+      "expectations": ["不重複Checking或流程敘述", "只問必要新缺口且不重問已釐清選擇", "freshcontext/options及snapshot/authorization guards保留", "零重collect、相同已授權全文僅一次write", "完整讀回相符才報已填寫"]
+    },
+    {
+      "id": 52,
+      "prompt": "User明確要求保留合法非bullet描述，已授權原全文description『第一段\\r\\n\\r\\n  保留縮排』與todos『原後續』。其餘欄位、當日官方參照、fresh context及授權皆完整，欄位長度合法。測試只能用合成transport與官方讀回fixture。",
+      "expected_output": "helper接受合法非bullet字串，preview、dry-run、送出及readback逐字保持原description的換行/空白及todos，不自動補repo標題或bullet。預設撰寫規則不變成schema拒絕或送出前排版器；若要改成預設條列，須先重preview並取得新授權。",
+      "expectations": ["合法非bullet不拒絕", "已授權全文含CRLF/空白及todos原封保留", "helper不自動排版或截斷", "改文案仍須新授權", "僅合成資料且零真ERP"]
     }
   ]
 }

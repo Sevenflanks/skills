@@ -1,0 +1,322 @@
+{
+  "meta": {
+    "sources": {
+      "codex": {
+        "readStatus": "partial",
+        "coverage": {
+          "limitHits": [
+            "fileBytes"
+          ],
+          "complete": false,
+          "unvisitedDays": [
+            "2026/05/28"
+          ],
+          "stopReason": "totalBytes"
+        }
+      },
+      "opencode": {
+        "readStatus": "success"
+      }
+    },
+    "collectionStatus": "partial",
+    "canGenerateLog": true
+  },
+  "warnings": [
+    "合成 coverage 缺口"
+  ],
+  "errors": [
+    "合成可保留錯誤"
+  ],
+  "repos": [
+    {
+      "warnings": [
+        "合成 repo 缺口"
+      ],
+      "commits": [
+        {
+          "author": "fixture-user",
+          "issuesMentioned": [
+            "#101"
+          ],
+          "subject": "合成提交 1",
+          "refs": "origin/feature/a",
+          "authorEmail": "fixture@example.invalid",
+          "date": "2026-05-29T02:00:00Z",
+          "branchHints": [
+            "feature/a"
+          ],
+          "short": "hash1",
+          "hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1"
+        },
+        {
+          "author": "fixture-user",
+          "issuesMentioned": [
+            "#101"
+          ],
+          "subject": "合成提交 2",
+          "refs": "origin/feature/a",
+          "authorEmail": "fixture@example.invalid",
+          "date": "2026-05-29T02:00:00Z",
+          "branchHints": [
+            "feature/a"
+          ],
+          "short": "hash2",
+          "hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa2"
+        },
+        {
+          "author": "fixture-user",
+          "issuesMentioned": [
+            "#101"
+          ],
+          "subject": "合成提交 3",
+          "refs": "origin/feature/a",
+          "authorEmail": "fixture@example.invalid",
+          "date": "2026-05-29T02:00:00Z",
+          "branchHints": [
+            "feature/a"
+          ],
+          "short": "hash3",
+          "hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa3"
+        },
+        {
+          "author": "fixture-user",
+          "issuesMentioned": [
+            "#101"
+          ],
+          "subject": "合成提交 4",
+          "refs": "origin/feature/a",
+          "authorEmail": "fixture@example.invalid",
+          "date": "2026-05-29T02:00:00Z",
+          "branchHints": [
+            "feature/a"
+          ],
+          "short": "hash4",
+          "hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa4"
+        },
+        {
+          "author": "fixture-user",
+          "issuesMentioned": [
+            "#101"
+          ],
+          "subject": "合成提交 5",
+          "refs": "origin/feature/a",
+          "authorEmail": "fixture@example.invalid",
+          "date": "2026-05-29T02:00:00Z",
+          "branchHints": [
+            "feature/a"
+          ],
+          "short": "hash5",
+          "hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa5"
+        },
+        {
+          "author": "fixture-user",
+          "issuesMentioned": [
+            "#101"
+          ],
+          "subject": "合成提交 6",
+          "refs": "origin/feature/a",
+          "authorEmail": "fixture@example.invalid",
+          "date": "2026-05-29T02:00:00Z",
+          "branchHints": [
+            "feature/a"
+          ],
+          "short": "hash6",
+          "hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa6"
+        },
+        {
+          "author": "fixture-user",
+          "issuesMentioned": [
+            "#101"
+          ],
+          "subject": "合成提交 7",
+          "refs": "origin/feature/a",
+          "authorEmail": "fixture@example.invalid",
+          "date": "2026-05-29T02:00:00Z",
+          "branchHints": [
+            "feature/a"
+          ],
+          "short": "hash7",
+          "hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa7"
+        },
+        {
+          "author": "fixture-user",
+          "issuesMentioned": [
+            "#101"
+          ],
+          "subject": "合成提交 8",
+          "refs": "origin/feature/a",
+          "authorEmail": "fixture@example.invalid",
+          "date": "2026-05-29T02:00:00Z",
+          "branchHints": [
+            "feature/a"
+          ],
+          "short": "hash8",
+          "hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa8"
+        },
+        {
+          "author": "fixture-user",
+          "issuesMentioned": [
+            "#101"
+          ],
+          "subject": "合成提交 9",
+          "refs": "origin/feature/a",
+          "authorEmail": "fixture@example.invalid",
+          "date": "2026-05-29T02:00:00Z",
+          "branchHints": [
+            "feature/a"
+          ],
+          "short": "hash9",
+          "hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa9"
+        },
+        {
+          "author": "fixture-user",
+          "issuesMentioned": [
+            "#101"
+          ],
+          "subject": "合成提交 10",
+          "refs": "origin/feature/a",
+          "authorEmail": "fixture@example.invalid",
+          "date": "2026-05-29T02:00:00Z",
+          "branchHints": [
+            "feature/a"
+          ],
+          "short": "hash10",
+          "hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa0"
+        }
+      ],
+      "githubRepo": "fixture/shared",
+      "path": "C:\\synthetic\\repo-a",
+      "source": [
+        "session",
+        "codex"
+      ],
+      "prs": [
+        {
+          "state": "MERGED",
+          "number": 1,
+          "mergedAt": "2026-05-29T04:00:00Z",
+          "closingIssuesReferences": [
+            {
+              "number": 101
+            }
+          ],
+          "headRefName": "feature/a",
+          "title": "合成修正",
+          "isDraft": false
+        },
+        {
+          "state": "OPEN",
+          "number": 2,
+          "mergedAt": null,
+          "closingIssuesReferences": [],
+          "headRefName": "feature/b",
+          "title": "合成續作",
+          "isDraft": true
+        },
+        {
+          "state": "CLOSED",
+          "number": 3,
+          "mergedAt": null,
+          "closingIssuesReferences": [],
+          "headRefName": null,
+          "title": "合成取消",
+          "isDraft": null
+        }
+      ],
+      "name": "synthetic-a",
+      "sessionEvidence": [
+        {
+          "timeUpdated": 1780016400000,
+          "source": "session",
+          "agent": "opencode",
+          "title": "合成工作 1",
+          "timeCreated": 1780012800000,
+          "sessionId": "s1"
+        },
+        {
+          "timeUpdated": 1780016400000,
+          "source": "session",
+          "agent": "opencode",
+          "title": "合成工作 2",
+          "timeCreated": 1780012800000,
+          "sessionId": "s2"
+        },
+        {
+          "timeUpdated": 1780016400000,
+          "source": "session",
+          "agent": "opencode",
+          "title": "合成工作 3",
+          "timeCreated": 1780012800000,
+          "sessionId": "s3"
+        },
+        {
+          "timeUpdated": 1780016400000,
+          "source": "session",
+          "agent": "opencode",
+          "title": "合成工作 4",
+          "timeCreated": 1780012800000,
+          "sessionId": "s4"
+        },
+        {
+          "timeUpdated": 1780016400000,
+          "source": "session",
+          "agent": "opencode",
+          "title": "合成工作 5",
+          "timeCreated": 1780012800000,
+          "sessionId": "s5"
+        },
+        {
+          "timeUpdated": 1780016400000,
+          "source": "session",
+          "agent": "opencode",
+          "title": "合成工作 6",
+          "timeCreated": 1780012800000,
+          "sessionId": "s6"
+        },
+        {
+          "source": "codex",
+          "files": [
+            "synthetic-parent.jsonl",
+            "synthetic-resume.jsonl"
+          ],
+          "timestamps": [
+            "2026-05-29T02:00:00Z",
+            "2026-05-29T03:00:00Z"
+          ],
+          "sessionId": "parent",
+          "agent": "codex",
+          "sessionIds": [
+            "parent",
+            "child"
+          ],
+          "role": "user",
+          "title": "合成續行"
+        }
+      ],
+      "isGitRepo": true
+    },
+    {
+      "source": [
+        "session"
+      ],
+      "isGitRepo": true,
+      "warnings": [
+        "session-only"
+      ],
+      "prs": [],
+      "githubRepo": "fixture/shared",
+      "name": "synthetic-b",
+      "commits": [],
+      "sessionEvidence": [
+        {
+          "timeUpdated": 1780016400000,
+          "source": "session",
+          "agent": "opencode",
+          "title": "合成工作 1",
+          "timeCreated": 1780012800000,
+          "sessionId": "s1"
+        }
+      ]
+    }
+  ]
+}

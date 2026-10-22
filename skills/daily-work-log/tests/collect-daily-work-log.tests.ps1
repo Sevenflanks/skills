@@ -101,19 +101,13 @@ if ($env:DAILY_WORK_LOG_GH_LOG_FILE) {
   Add-Content -LiteralPath $env:DAILY_WORK_LOG_GH_LOG_FILE -Value ($Arguments -join ' ') -Encoding utf8
 }
 
-if ($Arguments.Count -ge 4 -and $Arguments[0] -eq 'api' -and $Arguments[1] -eq 'user' -and $Arguments[2] -eq '--jq') {
+if ($Arguments.Count -ge 2 -and $Arguments[0] -eq 'api' -and $Arguments[1] -eq 'user') {
   if ($env:DAILY_WORK_LOG_FAKE_GH_USER_MODE -eq 'fail') {
     [Console]::Error.WriteLine('fake gh user unavailable')
     exit 1
   }
-  if ($Arguments[3] -eq '.login') {
-    if ($env:DAILY_WORK_LOG_FAKE_GH_LOGIN) { $env:DAILY_WORK_LOG_FAKE_GH_LOGIN } else { 'test-user' }
-    exit 0
-  }
-  if ($Arguments[3] -eq '.name') {
-    if ($env:DAILY_WORK_LOG_FAKE_GH_NAME) { $env:DAILY_WORK_LOG_FAKE_GH_NAME } else { 'Test User' }
-    exit 0
-  }
+  @{login = $(if ($env:DAILY_WORK_LOG_FAKE_GH_LOGIN) { $env:DAILY_WORK_LOG_FAKE_GH_LOGIN } else { 'test-user' }); name = $(if ($env:DAILY_WORK_LOG_FAKE_GH_NAME) { $env:DAILY_WORK_LOG_FAKE_GH_NAME } else { 'Test User' })} | ConvertTo-Json -Compress
+  exit 0
 }
 
 if ($Arguments.Count -ge 2 -and $Arguments[0] -eq 'api' -and $Arguments[1] -eq 'graphql') {
@@ -947,7 +941,8 @@ Describe 'collect-daily-work-log session discovery' {
 
       ($prNumbers -contains 1) | Should Be $true
       ($prNumbers -contains 2) | Should Be $false
-      ($prNumbers -contains 3) | Should Be $true
+      # 同作者的當日 PR commit 不屬此 worktree 的 hash／branch，不能混入。
+      ($prNumbers -contains 3) | Should Be $false
       ($prNumbers -contains 4) | Should Be $false
     }
     finally {
