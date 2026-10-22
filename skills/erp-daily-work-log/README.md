@@ -23,6 +23,8 @@
 
 Python standard library，無 production dependency；CI 使用 Python 3.12。helper 預設 dry-run，正式寫入需 agent 理解當次授權及官方契約。日期、payload、外部 access 與操作限制見 [`helper.md`](references/helper.md)。resolved base URL 沿用外部 ERP access，不猜部署，API key 不進 CLI 或輸出；個人資料 plan 留在 repo 外，用後清理。
 
+實際 `description` 預設採 repo 群組行＋短行純文字條列，保留 PR／issue 與核實交付狀態；同一 RD 立案書合併後仍保留各 repo。以同一 plan 的 `--preview` 產生完整欄位、影響範圍及工時合計；由外部 `erp` 取得完整官方 data 後，`--readback` 純本地比對原 plan 的新舊列、全文與 todos，不依列排序。兩者不讀 credential／呼叫 API；helper 保留合法非條列原文，不改寫已授權文案。命令及限制見 [`helper.md`](references/helper.md#本地-preview-與-readback)。
+
 從 repo 根執行：
 
 ```powershell
@@ -35,6 +37,6 @@ npm run validate
 ## 維護入口
 
 - `SKILL.md`：按操作分流的流程及完成條件。
-- `scripts/daily_report.py`：正式 context／detail、append／replace、intent／retry 與 scoped transport。
+- `scripts/daily_report.py`：正式 context／detail、完整 preview／本地 readback、append／replace、intent／retry 與 scoped transport。
 - `scripts/project_repo_mapping.py`：獨立日期／shape 驗證與 scoped create／update，維護權限及完整 list 核對由 agent 執行。
 - [`tests/README.md`](tests/README.md)：測試 seam、red→green 與 mutation list；`references/`：按分支載入的 plan／授權／偏好契約。

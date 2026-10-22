@@ -4,7 +4,7 @@ description: 使用者要求將每日工作證據填寫、補新增或替換到 
 license: MIT
 metadata:
   author: sevenflankse
-  version: 0.3.0
+  version: 0.4.0
 ---
 
 # ERP Daily Work Log
@@ -45,7 +45,9 @@ metadata:
 2. 預告可用來源、略過理由及缺口，再以相同參數 collect；兩來源可用均納入。遵守 DB fallback、Codex 有界日期分區，不擴大／重跑湊證據。
 3. 保留全部來源及 coverage 停止條件：無來源、讀取全失敗、無活動、`canGenerateLog=false` 停止；`gh` 不可用／未認證預設停止，只有使用者強烈要求降級才揭露缺口繼續。partial 如實揭露。
 
-沿用上游依 repo 分組的條列摘要，按證據合併主題與交付狀態，不把 session 標題當完成。每組以具體工作成果開頭，使用短句、精簡易掃讀；完整保留支撐所列成果的 PR／issue 編號及必要交付狀態、實際缺口與待決事項，省略流程重述與低訊號細節。Model 在**已確認工作總預算內自行提出合理主題分配**，不逐項問分時，不把 elapsed、commit 數或比例當 actual 測量。主旨描述工作範圍，內容具體成果在前、全部相關 PR 編號句尾；ERP 使用短行純文字。
+沿用上游依 repo 分組的條列摘要，按證據合併主題與交付狀態，不把 session 標題當完成。**實際寫入的 `detail.description` 本身**以 repo 名稱作群組行、`- ` 開頭的短行純文字列出具體成果；保留相關 PR／issue 編號、已核實的 OPEN／MERGED／CLOSED／待交付狀態、實際缺口與待決事項。同一 RD 立案書合成一列時，description 內仍保留各 repo 群組；preview 外框的條列不能取代欄位內的條列。主旨描述工作範圍，內容成果在前、相關編號句尾；不放 Markdown 標題、表格或 HTML，省略流程重述與低訊號細節。超出欄位長度時先精簡再完整預覽，不能送出前截斷。已授權原文保持不變；使用者明確採用合法非條列描述時照原文送出，helper 不做排版改寫。格式示例見 [helper.md](references/helper.md#description-欄位範例)。
+
+Model 在**已確認工作總預算內自行提出合理主題分配**，不逐項問分時，不把 elapsed、commit 數或比例當 actual 測量。
 
 完成條件：可靠證據與缺口可辨識；不足依上游停止。`output_only` 只輸出證據摘要及未知工時／參照缺口，請使用者到 ERP 處理後完成，不填未知時數；其他路徑續行。
 
@@ -61,10 +63,10 @@ metadata:
 
 ## 5. 預覽、送出與讀回
 
-- 一次列將提交的**完整欄位全文**：操作、日期、分類／project／module／立案書（含 RD 選定 ID 或已核實無適用的 null）、主旨、內容、todos、各項時數、請假與合計；append 列 existing 保留、新增及日合計，replace 列全日替換範圍。取得正向授權後才提交，不先給縮略版再送不同文字。只有**當次明確直接提交**才略 preview；否定、引文、歷史 log、技能說明及含糊「先看看」皆不授權。日期／內容／歸屬／snapshot 改變須重 preview／確認相應意圖。
+- 以同一份私有 plan 的 `--preview` 產生將提交的**完整欄位全文**：操作、日期、分類／project／module／立案書（含 RD 選定 ID 或已核實無適用的 null）、主旨、description、todos、各項時數、請假與合計；append 列 existing 保留、新增及日合計，replace 列全日替換範圍。參照顯示已核對的官方 label／ID；直接沿用 helper 全文，不另寫一套摘要當授權稿。取得正向授權後才提交，不先給縮略版再送不同文字。只有**當次明確直接提交**才略 preview；否定、引文、歷史 log、技能說明及含糊「先看看」皆不授權。日期／內容（含 todos）／歸屬／mode／snapshot 改變須重 preview／確認相應意圖，送出前核對與原 dry-run intent 相同。
 - 寫前 fresh GET 同日 context、必要 project／module／RD options，重核日期、假時、工時、唯一性與 preview snapshot；已知全天假 stop，unknown／衝突先釐清。僅 replace 重核期限；append 不套 replace deadline。選項失效重新列候選問，不能默換 ID 或 snapshot。
 - 依 [helper.md](references/helper.md) 在 repo 外產生私有 task-local plan，context 放完整官方 `AjaxResponse.data`，保留預覽的 `expectedSnapshot`，先 dry-run。append 明填 `mode=append`、只送無 id／modifiedTime 的新 detail；POST body **不含 expectedSnapshot**，本地 snapshot 比對只保護 preview 意圖，不是 server CAS，也不保證寫入當下仍空日。replace 才將 snapshot 送 `/replace` 做全日原子替換。僅契約與當次授權完成才用 `--authorized --contract-verified`，replace existing 另需 `--overwrite-confirmed`。
-- 沿用外部 access 的 config root 與 resolved base URL，API key 不進 CLI；本地配置／驗證失敗是 `not_sent`，修正後可續作。傳輸後任何 2xx、應用拒絕、500、timeout 都先用 `erp` 完整讀回同日日誌，逐條核對日期、分類、project／module／立案書、主旨、內容與工時；2xx 本身不代表完成。
+- 沿用外部 access 的 config root 與 resolved base URL，API key 不進 CLI；本地配置／驗證失敗是 `not_sent`，修正後可續作。傳輸後任何 2xx、應用拒絕、500、timeout 都先用 `erp` 完整讀回同日日誌，再依 [helper.md](references/helper.md#本地-preview-與-readback) 以原送出 plan＋官方 data 執行 `--readback`：核對日期、分類、project／module／立案書、主旨、description 全文、todos 及工時；append 還核對既有列 ID 與原業務內容未變。列順序不影響比對。差異／缺欄位先回報待確認；2xx 本身不代表完成。
 - 已生效就 stop。**可信證據確認未生效**且日期、全文、歸屬、context snapshot 與原 dry-run intent 相同時，原授權最多涵蓋一次受控 retry；按 helper 的 `plan.retry` 帶證據、原 intent、沿用 `retriesUsed`，每次 execute 最多一個 request。unknown／timeout／單次空讀回只標待讀回，不重送；空白不證明在途請求永不提交。內容變更或額度用完先重新 preview／授權，不能重設 count 沿用舊授權。
 
 完成條件：完整讀回與提交內容一致才說「已填寫」；缺口如實標待確認。mapping／report 分別回報，已存 mapping 而 report 失敗則保留、不宣稱跨端點 atomic。清理私有暫存 plan，不把 ERP 個資存入 repo，不輸出 secrets、原始反射 error body 或內部路徑。

@@ -3,6 +3,7 @@
 from decimal import Decimal, InvalidOperation
 from datetime import date, datetime, time, timedelta
 import argparse
+import copy
 import hashlib
 import http.client
 import json
@@ -389,6 +390,117 @@ def execute(plan, authorized=False, overwrite=False, contract_verified=False, co
     return result
 
 
+DETAIL_FIELDS = ('reportType', 'projectId', 'projectModuleId', 'mandateCharterId',
+                 'subject', 'description', 'todos', 'hours')
+
+
+def preview(plan):
+    """同一 plan 產生全文與影響範圍；保持已授權文案，不負責生成條列。"""
+    result = execute(plan)
+    if result['action'] != 'dry_run':
+        return result
+    mode = plan.get('mode', 'replace')
+    existing = plan['context']['details']
+    details = result['payload']['details']
+    preserved = existing if mode == 'append' else []
+    combined = preserved + details
+    work = sum((hours(row['hours']) for row in combined if row['reportType'] != 'LEAVE'), Decimal(0))
+    leave = sum((hours(row['hours']) for row in combined if row['reportType'] == 'LEAVE'), Decimal(0))
+    return copy.deepcopy({
+        'action': 'preview', 'mode': mode, 'reportDate': plan['reportDate'],
+        'expectedSnapshot': plan['context']['expectedSnapshot'], 'intent': result['intent'],
+        'details': [{field: row.get(field) for field in DETAIL_FIELDS} for row in details],
+        'impact': {'scope': 'append_new_only' if mode == 'append' else 'replace_entire_day',
+                   'preserved': preserved, 'replaced': existing if mode == 'replace' else []},
+        'hours': {'existing': float(sum((hours(row['hours']) for row in preserved), Decimal(0))),
+                  'new': float(sum((hours(row['hours']) for row in details), Decimal(0))),
+                  'work': float(work), 'leave': float(leave), 'total': float(work + leave)},
+    })
+
+
+def _field_equal(field, expected, actual):
+    if field == 'hours':
+        try:
+            return hours(expected) == hours(actual)
+        except ReportError:
+            return False
+    return type(expected) is type(actual) and expected == actual
+
+
+def _detail_differences(expected, actual, scope):
+    differences = []
+    for field in DETAIL_FIELDS:
+        if field not in actual or not _field_equal(field, expected.get(field), actual[field]):
+            differences.append({'scope': scope, 'field': field, 'expected': expected.get(field),
+                                'actual': actual.get(field), 'missing': field not in actual})
+    return differences
+
+
+def compare_readback(plan, data):
+    """只比較原送出 plan 與外部 erp 取得的完整 data，不查 API 或推論可否 retry。"""
+    prepared = prepare(plan)
+    if prepared['action'] != 'ready':
+        return prepared
+    if (not isinstance(data, dict) or not isinstance(data.get('details'), list)
+            or any(not isinstance(row, dict) for row in data['details'])):
+        raise ReportError('invalid_readback_data')
+    differences = []
+    if data.get('reportDate') != plan['reportDate']:
+        differences.append({'scope': 'day', 'field': 'reportDate', 'expected': plan['reportDate'],
+                            'actual': data.get('reportDate'), 'missing': 'reportDate' not in data})
+    remaining = list(data['details'])
+    readback_ids = set()
+    for actual in remaining:
+        identity = actual.get('id')
+        if not valid_id(identity) or identity in readback_ids:
+            differences.append({'scope': 'readback', 'field': 'id', 'expected': 'unique Long',
+                                'actual': identity, 'missing': 'id' not in actual})
+        else:
+            readback_ids.add(identity)
+        if 'reportDate' in actual and actual['reportDate'] != plan['reportDate']:
+            differences.append({'scope': 'readback', 'field': 'reportDate', 'expected': plan['reportDate'],
+                                'actual': actual['reportDate'], 'missing': False})
+    preserved = plan['context']['details'] if plan.get('mode', 'replace') == 'append' else []
+    seen = set()
+    for expected in preserved:
+        identity = expected.get('id')
+        if not valid_id(identity) or identity in seen or not set(DETAIL_FIELDS) <= set(expected):
+            raise ReportError('incomplete_existing_readback_baseline')
+        seen.add(identity)
+        scope = 'existing:' + str(identity)
+        # 既有列須保留同一 id；不能拿內容相同的新列冒充保留，也不能讓新列先消耗舊列。
+        found = next((i for i, actual in enumerate(remaining)
+                      if type(actual.get('id')) is int and actual['id'] == identity), None)
+        if found is None:
+            differences.append({'scope': scope, 'field': 'detail', 'expected': expected,
+                                'actual': None, 'missing': True})
+        else:
+            differences.extend(_detail_differences(expected, remaining.pop(found), scope))
+    # 先配對全文相符列，再替差異列選最接近的診斷對象；列順序不是 ERP 契約。
+    pending = []
+    for expected in prepared['payload']['details']:
+        found = next((i for i, actual in enumerate(remaining)
+                      if not _detail_differences(expected, actual, 'new')), None)
+        if found is None:
+            pending.append(expected)
+        else:
+            remaining.pop(found)
+    for expected in pending:
+        if not remaining:
+            differences.append({'scope': 'new', 'field': 'detail', 'expected': expected,
+                                'actual': None, 'missing': True})
+            continue
+        closest = min(range(len(remaining)),
+                      key=lambda i: len(_detail_differences(expected, remaining[i], 'new')))
+        differences.extend(_detail_differences(expected, remaining.pop(closest), 'new'))
+    for actual in remaining:
+        differences.append({'scope': 'unexpected', 'field': 'detail', 'expected': None,
+                            'actual': actual, 'missing': False})
+    return {'action': 'mismatch' if differences else 'matched', 'mode': plan.get('mode', 'replace'),
+            'reportDate': plan['reportDate'], 'preservedCount': len(preserved),
+            'newCount': len(prepared['payload']['details']), 'differences': differences}
+
+
 class SafeParser(argparse.ArgumentParser):
     def error(self, message):
         # 誤傳不支援的 credential 參數也不反射整條 argv。
@@ -398,6 +510,9 @@ class SafeParser(argparse.ArgumentParser):
 def main():
     parser = SafeParser(description='預設 dry-run；plan.mode 為 append 或 replace（預設），僅寫入已確認的本人單日日誌。')
     parser.add_argument('--plan', required=True)
+    local = parser.add_mutually_exclusive_group()
+    local.add_argument('--preview', action='store_true', help='只從同一 plan 輸出全文與影響範圍')
+    local.add_argument('--readback', help='只比較原 plan 與已取得的官方 AjaxResponse.data JSON 檔')
     parser.add_argument('--authorized', action='store_true')
     parser.add_argument('--overwrite-confirmed', action='store_true')
     parser.add_argument('--contract-verified', action='store_true')
@@ -407,10 +522,17 @@ def main():
     args = parser.parse_args()
     try:
         plan = json.loads(Path(args.plan).read_text(encoding='utf-8'))
-        result = execute(plan, args.authorized, args.overwrite_confirmed, args.contract_verified,
-                         args.config_root, args.config_file, args.base_url)
+        if args.preview or args.readback is not None:
+            if any((args.authorized, args.overwrite_confirmed, args.contract_verified,
+                    args.config_root is not None, args.config_file is not None, args.base_url is not None)):
+                raise ReportError('local_mode_conflicting_flags')
+            result = (preview(plan) if args.preview else
+                      compare_readback(plan, json.loads(Path(args.readback).read_text(encoding='utf-8'))))
+        else:
+            result = execute(plan, args.authorized, args.overwrite_confirmed, args.contract_verified,
+                             args.config_root, args.config_file, args.base_url)
         print(json.dumps(result, ensure_ascii=False, allow_nan=False))
-        return 0
+        return 1 if result['action'] == 'mismatch' else 0
     except ReportError as error:
         reason = str(error)
         result = {'ok': False, 'reason': reason,

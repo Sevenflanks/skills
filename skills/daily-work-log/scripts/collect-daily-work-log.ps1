@@ -25,6 +25,16 @@ $script:NoisyDirectoryNames = [System.Collections.Generic.HashSet[string]]::new(
 )
 $script:MaxGitMarkerDepth = 6
 $script:MaxGitMarkers = 5000
+# 僅存本次 collection 的遠端查詢，不快取 worktree 關聯或跨任務歷史。
+$script:GhQueryCache = @{}
+
+function Invoke-GhCollectionQuery {
+  param([string]$Key, [string[]]$Arguments, [string]$WorkingDirectory)
+  if (-not $script:GhQueryCache.ContainsKey($Key)) {
+    $script:GhQueryCache[$Key] = Invoke-Native -FilePath 'gh' -Arguments $Arguments -WorkingDirectory $WorkingDirectory
+  }
+  return $script:GhQueryCache[$Key]
+}
 
 function Add-WarningMessage {
   param(
@@ -1582,7 +1592,8 @@ function Parse-GithubRepo {
     return $null
   }
 
-  $match = [regex]::Match($RemoteUrl, 'github\.com[:/](.+?)/(.+?)(?:\.git)?$')
+  # 只接受確定的 GitHub host 與兩段 identity；資料夾名稱或相似 host 不是映射證據。
+  $match = [regex]::Match($RemoteUrl.Trim(), '^(?:https://github\.com/|ssh://git@github\.com/|git@github\.com:)([A-Za-z0-9-]+)/([A-Za-z0-9_.-]+?)(?:\.git)?/?$', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
   if ($match.Success) {
     return ('{0}/{1}' -f $match.Groups[1].Value, $match.Groups[2].Value)
   }
@@ -1611,10 +1622,10 @@ function Get-NativeStdOutOrNull {
 }
 
 function Resolve-CurrentIdentity {
-  param([string]$WorkingDirectory)
+  param([string]$WorkingDirectory, [object]$Viewer)
 
-  $ghLogin = Get-NativeStdOutOrNull -FilePath 'gh' -Arguments @('api', 'user', '--jq', '.login') -WorkingDirectory $WorkingDirectory
-  $ghName = Get-NativeStdOutOrNull -FilePath 'gh' -Arguments @('api', 'user', '--jq', '.name') -WorkingDirectory $WorkingDirectory
+  $ghLogin = Get-ObjectPropertyValue -Object $Viewer -Name 'login'
+  $ghName = Get-ObjectPropertyValue -Object $Viewer -Name 'name'
   $gitName = Get-NativeStdOutOrNull -FilePath 'git' -Arguments @('config', '--get', 'user.name') -WorkingDirectory $WorkingDirectory
   $gitEmail = Get-NativeStdOutOrNull -FilePath 'git' -Arguments @('config', '--get', 'user.email') -WorkingDirectory $WorkingDirectory
 
@@ -1799,7 +1810,7 @@ function Get-PrDetails {
     'pr', 'view', $PrNumber.ToString(), '--repo', $GithubRepo,
     '--json', 'number,commits'
   )
-  $result = Invoke-Native -FilePath 'gh' -Arguments $args -WorkingDirectory $RepositoryPath
+  $result = Invoke-GhCollectionQuery -Key ("detail:{0}:{1}" -f $GithubRepo, $PrNumber) -Arguments $args -WorkingDirectory $RepositoryPath
   if ($result.ExitCode -ne 0 -or [string]::IsNullOrWhiteSpace($result.StdOut)) {
     Add-WarningMessage -List $Warnings -Message ("gh pr view failed for {0}#{1}: {2}" -f $GithubRepo, $PrNumber, $result.StdErr)
     return $null
@@ -1818,10 +1829,7 @@ function Test-PrMatchesCommits {
   param(
     [object[]]$Commits,
     [object]$Pr,
-    [object]$PrDetails,
-    [object]$CurrentIdentity,
-    [datetimeoffset]$FromRange,
-    [datetimeoffset]$ToRange
+    [object]$PrDetails
   )
 
   $commitHashes = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
@@ -1854,32 +1862,7 @@ function Test-PrMatchesCommits {
     }
   }
 
-  $prAuthor = if ($Pr.author) { [string]$Pr.author.login } else { $null }
-  if (-not [string]::IsNullOrWhiteSpace($prAuthor) -and
-      $CurrentIdentity -and
-      -not [string]::IsNullOrWhiteSpace([string]$CurrentIdentity.ghLogin) -and
-      $prAuthor -ieq [string]$CurrentIdentity.ghLogin) {
-    foreach ($prCommit in @($PrDetails.commits)) {
-      foreach ($dateProperty in @('committedDate', 'authoredDate')) {
-        $rawDate = Get-ObjectPropertyValue -Object $prCommit -Name $dateProperty
-        if ($null -eq $rawDate -or [string]::IsNullOrWhiteSpace([string]$rawDate)) {
-          continue
-        }
-
-        try {
-          $commitDate = [datetimeoffset]::Parse([string]$rawDate)
-        }
-        catch {
-          continue
-        }
-
-        if ($commitDate -ge $FromRange -and $commitDate -le $ToRange) {
-          return $true
-        }
-      }
-    }
-  }
-
+  # 同作者／當日更新只代表候選；沒有此 worktree 的 hash／branch 證據會混入其他工作。
   return $false
 }
 
@@ -1890,7 +1873,6 @@ function Get-GhContext {
     [datetimeoffset]$FromRange,
     [datetimeoffset]$ToRange,
     [object[]]$Commits,
-    [object]$CurrentIdentity,
     [System.Collections.Generic.List[string]]$Warnings
   )
 
@@ -1906,7 +1888,7 @@ function Get-GhContext {
     '--search', $search,
     '--json', 'number,title,url,updatedAt,mergedAt,closedAt,state,isDraft,headRefName,baseRefName,closingIssuesReferences,author'
   )
-  $result = Invoke-Native -FilePath 'gh' -Arguments $args -WorkingDirectory $RepositoryPath
+  $result = Invoke-GhCollectionQuery -Key ("list:{0}:{1}" -f $GithubRepo, $search) -Arguments $args -WorkingDirectory $RepositoryPath
   if ($result.ExitCode -ne 0) {
     Add-WarningMessage -List $Warnings -Message ("gh pr list failed for {0}: {1}" -f $GithubRepo, $result.StdErr)
     return $prs
@@ -1936,7 +1918,7 @@ function Get-GhContext {
       continue
     }
 
-    if (-not (Test-PrMatchesCommits -Commits $Commits -Pr $pr -PrDetails $prDetails -CurrentIdentity $CurrentIdentity -FromRange $FromRange -ToRange $ToRange)) {
+    if (-not (Test-PrMatchesCommits -Commits $Commits -Pr $pr -PrDetails $prDetails)) {
       continue
     }
 
@@ -2078,14 +2060,19 @@ try {
 
   $ghAvailable = $false
   $ghViewer = $null
+  $viewer = $null
   $ghCommand = Get-Command gh -ErrorAction SilentlyContinue
   if ($ghCommand) {
-    $viewerResult = Invoke-Native -FilePath 'gh' -Arguments @('api', 'user', '--jq', '.login') -WorkingDirectory $PWD.Path
+    $viewerResult = Invoke-Native -FilePath 'gh' -Arguments @('api', 'user') -WorkingDirectory $PWD.Path
     if ($viewerResult.ExitCode -eq 0 -and -not [string]::IsNullOrWhiteSpace($viewerResult.StdOut)) {
-      $ghAvailable = $true
-      $ghViewer = $viewerResult.StdOut
+      try {
+        $viewer = $viewerResult.StdOut | ConvertFrom-Json
+        $ghViewer = Get-ObjectPropertyValue -Object $viewer -Name 'login'
+        $ghAvailable = -not [string]::IsNullOrWhiteSpace($ghViewer)
+      }
+      catch { $viewer = $null }
     }
-    else {
+    if (-not $ghAvailable) {
       Add-WarningMessage -List $warnings -Message 'GitHub CLI is installed but not authenticated; PR / issue supplement unavailable.'
     }
   }
@@ -2093,7 +2080,7 @@ try {
     Add-WarningMessage -List $warnings -Message 'GitHub CLI not found; PR / issue supplement unavailable.'
   }
 
-  $currentIdentity = Resolve-CurrentIdentity -WorkingDirectory $PWD.Path
+  $currentIdentity = Resolve-CurrentIdentity -WorkingDirectory $PWD.Path -Viewer $viewer
   $authorScope = if ($currentIdentity.canFilter) { 'current' } else { 'all' }
   if (-not $currentIdentity.canFilter) {
     Add-WarningMessage -List $warnings -Message 'Current author identity could not be resolved; author filtering was not applied.'
@@ -2124,6 +2111,15 @@ try {
     $prs = [System.Collections.Generic.List[object]]::new()
     $githubRepo = $null
 
+    # Repository identity 與當日是否有本人 commit 無關；session-only 也需要 canonical 分組。
+    $remoteResult = Invoke-Native -FilePath 'git' -Arguments @('remote', 'get-url', 'origin') -WorkingDirectory $repoPath
+    if ($remoteResult.ExitCode -eq 0) {
+      $githubRepo = Parse-GithubRepo -RemoteUrl $remoteResult.StdOut
+    }
+    if ([string]::IsNullOrWhiteSpace($githubRepo)) {
+      Add-WarningMessage -List $repoWarnings -Message 'GitHub origin remote is missing or unrecognized; canonical repository is unknown.'
+    }
+
     try {
       $commits = Get-CommitData -RepositoryPath $repoPath -FromRange $resolvedFrom -ToRange $resolvedTo -CurrentIdentity $currentIdentity
     }
@@ -2144,7 +2140,7 @@ try {
         path = $repoPath
         source = $repoSources
         isGitRepo = $true
-        githubRepo = $null
+        githubRepo = $githubRepo
         commits = @($commits)
         prs = @($prs)
         sessionEvidence = @($item.sessionEvidence)
@@ -2153,13 +2149,8 @@ try {
       continue
     }
 
-    $remoteResult = Invoke-Native -FilePath 'git' -Arguments @('remote', 'get-url', 'origin') -WorkingDirectory $repoPath
-    if ($remoteResult.ExitCode -eq 0) {
-      $githubRepo = Parse-GithubRepo -RemoteUrl $remoteResult.StdOut
-    }
-
     if ($ghAvailable) {
-      $prs = Get-GhContext -RepositoryPath $repoPath -GithubRepo $githubRepo -FromRange $resolvedFrom -ToRange $resolvedTo -Commits $commits -CurrentIdentity $currentIdentity -Warnings $repoWarnings
+      $prs = Get-GhContext -RepositoryPath $repoPath -GithubRepo $githubRepo -FromRange $resolvedFrom -ToRange $resolvedTo -Commits $commits -Warnings $repoWarnings
     }
 
     $repos.Add([ordered]@{

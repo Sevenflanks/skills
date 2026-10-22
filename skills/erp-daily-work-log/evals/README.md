@@ -17,9 +17,13 @@
 | 19–29、31–32、40、43–47 | 合法 project→modules、0h 必填、RD code／候選選擇／null 分流與 local metadata、resolver 400 不猜、mapping 權限／完整 list／期間／modifiedTime、分開授權及結果。 |
 | 30、35–37 | mapping 與日誌 gate 解耦；可信未生效一次 retry、unknown／空讀回不重送、count 沿用、not_sent 與 external access。 |
 | 38–39、41 | 偏好啟用／preview 覆蓋／onlythis／舊 config／scope；沿用準備、必要 fresh context/options 與低噪音訊息。 |
+| 48–49、52 | 檢查實際 description 及 payload：多 repo 同 RD 立案書仍保留各 repo、PR／issue 與交付狀態；完整同-plan preview、全文／todos 等意圖變更重新授權；合法非條列原文不改寫。 |
+| 50–51 | 外部官方 data＋原送出 plan 的純本地 readback；欄位／缺列／舊列異動與順序獨立、低噪音回報仍保留 fresh options／snapshot／授權 guard。 |
 
 ## 驗證狀態
 
 0.3.0 共 47 案（含多個獨立變體），新增 4 案核對 RD 指定 code 解析、指定後查無／多義／查詢失敗、未指定時唯一候選優先，以及確認無適用時 null 與 null 唯一性。JSON parse／文件一致性檢查完成，**尚未執行 consuming-agent eval**；沒有啟動新 session、遞迴委派或連正式 ERP。
+
+#42 新增 48–52，現在共 52 案；這五案僅完成合成情境與判準，**尚未執行 consuming-agent／LLM 行為 eval**。helper 的真實 Python 執行涵蓋 preview／本地 comparator，不能證明 agent 會正確撰寫欄位內 repo 條列、判定 PR／issue 狀態或維持低噪音；後續需依上方乾淨 context＋攔截 trace 流程驗證，不連真 ERP。回報須分開記錄 helper unit tests、JSON 結構檢查及各案行為判定，不能以靜態檢查代替行為通過。
 
 0.2.0 曾在 2026-10-15 以 mock action-trace 跑過 8 個選定情境，涵蓋模組、選項失效、mapping 授權與分開讀回。該版逾期一律 output_only 的期待已被 #39 修正，舊結果不能作為 0.3.0 通過證據。Python transport 回歸與 repository validate 另行記錄於 [`../tests/README.md`](../tests/README.md)。

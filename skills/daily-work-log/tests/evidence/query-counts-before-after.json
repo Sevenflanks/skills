@@ -1,0 +1,9 @@
+{
+  "fixture": "two-worktrees-one-canonical-repo-opencode-and-codex-continuation",
+  "baselineRevision": "9ff9580",
+  "before": { "viewer": 3, "prList": 2, "prView": 6 },
+  "after": { "viewer": 1, "prList": 1, "prView": 3 },
+  "afterRelations": { "worktreeA": [1], "worktreeB": [2], "worktreeBDraft": true, "unrelatedPr3Included": false },
+  "boundary": "synthetic CLI subprocess responses; real collector orchestration and Codex reader; no network or private history",
+  "latencyMeasured": false
+}
