@@ -139,8 +139,8 @@
     {
       "name": "start-from-matt",
       "source": "skills/start-from-matt",
-      "description": "透過外部 ask-matt 為本次需求建議流程，先進行分析並保留實作決策邊界。",
-      "version": "0.1.1",
+      "description": "透過外部 ask-matt 建議流程，預設維持討論與決策，確認開發授權後才進入實作。",
+      "version": "0.1.2",
       "keywords": [
         "workflow",
         "routing",

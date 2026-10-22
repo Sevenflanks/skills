@@ -18,7 +18,7 @@
 | `make-function-manual-sop` | `0.1.1` | stable | 以版本、實機畫面與欄位證據製作操作說明書，依可用 renderer 驗證並交付。 | [`skills/make-function-manual-sop/`](skills/make-function-manual-sop/) |
 | `opencode-db-prune` | `0.3.0` | stable | 完整保留或近期 30 天的激進精簡；Deja 選用且自動偵測，未安裝仍可用兩種模式。 | [`skills/opencode-db-prune/`](skills/opencode-db-prune/) |
 | `push-post-pr` | `0.1.1` | stable | 確認工作完成後，依授權 commit／push 並發布繁中 PR，核對 title、本文與交付狀態。 | [`skills/push-post-pr/`](skills/push-post-pr/) |
-| `start-from-matt` | `0.1.1` | stable | 透過外部 ask-matt 為本次需求建議流程，先進行分析並保留實作決策邊界。 | [`skills/start-from-matt/`](skills/start-from-matt/) |
+| `start-from-matt` | `0.1.2` | stable | 透過外部 ask-matt 建議流程，預設維持討論與決策，確認開發授權後才進入實作。 | [`skills/start-from-matt/`](skills/start-from-matt/) |
 | `to-spec-or-ticket` | `0.1.1` | stable | 判斷需求應產生 spec 或 tickets，載入選中流程；不適合時僅提出下一步建議。 | [`skills/to-spec-or-ticket/`](skills/to-spec-or-ticket/) |
 | `write-design-spec-for-user-confirm` | `0.1.1` | stable | 以使用者與 UI 語言，撰寫需求背景、功能與操作流程導向的 -srs Markdown 文件。 | [`skills/write-design-spec-for-user-confirm/`](skills/write-design-spec-for-user-confirm/) |
 
