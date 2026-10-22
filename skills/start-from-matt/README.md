@@ -1,10 +1,12 @@
 # start-from-matt
 
-透過外部 ask-matt 為本次需求建議流程，先進行分析並保留實作決策邊界。
+透過外部 ask-matt 建議流程，預設維持討論與決策，確認開發授權後才進入實作。
 
 ## 使用方式
 
 本 skill 僅限人工明確觸發：Codex 使用 `$start-from-matt`，Claude Code 使用 `/start-from-matt`。其他 runtime 也須由使用者明確指定本 skill。提供本次需求或目標；沒有額外輸入時依入口說明使用前文。
+
+對需求或方案的同意、票已存在或單純要求開票，都不表示開始開發。依 [SKILL.md](SKILL.md) 的授權邊界判斷；討論期間仍可依要求整理文件或開票，已授權的開發範圍不重複確認。
 
 安裝時複製整個 skill 資料夾，包含 [agents/openai.yaml](agents/openai.yaml)、references（如有）與 evals，不只複製入口。
 
