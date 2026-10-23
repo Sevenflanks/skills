@@ -4,7 +4,7 @@ description: 整理每日工作日誌或跨 repo 今日工作時使用。先探�
 license: MIT
 metadata:
   author: sevenflankse
-  version: 0.6.0
+  version: 0.6.1
 ---
 
 # Daily Work Log
@@ -34,9 +34,9 @@ Do not use this skill when:
 
 1. **Recall collection preferences before collecting**
    - Before running the helper, try to recall user or project-specific daily-log collection preferences.
-   - Search terms should include `daily-work-log`, `工作日誌`, `日誌`, the current working directory, user-mentioned repo / project names, `scan root`, and `repo discovery`.
-   - If useful context is found, translate it into helper parameters or final-summary rules.
-   - If recall is unavailable, fails, or returns no useful result, stay silent and continue with the default helper workflow.
+   - recall 僅鎖定本次指定日期、使用者點名的 repo，以及會影響本次 collection 的偏好；使用使用者給出的具體詞，不擴成寬泛同義詞搜尋。
+   - 輸入仍有效時，沿用同任務有用的 collection 參數、證據與已完成查詢。handoff 本身不使其失效；不重做 collection，也不重問已回答欄位。
+   - recall 不可用、失敗或沒有有用結果時，停止 recall 搜尋，不擴大範圍，直接使用預設 helper workflow。
    - Do not add project-specific rules to this skill; project-specific collection habits belong in memory.
 
 2. **Confirm scope and defaults**
@@ -92,7 +92,11 @@ Do not use this skill when:
     - 分類／resolver 優先重用已有可靠當日 branch／PR 證據；可查 remote 就先查，不把可自行確認的 identity 轉問使用者。補報不以目前 checkout 代替當日 branch；無當日 branch 或多義時，只詢問未解的歸屬。
     - resolver 回傳原因未明的 HTTP 400／`http_error` 時，回報「解析失敗，原因未知」並停止同類 branch 嘗試；不稱為 missing mapping、不逐 branch 猜結果，也不因此新增永久 mapping。
 
-6. **Summarize by GitHub repo name**
+6. **核對引用 issue 狀態後，依 GitHub repo 名稱彙整**
+   - 選定工作日誌主題後、preview 或寫入前，核對每個會改變成果或 todo 的明確引用 issue 當前狀態。核對先使用同任務、同一 `(canonical repo, issue number)` 且仍有效的成功查詢；只有缺少證據、查詢失效或新證據影響該 issue 時，才以可靠 canonical `githubRepo` 對精確 issue 編號查詢。不因進入摘要或 handoff 重查。僅對相同 `(canonical repo, issue number)` 去重，不同 repo 的同號 issue 分開查。
+   - `closingIssuesReferences` 與 collector 衍生的 `issuesClosed` 只描述 PR 關聯，不代表 issue 當前狀態。依精確 repo 與編號查詢 issue 本身；不據該關聯推定 `CLOSED`，也不搜尋無關 issue 或 repo。
+   - 將查得狀態標明為查詢時狀態。補報舊日期時，區分目前 issue 狀態與報告日當時已知／已完成事項；不把之後的狀態變更回溯到報告日，也不以今日 issue state 取代當日工作證據。
+   - 若無可靠 canonical repo，或精確查詢失敗、回 404、結果無法判讀，保留 issue 狀態為 unknown，並說明 identity／verification gap；不以 repo folder 名稱代替 repo identity、不猜狀態，也不擴大成全 repo 搜尋。
    - Group by GitHub repo name from `repos[].githubRepo` first, such as `owner/repo`.
    - If `githubRepo` is unavailable for a repo, fall back to `repos[].name` repo folder name.
    - Never use absolute paths as final group headings.
