@@ -1,6 +1,6 @@
 # erp-daily-work-log
 
-將可靠每日工作證據整理成 SoftLeader ERP 本人日誌；預設先預覽再確認。`0.3.0`／MIT／sevenflankse。
+將可靠每日工作證據整理成 SoftLeader ERP 本人日誌；預設先預覽再確認。`0.4.1`／MIT／sevenflankse。
 
 ## 使用
 
@@ -10,7 +10,7 @@
 2. 首次填寫、補新增用官方 append，已有日誌仍追加；僅使用者明確替換時走 replace，獨立確認覆蓋。只有 replace 受次日 10:00 期限限制；所需 operation 不可用或 replace 逾期時，仍可 probe→預告→collect 輸出可靠摘要與缺口。
 3. 在確認的工作預算內自行提出合理主題分配，不逐項詢問、不冒充實測工時；呈現完整欄位全文並取得授權後送出，最後逐條讀回核對。當次直接提交可省 preview，不能省合法 options、必要未知資訊及 fresh-write context 核對。
 
-官方契約、認證、未知 state、必要資料與 collector 停止規則始終適用。只回報新發現及必要問題，沿用同日已核對準備，減少重複 Checking 訊息。
+官方契約、認證、未知 state、必要資料與 collector 停止規則始終適用。主題選定後、完整 ERP preview 前，依 [`daily-work-log`](../daily-work-log/SKILL.md) 補查影響成果／待辦的明確引用 issue；有效準備可續用，失效時只刷新受影響項。只回報新發現及必要問題，減少重複 Checking 訊息；若補證改變日誌內容／意圖，才更新完整 preview 並重新授權。寫前 fresh context/options 與完整讀回照常保留。
 
 ## 0.3.0：補新增、受控重試與偏好
 
@@ -32,7 +32,7 @@ npm run test:erp-daily-work-log
 npm run validate
 ```
 
-`validate` 已接 Python unittest discover；CI 設好 Python 後執行同一條 validate，不重複跑 ERP tests。unit tests 只用合成資料、暫存 config 與 fake transport，零正式 ERP call。agent 語意行為使用 [`evals/evals.json`](evals/evals.json)，執行狀態見 [`evals/README.md`](evals/README.md)，不能把 JSON 結構通過算作行為 eval 通過。
+`validate` 已接 Python unittest discover；CI 設好 Python 後執行同一條 validate，不重複跑 ERP tests。unit tests 只用合成資料、暫存 config 與 fake transport，零正式 ERP call。agent 語意行為使用 [`evals/evals.json`](evals/evals.json)，執行狀態見 [`evals/README.md`](evals/README.md)，不能把 JSON 結構通過算作行為 eval 通過。`0.4.1` 沿用 upstream 的精確 canonical repo／issue 狀態補證規則；若新狀態改變日誌內容，仍須重新 preview 並取得授權。
 
 ## 維護入口
 

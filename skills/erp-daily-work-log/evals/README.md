@@ -19,11 +19,14 @@
 | 38–39、41 | 偏好啟用／preview 覆蓋／onlythis／舊 config／scope；沿用準備、必要 fresh context/options 與低噪音訊息。 |
 | 48–49、52 | 檢查實際 description 及 payload：多 repo 同 RD 立案書仍保留各 repo、PR／issue 與交付狀態；完整同-plan preview、全文／todos 等意圖變更重新授權；合法非條列原文不改寫。 |
 | 50–51 | 外部官方 data＋原送出 plan 的純本地 readback；欄位／缺列／舊列異動與順序獨立、低噪音回報仍保留 fresh options／snapshot／授權 guard。 |
+| 53 | 同任務新證據只刷新受影響 issue；其他有效準備／查詢及 collector 沿用，內容變更重 preview／授權，fresh-write guard 保留。 |
 
 ## 驗證狀態
 
 0.3.0 共 47 案（含多個獨立變體），新增 4 案核對 RD 指定 code 解析、指定後查無／多義／查詢失敗、未指定時唯一候選優先，以及確認無適用時 null 與 null 唯一性。JSON parse／文件一致性檢查完成，**尚未執行 consuming-agent eval**；沒有啟動新 session、遞迴委派或連正式 ERP。
 
-#42 新增 48–52，現在共 52 案；這五案僅完成合成情境與判準，**尚未執行 consuming-agent／LLM 行為 eval**。helper 的真實 Python 執行涵蓋 preview／本地 comparator，不能證明 agent 會正確撰寫欄位內 repo 條列、判定 PR／issue 狀態或維持低噪音；後續需依上方乾淨 context＋攔截 trace 流程驗證，不連真 ERP。回報須分開記錄 helper unit tests、JSON 結構檢查及各案行為判定，不能以靜態檢查代替行為通過。
+#42 新增 48–52，現為 52 案。這五案僅完成合成情境與判準，**尚未執行 consuming-agent／LLM 行為 eval**。helper 的真實 Python 執行涵蓋 preview／本地 comparator，不能證明 agent 會正確撰寫欄位內 repo 條列、判定 PR／issue 狀態或維持低噪音；後續需依上方乾淨 context＋攔截 trace 流程驗證，不連真 ERP。回報須分開記錄 helper unit tests、JSON 結構檢查及各案行為判定，不能以靜態檢查代替行為通過。
+
+#47 新增 53。Bounded consuming-agent smoke 首輪因重查 options/context 失敗；r2 只查 shared#44 一次，collect/context/options/write 均為 0，但呈現 full preview artifact 的回覆因缺非適用 reference／snapshot／impact metadata 僅為 partial。補強第 5 節全文呈現後，r3 已呈現 project/module null、impact、hours，仍省略 helper 全文中的 action／intent／expectedSnapshot metadata；因此核心精準刷新與等待新授權分支符合，完整 helper 授權稿呈現仍 partial。此非正式 ERP 端到端成功；新授權後 fresh context/options/write/readback 未 exercise，malformed 也不在本次 fixture 範圍；48–52 維持上段所述未執行狀態。
 
 0.2.0 曾在 2026-10-15 以 mock action-trace 跑過 8 個選定情境，涵蓋模組、選項失效、mapping 授權與分開讀回。該版逾期一律 output_only 的期待已被 #39 修正，舊結果不能作為 0.3.0 通過證據。Python transport 回歸與 repository validate 另行記錄於 [`../tests/README.md`](../tests/README.md)。

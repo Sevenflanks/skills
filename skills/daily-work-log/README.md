@@ -19,7 +19,7 @@
 
 ## 主要流程
 
-1. 蒐集前先嘗試 recall `daily-work-log`、`工作日誌`、`日誌`、current cwd、使用者提到的 repo / project、`scan root`、`repo discovery` 等偏好。若沒有可用結果，安靜使用預設流程。
+1. 蒐集前只針對指定日期、使用者點名的 repo 與會影響本次 collection 的偏好 recall；沒有有用結果就停止搜尋並使用預設流程。沿用同任務仍有效的參數與查詢結果；handoff 本身不使它們失效。
 2. 執行 collector `-ProbeOnly`；只檢查已知紀錄入口與 CLI 是否存在，不掃歷史、不執行 CLI、不讀 auth／config。根據 JSON 在對話預告本次來源與略過理由，再移除 `-ProbeOnly` 正式蒐集。兩來源皆可用就合併。
 3. 若使用者未提供明確時間範圍，helper 會以 configured timezone 計算「今天」，預設為 `Asia/Taipei`。這裡指的是缺少明確時間範圍，不是任何空白輸入都自動觸發。若使用者需要其他 timezone、日期範圍、或掃描根目錄，應明確覆寫。
 4. OpenCode 先查 `opencode db --format json`；若 DB 不可用、查詢失敗、或 JSON 無效，才依序 fallback 到 `storage/directory-readme` 與 OpenCode logs。沒有 CLI 但本機紀錄可讀仍可用。
@@ -34,6 +34,13 @@
 13. 只納入可解析成 git repo 或 worktree root 的路徑，其他缺口要透過 warning 或最終註記說清楚。
 14. 依 `githubRepo` 的 GitHub repo name 分組，若缺少 `githubRepo` 才 fallback 到 repo 資料夾名稱，並將內容壓成簡短工作日誌條列。
 15. 只有使用者強烈堅持在沒有可用或已登入 `gh` 的環境繼續時，才產生降級日報並在最終輸出保留 PR / issue 補證缺口；repo 非 git、或今日有 session 但無 commit，也要保留資料缺口說明。
+16. 選定主題後、preview 前，對實際引用且影響成果／待辦的 issue，以可靠 canonical repo＋精確編號查當前 state。同 repo＋編號去重，跨 repo 同號分開查；PR closing reference／`issuesClosed` 只證明關聯。查詢失敗或無法判讀就保留 unknown 與缺口，不擴搜。補報要區分查詢時狀態與報告日成果，不能倒推歷史，也不能以狀態補查取代當日工作證據。
+
+本輪查詢與先前準備只在輸入仍有效時沿用；新證據或失效時只刷新受影響項。補證不擴大工作主題，也不代替當日工作證據。
+
+## Consuming-agent smoke
+
+#47 的六案 bounded consuming-agent smoke 中，daily-work-log 的 36、37-r2、38、39、40-r2 通過：36 對 shared#18／tools#18 各 lookup 1 次，分別辨識 OPEN／CLOSED；37 首輪因 fixture 缺 closing reference 為 partial，修正後 r2 精確查詢 1 次，以 404 保留 unknown／工作；38 分開現在 CLOSED 與歷史 OPEN；39 recall、probe、collect 各 1 次，來源預告在 probe 與 collect 間；40 首輪因額外工具呼叫失敗，co-location 修正後 r2 沿用既有 OPEN、無額外工具呼叫。這是各案獨立 Task context 的有限 smoke（host 仍注入 deja 歷史），不是完整盲測或普遍可靠性保證；ERP 53 範圍見 [`erp-daily-work-log evals`](../erp-daily-work-log/evals/README.md)。
 
 ## 多來源與停止條件
 

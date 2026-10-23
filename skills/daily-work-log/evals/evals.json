@@ -306,20 +306,20 @@
     },
     {
       "id": 14,
-      "prompt": "幫我整理今天工作日誌。這個專案之前可能有特殊蒐集習慣，但我現在沒講清楚。",
-      "expected_output": "先嘗試 recall daily-work-log / 工作日誌 / 日誌 / repo discovery / scan root / current cwd / 使用者提到的 repo 或 project 等偏好；若沒有命中則安靜使用預設 collector，不報錯。",
+      "prompt": "幫我整理今天 fixture/shared 的工作日誌；只要留意會改變本次 session-mode collection 的使用者偏好。",
+      "expected_output": "針對今天、fixture/shared 與相關 collection preference 做一次有界 recall；若沒有有用結果就停止 recall，直接走預設 collector，不擴大搜尋或要求使用者補偏好。",
       "files": [],
       "expectations": [
         "蒐集前會嘗試 recall user 或 project-specific daily-log collection preferences。",
-        "recall 查詢詞包含 `daily-work-log`、`工作日誌`、`日誌`、current cwd、user-mentioned repo/project、`scan root`、`repo discovery`。",
+        "recall 僅使用本次明確日期、repo 與相關偏好線索，不發散成一般日誌／scan／repo discovery 同義詞搜尋。",
         "recall 失敗或沒有結果不會阻擋 collector，也不會要求使用者補偏好。",
         "不把 project-specific collection habits 寫回 runtime skill 文件。"
       ],
       "assertions": [
         "Before collection, the agent attempts to recall user or project-specific daily-log collection preferences.",
-        "Recall search includes daily-work-log, 工作日誌, 日誌, current cwd, user-mentioned repo or project, scan root, and repo discovery terms.",
+        "Recall is scoped to the requested date/repo and preferences that can affect this collection; it does not expand into broad synonym searches.",
         "Recall failure or no result does not block collection.",
-        "The behavior stays generalized rather than relying on a hard-coded project rule."
+        "No useful recall result ends the search and collection proceeds without asking for preferences."
       ]
     },
     {
@@ -497,6 +497,81 @@
       "files": [],
       "expectations": ["缺少Draft資訊時維持待合併而非猜ready。", "CLOSED沒有MERGED證據不稱已交付。", "repo分組與有意義待辦保留，session-only不略過也不過度宣稱。"],
       "assertions": ["沒有已部署或驗收通過的無證據推論。", "session-only與有Git／PR證據的工作狀態清楚區分。"]
+    },
+    {
+      "id": 36,
+      "prompt": "合成日誌 evidence 已選出 fixture/shared 的『修正登入』，PR #71 closingIssuesReferences 含 issue #18，但該 issue 的獨立查詢 state=OPEN。相同工作另重複引用 #18；fixture/tools 也有獨立的 issue #18，查詢 state=CLOSED。兩個 canonical repo 均可靠。請完成 preview 前的 issue 補證。",
+      "expected_output": "以 canonical repo 分別查 fixture/shared#18 與 fixture/tools#18；同 repo 同編號只查一次，跨 repo 各查各的。shared#18 仍是 OPEN，不能因 PR closing reference 或 issuesClosed 稱 CLOSED；只納入已選主題相關 issue。",
+      "files": [],
+      "expectations": [
+        "在 preview 前用精確 canonical repo＋issue number 查詢，呼叫集合為 fixture/shared#18、fixture/tools#18 各一次。",
+        "closingIssuesReferences／issuesClosed 不覆蓋獨立查得的 OPEN 狀態。",
+        "相同 repo＋編號去重，跨 repo 同號不合併；不增加無關主題。"
+      ],
+      "assertions": [
+        "Issue lookup trace 對 fixture/shared#18 僅一次、fixture/tools#18 僅一次。",
+        "摘要不稱 shared#18 已關閉，並分別呈現兩個 repo 的 #18 狀態。"
+      ]
+    },
+    {
+      "id": 37,
+      "prompt": "已選主題只引用合成 repo fixture/shared 的 issue #27，collector 的 PR closing reference 也列 #27。精確 gh issue view 查詢回 404；沒有其他 issue 證據。請補狀態並完成摘要。",
+      "expected_output": "保留 #27 狀態未知，說明精確查詢回 404；不將 closing reference 推成 CLOSED、不猜狀態、不做 repo-wide issue/PR 搜尋，也不丟棄已有工作證據。",
+      "files": [],
+      "expectations": [
+        "404／查詢失敗以 unknown 與明確補證缺口呈現。",
+        "不把 closingIssuesReferences 或 issuesClosed 當成當前 CLOSED。",
+        "查詢停止於精確 repo＋number；無額外列表／搜尋／掃 repo 呼叫。"
+      ],
+      "assertions": [
+        "最終回覆保留 issue #27 未知與 404 缺口。",
+        "工作摘要仍保留原有合成 session／commit 證據，不把 unknown 改寫成無工作。"
+      ]
+    },
+    {
+      "id": 38,
+      "prompt": "補報 2026-05-29 fixture/shared 工作。當日 session 明確記錄 issue #44 當時 OPEN、待修；今天在補證時精確查詢得 state=CLOSED，closedAt=2026-06-02。請整理該日成果與目前狀態。",
+      "expected_output": "分開表達報告日證據（2026-05-29 當時 OPEN／待辦）與查詢時目前 CLOSED（2026-06-02 關閉）；不倒推 issue 在報告日已關閉，也不以目前狀態取代當日工作證據。",
+      "files": [],
+      "expectations": [
+        "目前狀態清楚標示為查詢時／目前狀態，不能宣稱報告日已 CLOSED。",
+        "保留報告日已有的工作內容與待辦，不因後來 CLOSED 刪除或改寫歷史。",
+        "不將狀態查詢當作該日工作的替代證據。"
+      ],
+      "assertions": [
+        "回覆同時保留報告日期 2026-05-29 與目前查詢狀態 CLOSED、closedAt 2026-06-02。",
+        "沒有把後來狀態回溯宣稱為當日成果。"
+      ]
+    },
+    {
+      "id": 39,
+      "prompt": "整理 2026-05-29 fixture/shared 工作日誌。recall 對這個日期、repo 與相關 collection preference 沒有有用結果；工具回覆亦未提供其他偏好。",
+      "expected_output": "停止 recall，不改查寬泛同義詞或其他歷史；沿用已知預設 collection workflow 繼續，不重問使用者偏好。",
+      "files": [],
+      "expectations": [
+        "recall 的條件限於使用者明確日期／repo 及會影響本次 collection 的偏好。",
+        "無有用結果後 recall trace 結束，不再以 daily log、scan root、repo discovery 等廣詞擴大。",
+        "不因 recall 無結果而停工、重問或額外 collect。"
+      ],
+      "assertions": [
+        "工具 trace 顯示無效 recall 後沒有第二輪擴大查詢。",
+        "collection 以原本已知日期與參數繼續。"
+      ]
+    },
+    {
+      "id": 40,
+      "prompt": "同一 2026-05-29 日誌任務已完成 collection；fixture/shared canonical remote、日期參數、來源預告與 PR 關聯均已核對，issue #18 狀態 OPEN 且有效，沒有新證據或輸入變化。使用者 handoff 後要求繼續完成摘要。",
+      "expected_output": "沿用同任務尚有效的 collection、repo identity、來源預告及 issue #18 查詢；handoff 本身不觸發重 collect 或重查。只用既有證據繼續摘要；發現新證據／查詢輸入改變時才刷新受影響的項目。",
+      "files": [],
+      "expectations": [
+        "collector 呼叫數維持零，issue #18 查詢呼叫數維持零。",
+        "重用同任務的有效參數、canonical repo、已完成來源預告及查詢結果。",
+        "不重問已回答欄位、不因 handoff 當成資料失效。"
+      ],
+      "assertions": [
+        "trace 中沒有重複 collection 或相同有效 issue lookup。",
+        "摘要延續已核實工作與 OPEN 狀態，不新增未查證內容。"
+      ]
     }
   ]
 }

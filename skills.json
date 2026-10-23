@@ -23,8 +23,8 @@
     {
       "name": "daily-work-log",
       "path": "skills/daily-work-log",
-      "summary": "先探測並合併 OpenCode／Codex 活動與 Git／GitHub 證據；Codex 有界蒐集並揭露涵蓋缺口，整理每日工作日誌。",
-      "version": "0.6.0",
+      "summary": "先探測並合併 OpenCode／Codex 活動與 Git／GitHub 證據；依 canonical repo 補查引用 issue 狀態並揭露涵蓋缺口。",
+      "version": "0.6.1",
       "license": "MIT",
       "author": "sevenflankse",
       "tags": [
@@ -42,8 +42,8 @@
     {
       "name": "erp-daily-work-log",
       "path": "skills/erp-daily-work-log",
-      "summary": "依工作內容選模組填寫 ERP 日誌；可獨立確認永久儲存 repo mapping，保留請假與逾期分流。",
-      "version": "0.4.0",
+      "summary": "依工作證據與 canonical repo／issue 狀態填寫 ERP 日誌；只刷新失效補證並保留 preview／授權流程。",
+      "version": "0.4.1",
       "license": "MIT",
       "author": "sevenflankse",
       "tags": ["erp", "work-log", "daily-report", "python", "authorization"],
