@@ -4,7 +4,7 @@ description: 使用者要求將每日工作證據填寫、補新增或替換到 
 license: MIT
 metadata:
   author: sevenflankse
-  version: 0.4.0
+  version: 0.4.1
 ---
 
 # ERP Daily Work Log
@@ -23,7 +23,9 @@ metadata:
    - **明確替換意圖才 replace**：官方 `/replace` 可用且在期限內才進行；已有列的覆蓋授權獨立保留。「直接提交」不等於覆蓋。只有當次明確「直接覆蓋並提交」等完整授權才略過覆蓋詢問。
    - **所需 operation 不可用，或 replace 已逾期則 output_only**：直接到第 3 步，不問覆蓋／未知工時／branch／模組，不產生 rows 或 preview。不能為繞期限把替換意圖改成追加。若部署只有 replace 且未逾期，先確認替換意圖及必要覆蓋授權；只有 replace 且已逾期也走 output_only。
 
-同任務、同日已核對的唯讀準備，在契約／options／選擇未漂移時沿用；handoff 或使用者簡稱不等官方 label 本身不構成重查理由。每次 write 仍須 fresh context 與必要 options，不能沿用過時授權 snapshot。
+同任務、同日已核對的唯讀準備，在契約／options／選擇未漂移時沿用；handoff 或使用者簡稱不等官方 label 本身不構成重查理由。
+
+日誌主題選定後、ERP preview 前，依 [`daily-work-log` issue-state 補證規則](../daily-work-log/SKILL.md#workflow) 核對會影響成果／待辦的明確引用 issue；只刷新因新證據或失效而受影響的查詢。若補證改變日誌內容／意圖，依第 5 節直接呈現同 plan 的 `--preview` 全文並重新取得授權，不以摘要取代授權稿；輸出未變時沿用原 preview／授權，不重問。取得本次有效授權並準備實際 write 時，才重新讀 fresh context 與必要 options／snapshot；單純重 preview 不提前重查未受影響的 context／options。每次 write 都須 fresh 核對並保留 snapshot／intent guards，不沿用過時授權 snapshot。
 
 完成條件：日誌 `stop` 已終止，`output_only` 轉第 3 步，或 append／replace 意圖與可用官方契約確定。
 
