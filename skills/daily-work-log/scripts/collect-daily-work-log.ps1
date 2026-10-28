@@ -360,7 +360,9 @@ function Invoke-CodexSqliteAdapter {
   $process = [Diagnostics.Process]::new()
   $process.StartInfo = [Diagnostics.ProcessStartInfo]::new()
   $process.StartInfo.FileName = $python.Source
-  foreach ($arg in @('-B', (Join-Path $PSScriptRoot 'collect-codex-evidence.py'))) { $process.StartInfo.ArgumentList.Add($arg) }
+  foreach ($arg in @('-B', '-X', 'utf8', (Join-Path $PSScriptRoot 'collect-codex-evidence.py'))) { $process.StartInfo.ArgumentList.Add($arg) }
+  # JSON pipe 兩端固定 UTF-8；只覆寫此 child 的 IO encoding，避免繼承 cp950 等 override。
+  $process.StartInfo.Environment['PYTHONIOENCODING'] = 'utf-8'
   $process.StartInfo.UseShellExecute = $false
   $process.StartInfo.CreateNoWindow = $true
   $process.StartInfo.RedirectStandardInput = $true
@@ -407,7 +409,7 @@ function Get-CodexSessionDirectories {
     foreach ($evidence in @($native.evidence)) { New-SessionCandidate -Path $evidence.path -Evidence $evidence }
     return
   }
-  Add-WarningMessage -List $Warnings -Message 'Codex metadata adapter unavailable or incompatible; using bounded legacy date partitions. Inspect adapters and compatibilityIssues; no issue was published.'
+  Add-WarningMessage -List $Warnings -Message 'Codex metadata has no exact candidates or the adapter is unavailable/incompatible; using bounded legacy date partitions. Inspect adapters and compatibilityIssues; no issue was published.'
   $events = [System.Collections.Generic.List[object]]::new()
   $parents = @{}
   $readCount = 0

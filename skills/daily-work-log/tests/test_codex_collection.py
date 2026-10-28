@@ -63,8 +63,17 @@ class CodexCollection(unittest.TestCase):
         self.history.execute('insert into thread_items values(?,?,?,?,?,?,?,?,?,?)', (sid, turn, iid, 1, time, json.dumps(data), 'agentMessage', 1, time, time))
         self.history.commit()
 
-    def collect(self, *extra):
+    def collect(self, *extra, unavailable_commands=()):
         args = [PWSH, '-NoProfile', '-File', str(SCRIPTS / 'collect-daily-work-log.ps1'), '-From', '2026-05-29T00:00:00+08:00', '-To', '2026-05-29T23:59:59+08:00', '-CodexRoot', str(self.home), '-OpenCodeLogRoot', str(self.root / 'logs'), '-OpenCodeStorageRoot', str(self.root / 'storage'), '-ScanRoots', str(self.repo), *extra]
+        if unavailable_commands:
+            # Replace only external discovery; the published collector and legacy reader still run.
+            quote = lambda value: "'" + str(value).replace("'", "''") + "'"
+            blocked = ','.join(quote(name) for name in unavailable_commands)
+            command = ("function Get-Command { [CmdletBinding()] param([string]$Name) "
+                       f"if ($Name -in @({blocked})) {{ return }}; "
+                       "Microsoft.PowerShell.Core\\Get-Command @PSBoundParameters }; & "
+                       + quote(args[3]) + ' ' + ' '.join(arg if arg.startswith('-') and arg[1:].isalnum() else quote(arg) for arg in args[4:]))
+            args = [PWSH, '-NoProfile', '-Command', command]
         process = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=self.env, text=True, encoding='utf-8')
         try:
             out, err = process.communicate(timeout=45)
@@ -91,6 +100,30 @@ class CodexCollection(unittest.TestCase):
         self.assertEqual(data['meta']['sources']['codex']['adapters']['state']['status'], 'success')
         self.assertFalse(data['meta']['sources']['codex']['coverage']['complete'])
         self.assertEqual(data['meta']['sources']['codex']['adapters']['exact']['sessions'][0]['reason'], 'projection-not-completeness-proof')
+
+    def test_json_pipe_ignores_non_utf8_locale_and_io_override_for_unicode_root_and_text(self):
+        self.state.close()
+        self.history.close()
+        self.home = self.home.rename(self.root / '中文來源🧪')
+        self.repo = self.repo.rename(self.root / '中文專案🧪')
+        self.state = sqlite3.connect(self.home / 'state_5.sqlite')
+        self.history = sqlite3.connect(self.home / 'thread_history_1.sqlite')
+        self.addCleanup(self.state.close)
+        self.addCleanup(self.history.close)
+        self.env.update(PYTHONUTF8='0', PYTHONCOERCECLOCALE='0', LC_ALL='C')
+        self.rollout(messages=[self.event('中文 JSONL 證據🧪')])
+        self.item('中文 SQL 證據🧪')
+        for override in (None, 'cp950:strict'):
+            with self.subTest(PYTHONIOENCODING=override):
+                if override is None:
+                    self.env.pop('PYTHONIOENCODING', None)
+                else:
+                    self.env['PYTHONIOENCODING'] = override
+                data = self.collect()
+                self.assertEqual(data['meta']['sources']['codex']['readStatus'], 'success')
+                evidence = data['repos'][0]['sessionEvidence']
+                self.assertEqual({e['text'] for e in evidence}, {'中文 JSONL 證據🧪', '中文 SQL 證據🧪'})
+                self.assertEqual({e['path'] for e in evidence}, {str(self.repo)})
 
     def test_tool_readback_failure_nested_mcp_and_parent_chain_survive_formatter(self):
         output = {'structuredContent': {'result': {'state': 'MERGED', 'readback': '成功讀回'}}, '_meta': {'trace': {'receipt': 'receipt-42'}}}
@@ -174,6 +207,78 @@ class CodexCollection(unittest.TestCase):
         self.assertEqual({p['adapter'] for p in merged['provenance']}, {'history', 'exact-jsonl'})
         self.assertEqual(merged['tool']['exitCode'], 0)
         self.assertEqual(merged['tool']['status'], 'completed')
+
+    def test_matching_turn_context_corrects_mirrors_and_sql_only_without_other_turn_pollution(self):
+        repos = {}
+        for name in ('B', 'C'):
+            repos[name] = self.root / ('repo-' + name)
+            repos[name].mkdir()
+            subprocess.run([shutil.which('git'), 'init', '-q', str(repos[name])], check=True, capture_output=True, timeout=5)
+        messages = []
+        for name in ('B', 'C'):
+            messages += [
+                {'type': 'turn_context', 'payload': {'turn_id': 'turn-' + name, 'cwd': str(repos[name])}},
+                self.event('鏡像' + name, role='assistant'),
+                {'timestamp': '2026-05-29T02:00:00Z', 'type': 'response_item', 'payload':
+                    {'type': 'function_call_output', 'call_id': 'call-1', 'output': 'same output'}},
+            ]
+            self.item('鏡像' + name, iid='mirror-' + name, turn='turn-' + name)
+            self.item('僅SQL' + name, iid='sql-only-' + name, turn='turn-' + name)
+            for call in ('call-1', 'call-2'):
+                self.item(None, iid=call, turn='turn-' + name, type='commandExecution', command='verify', status='completed', exitCode=0, aggregatedOutput='same output')
+        # An explicit event turn must not borrow the last turn-C context either.
+        messages += [self.event('不同turn', role='assistant', turn_id='other-turn'),
+                     self.event('獨立exact不同turn', role='assistant', turn_id='other-turn')]
+        path = self.rollout(messages=messages)
+        self.item('不同turn', iid='other', turn='other-turn')
+        self.item('無turn', iid='no-turn', turn=None)
+        data = self.collect()
+        evidence = [e for repo in data['repos'] for e in repo['sessionEvidence']]
+        self.assertEqual(len(evidence), 11)
+        for name in ('B', 'C'):
+            with self.subTest(turn=name):
+                events = [e for e in evidence if e['turnId'] == 'turn-' + name]
+                self.assertEqual(len(events), 4)
+                self.assertEqual({e['path'] for e in events}, {str(repos[name])})
+                for event in events:
+                    self.assertEqual(event['repoContext']['file'], str(path))
+                    self.assertEqual(event['repoContext']['sessionId'], 'old')
+                    self.assertEqual(event['repoContext']['turnId'], 'turn-' + name)
+                    self.assertTrue(event['lineageVerified'])
+                mirror = next(e for e in events if e['text'] == '鏡像' + name)
+                self.assertEqual({p['adapter'] for p in mirror['provenance']}, {'history', 'exact-jsonl'})
+                self.assertEqual(mirror['detail'], {'type': 'agentMessage', 'text': '鏡像' + name})
+                self.assertEqual(mirror['mirrorDetails'][0]['payload']['message'], '鏡像' + name)
+                sql_only = next(e for e in events if e['text'] == '僅SQL' + name)
+                self.assertEqual({p['adapter'] for p in sql_only['provenance']}, {'history'})
+                tools = [e for e in events if e['role'] == 'tool']
+                self.assertEqual({e['sourceId'] for e in tools}, {'call-1', 'call-2'})
+                merged_tool = next(e for e in tools if e['sourceId'] == 'call-1')
+                self.assertEqual({p['adapter'] for p in merged_tool['provenance']}, {'history', 'exact-jsonl'})
+        for event in [e for e in evidence if e['turnId'] in ('other-turn', None)]:
+            self.assertEqual(event['path'], str(self.repo))
+            self.assertNotIn('repoContext', event)
+
+    def test_mismatched_thread_turn_context_cannot_reassign_sql_even_with_same_turn(self):
+        other = self.root / 'other-repo'
+        other.mkdir()
+        subprocess.run([shutil.which('git'), 'init', '-q', str(other)], check=True, capture_output=True, timeout=5)
+        path = self.rollout(messages=[{'type': 'turn_context', 'payload': {'id': 'turn-a', 'cwd': str(other)}}, self.event('同文不同thread', role='assistant')])
+        records = [json.loads(line) for line in path.read_text(encoding='utf-8').splitlines()]
+        records[0]['payload']['id'] = 'different-thread'
+        path.write_text('\n'.join(json.dumps(r) for r in records), encoding='utf-8')
+        self.item('同文不同thread')
+        data = self.collect()
+        evidence = [e for repo in data['repos'] for e in repo['sessionEvidence']]
+        self.assertEqual(len(evidence), 2)
+        sql = next(e for e in evidence if e['sessionId'] == 'old')
+        exact = next(e for e in evidence if e['sessionId'] == 'different-thread')
+        self.assertEqual(sql['path'], str(self.repo))
+        self.assertFalse(sql['lineageVerified'])
+        self.assertNotIn('repoContext', sql)
+        self.assertEqual({p['adapter'] for p in sql['provenance']}, {'history'})
+        self.assertEqual(exact['path'], str(other))
+        self.assertEqual({p['adapter'] for p in exact['provenance']}, {'exact-jsonl'})
 
     def test_actual_event_boundaries_seconds_milliseconds_null_unknown_not_turn_dates(self):
         self.rollout(messages=[self.event('起點秒', 1779984000), self.event('終點毫秒', 1780070399000), self.event('太早', '2026-05-28T15:59:59Z'), self.event('太晚', '2026-05-29T16:00:00Z'), self.event('未知', None), self.event('未知單位', 17)])
@@ -407,13 +512,37 @@ class CodexCollection(unittest.TestCase):
         self.assertEqual(data['repos'][0]['sessionEvidence'][0]['title'], '日期補證')
         self.assertNotIn('unexpected_private_column', source['compatibilityIssues'][0]['body'])
 
+    def test_empty_state_still_reads_bounded_dated_jsonl_without_compatibility_draft(self):
+        dated = self.home / 'sessions/2026/05/29/dated.jsonl'
+        dated.parent.mkdir(parents=True)
+        records = [{'type': 'session_meta', 'payload': {'id': 'unindexed', 'cwd': str(self.repo)}}, self.event('空DB日期補證')]
+        dated.write_text('\n'.join(json.dumps(r) for r in records), encoding='utf-8')
+        data = self.collect()
+        source = data['meta']['sources']['codex']
+        self.assertEqual(source['adapters']['state']['status'], 'valid-empty')
+        self.assertNotIn('compatibilityIssues', source)
+        self.assertEqual(source['coverage']['strategy'], 'date-partitions-no-cache')
+        self.assertEqual(source['coverage']['readBytes'], dated.stat().st_size)
+        self.assertEqual(source['readStatus'], 'success')
+        self.assertEqual(data['repos'][0]['sessionEvidence'][0]['title'], '空DB日期補證')
+        self.assertLessEqual(source['coverage']['daysConsidered'], 32)
+        self.assertLessEqual(source['coverage']['readBytes'], source['coverage']['limits']['totalBytes'])
+        dated.write_text('', encoding='utf-8')
+        empty = self.collect()
+        self.assertEqual(empty['meta']['sources']['codex']['adapters']['state']['status'], 'valid-empty')
+        self.assertEqual(empty['meta']['sources']['codex']['readStatus'], 'empty')
+        self.assertNotIn('compatibilityIssues', empty['meta']['sources']['codex'])
+        self.assertEqual(empty['meta']['collectionStatus'], 'no-activity')
+        self.assertEqual(empty['repos'], [])
+
     def test_no_python_keeps_legacy_jsonl_available_without_cli(self):
         path = self.rollout(messages=[self.event('無Python仍可讀')])
         dated = self.home / 'sessions/2026/05/29/dated.jsonl'
         dated.parent.mkdir(parents=True)
         shutil.copyfile(path, dated)
-        self.env['PATH'] = os.pathsep.join({str(Path(PWSH).parent), str(Path(shutil.which('git')).parent)})
-        data = self.collect()
+        # Keep a discoverable Python, as on Linux where pwsh/python share /usr/bin.
+        self.assertIsNotNone(shutil.which('python', path=self.env['PATH']))
+        data = self.collect(unavailable_commands=('python', 'codex', 'opencode', 'gh'))
         source = data['meta']['sources']['codex']
         self.assertEqual(source['adapters']['state']['status'], 'runtime-unavailable')
         self.assertEqual(source['readStatus'], 'success')

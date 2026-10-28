@@ -266,6 +266,7 @@ class Collector:
         cov['candidateFiles'] += 1
         # rollout 可能已被另一 thread 取代；自己的 session_meta 才能授予 repo／parent 歸屬。
         sid, cwd, parent, turn = None, None, None, None
+        turn_contexts = {}
         path = Path(candidate['rollout_path'])
         try:
             self.check()
@@ -303,13 +304,17 @@ class Collector:
                             entry['reason'] = 'lineage-mismatch'
                         sid = actual
                         cwd = payload.get('cwd')
+                        turn, turn_contexts = None, {}
                         source = payload.get('source')
                         spawn = ((source.get('subagent') or {}).get('thread_spawn') or {}) if isinstance(source, dict) else {}
                         parent = payload.get('forked_from_id') or payload.get('parent_session_id') or payload.get('previous_session_id') or spawn.get('parent_thread_id')
                         continue
                     if typ == 'turn_context':
-                        cwd = payload.get('cwd', cwd)
                         turn = payload.get('turn_id', payload.get('id', turn))
+                        context_turn = payload.get('turn_id', payload.get('id'))
+                        context_cwd = payload.get('cwd')
+                        if isinstance(context_turn, str) and context_turn and isinstance(context_cwd, str) and Path(context_cwd).is_absolute():
+                            turn_contexts[context_turn] = {'path': context_cwd, 'sessionId': sid, 'turnId': context_turn, 'file': str(path), 'line': line_no, 'byteOffset': offset}
                         continue
                     pt = payload.get('type', typ)
                     if pt in ('task_started', 'turn_started'):
@@ -332,7 +337,9 @@ class Collector:
                         except Gap:
                             self.unknown += 1
                             continue
-                        self.add(sid, cwd, parent, when, pt, role, text, event, {'adapter': 'exact-jsonl', 'file': str(path), 'line': line_no, 'byteOffset': offset, 'metadataThreadId': candidate['id'], 'callId': payload.get('call_id')}, payload.get('turn_id', turn), payload.get('id'))
+                        event_turn = payload.get('turn_id', turn)
+                        event_cwd = turn_contexts.get(event_turn, {}).get('path', cwd)
+                        self.add(sid, event_cwd, parent, when, pt, role, text, event, {'adapter': 'exact-jsonl', 'file': str(path), 'line': line_no, 'byteOffset': offset, 'metadataThreadId': candidate['id'], 'callId': payload.get('call_id')}, event_turn, payload.get('id'))
                 used = accounting['bytes']
                 eof = eof or stream.tell() == os.fstat(stream.fileno()).st_size
                 if not eof and entry['status'] != 'limited':
@@ -363,6 +370,11 @@ class Collector:
             for event in sql_events:
                 if parent and sid == candidate['id']:
                     event['parentSessionId'] = parent
+                # SQL cwd 只是 thread 候選值；同 thread／turn 的明確 context 才能校正鏡像及 SQL-only。
+                context = turn_contexts.get(event['turnId'])
+                if entry['lineageMatch'] is True and sid == candidate['id'] and context:
+                    event['path'] = context['path']
+                    event['repoContext'] = context
                 event['lineageVerified'] = entry['lineageMatch']
             if entry['status'] not in ('success',):
                 cov['exactFallback']['unread'].append(entry.copy())
@@ -450,7 +462,8 @@ class Collector:
             if state:
                 state.close()
         if not candidates:
-            return self.result(fallback=self.adapters['state']['status'] in ('missing', 'permission', 'compatibility-error'))
+            # 有效空投影沒有 exact ID 可定位；仍需以原有日期／byte 限額補證 JSONL。
+            return self.result(fallback=self.adapters['state']['status'] in ('valid-empty', 'missing', 'permission', 'compatibility-error'))
         try:
             if any(c['cli_version'] != SUPPORTED for c in candidates):
                 raise Gap('compatibility-error', 'unsupported-runtime')
