@@ -208,6 +208,127 @@ class CodexCollection(unittest.TestCase):
         self.assertEqual(merged['tool']['exitCode'], 0)
         self.assertEqual(merged['tool']['status'], 'completed')
 
+    def test_trusted_parent_replays_merge_after_sql_mirror_context_reconciliation(self):
+        events = [
+            {'type': 'turn_context', 'payload': {'id': 'turn-a', 'cwd': str(self.repo)}},
+            self.event('原始需求無自造ID'),
+            self.event('同一結果', role='assistant', id='answer-1'),
+            {'timestamp': '2026-05-29T02:00:00Z', 'type': 'response_item', 'payload':
+                {'type': 'function_call_output', 'call_id': 'call-1', 'output': 'readback OK'}},
+        ]
+        paths = []
+        for sid, parent in (('parent', None), ('child', 'parent')):
+            paths.append(str(self.rollout(sid=sid, parent=parent, messages=events)))
+            self.item('同一結果', sid=sid, iid='sql-' + sid)
+            self.item(None, sid=sid, iid='call-1', type='commandExecution', command='verify',
+                      status='completed', exitCode=0, aggregatedOutput='readback OK')
+        # The index cwd is stale: exact turn context must correct SQL mirrors before merging.
+        self.state.execute('update threads set cwd=?', (str(self.root / 'stale-index'),))
+        self.state.commit()
+        data = self.collect()
+        evidence = [e for repo in data['repos'] for e in repo['sessionEvidence']]
+        self.assertEqual(len(evidence), 3)
+        for event in evidence:
+            self.assertEqual(set(event['sessionIds']), {'parent', 'child'})
+            self.assertEqual(set(event['files']), set(paths))
+            self.assertEqual(len(event['timestamps']), 1)
+            self.assertEqual(dt.datetime.fromisoformat(event['timestamps'][0]), dt.datetime(2026, 5, 29, 2, tzinfo=dt.timezone.utc))
+            self.assertEqual(event['turnId'], 'turn-a')
+            self.assertEqual(event['path'], str(self.repo))
+            exact = [p for p in event['provenance'] if p['adapter'] == 'exact-jsonl']
+            self.assertEqual({p['metadataThreadId'] for p in exact}, {'parent', 'child'})
+            self.assertEqual({p['file'] for p in exact}, set(paths))
+            if event['role'] != 'user':
+                sql = [p for p in event['provenance'] if p['adapter'] == 'history']
+                self.assertEqual({p['threadId'] for p in sql}, {'parent', 'child'})
+                self.assertEqual(len(event['provenance']), 4)
+                self.assertTrue(event['lineageVerified'])
+                self.assertEqual(event['repoContext']['path'], str(self.repo))
+        tool = next(e for e in evidence if e['role'] == 'tool')
+        self.assertEqual(tool['sourceId'], 'call-1')
+        self.assertEqual(tool['tool']['exitCode'], 0)
+        self.assertEqual(tool['tool']['status'], 'completed')
+        self.assertEqual(tool['tool']['callId'], 'call-1')
+        for session in data['meta']['sources']['codex']['adapters']['exact']['sessions']:
+            self.assertEqual(session['sqlEvents'], 2)
+            self.assertEqual(session['exactEvents'], 3)
+
+    def test_raw_parent_replay_without_item_or_turn_id_merges_verified_ancestor_chain(self):
+        paths = []
+        # Descendants are selected before their ancestors; lineage must be resolved after all exact reads.
+        for sid, parent, field in (('leaf', 'child', None), ('child', 'parent', 'previous_session_id'),
+                                   ('parent', 'root', 'forked_from_id'), ('root', None, None)):
+            path = self.rollout(sid=sid, parent=parent, messages=[self.event('完整相同原始事件')])
+            if field:
+                lines = path.read_text(encoding='utf-8').splitlines()
+                meta = json.loads(lines[0])
+                meta['payload'].pop('source')
+                meta['payload'][field] = parent
+                path.write_text('\n'.join([json.dumps(meta), *lines[1:]]), encoding='utf-8')
+            paths.append(str(path))
+        evidence = self.collect()['repos'][0]['sessionEvidence']
+        self.assertEqual(len(evidence), 1)
+        self.assertEqual(set(evidence[0]['sessionIds']), {'leaf', 'child', 'parent', 'root'})
+        self.assertEqual(set(evidence[0]['files']), set(paths))
+        self.assertEqual(len(evidence[0]['provenance']), 4)
+        self.assertIsNone(evidence[0]['turnId'])
+        self.assertEqual(evidence[0]['text'], '完整相同原始事件')
+
+    def test_parent_replay_requires_same_identity_context_and_actual_trusted_link(self):
+        other_repo = self.root / 'other-repo'
+        other_repo.mkdir()
+        subprocess.run([shutil.which('git'), 'init', '-q', str(other_repo)], check=True, capture_output=True, timeout=5)
+        for difference in ('turn', 'call', 'text', 'time', 'role', 'item-id', 'raw-shape', 'cwd',
+                           'no-lineage', 'state-only-lineage', 'mismatch', 'siblings', 'cycle', 'sql-only', 'malformed'):
+            with self.subTest(difference=difference):
+                self.state.execute('delete from threads')
+                self.history.execute('delete from thread_items')
+                self.history.commit()
+                context = {'type': 'turn_context', 'payload': {'id': 'turn-a', 'cwd': str(self.repo)}}
+                original = self.event('相同工作結果', role='assistant', id='answer-1')
+                changed = json.loads(json.dumps(original))
+                child_context = json.loads(json.dumps(context))
+                child_parent = None if difference in ('no-lineage', 'state-only-lineage') else 'shared' if difference == 'siblings' else 'parent'
+                parent_parent = 'child' if difference == 'cycle' else 'shared' if difference == 'siblings' else None
+                if difference == 'turn':
+                    child_context['payload']['id'] = 'turn-b'
+                elif difference == 'cwd':
+                    child_context['payload']['cwd'] = str(other_repo)
+                elif difference == 'text':
+                    changed['payload']['message'] = '另一個工作結果'
+                elif difference == 'time':
+                    changed['timestamp'] = '2026-05-29T02:00:01Z'
+                elif difference == 'role':
+                    changed['payload']['type'] = 'user_message'
+                elif difference == 'item-id':
+                    changed['payload']['id'] = 'answer-2'
+                elif difference == 'raw-shape':
+                    changed = {'timestamp': original['timestamp'], 'type': 'response_item', 'payload':
+                               {'type': 'message', 'role': 'assistant', 'content': [{'text': '相同工作結果'}]}}
+                elif difference == 'call':
+                    original = {'timestamp': original['timestamp'], 'type': 'response_item', 'payload':
+                                {'type': 'function_call_output', 'call_id': 'call-1', 'output': 'same'}}
+                    changed = json.loads(json.dumps(original))
+                    changed['payload']['call_id'] = 'call-2'
+                self.rollout(sid='parent', parent=parent_parent, messages=[context, original])
+                path = self.rollout(sid='child', parent=child_parent,
+                                    messages=[child_context] if difference == 'sql-only' else [child_context, changed])
+                if difference == 'state-only-lineage':
+                    self.state.execute('update threads set source=? where id=?',
+                                       (json.dumps({'subagent': {'thread_spawn': {'parent_thread_id': 'parent'}}}), 'child'))
+                    self.state.commit()
+                elif difference == 'mismatch':
+                    path.write_text(path.read_text(encoding='utf-8').replace('"id": "child"', '"id": "untrusted"'), encoding='utf-8')
+                elif difference == 'malformed':
+                    path.write_text(path.read_text(encoding='utf-8') + '\nnot-json', encoding='utf-8')
+                elif difference == 'sql-only':
+                    self.item('相同工作結果', sid='parent', iid='answer-1')
+                    self.item('相同工作結果', sid='child', iid='answer-1')
+                data = self.collect()
+                evidence = [e for repo in data['repos'] for e in repo['sessionEvidence']]
+                self.assertEqual(len(evidence), 2)
+                self.assertTrue(all(len(e['sessionIds']) == 1 for e in evidence))
+
     def test_matching_turn_context_corrects_mirrors_and_sql_only_without_other_turn_pollution(self):
         repos = {}
         for name in ('B', 'C'):
@@ -448,6 +569,49 @@ class CodexCollection(unittest.TestCase):
         data = self.collect('-CodexTotalBytes', '1')
         self.assertEqual(data['meta']['sources']['codex']['adapters']['history']['status'], 'compatibility-error')
         self.assertEqual(data['meta']['collectionStatus'], 'read-failed')
+
+    def test_missing_history_lossless_exact_eof_without_range_activity_is_empty(self):
+        path = self.rollout()
+        meta = path.read_text(encoding='utf-8')
+        self.history.close()
+        (self.home / 'thread_history_1.sqlite').unlink()
+        for records in ([], [self.event('outside range', time='2026-05-28T15:59:59Z')]):
+            for ending in ('', '\n'):
+                with self.subTest(records=len(records), ending=repr(ending)):
+                    path.write_text('\n'.join([meta] + [json.dumps(r) for r in records]) + ending, encoding='utf-8')
+                    data = self.collect()
+                    source = data['meta']['sources']['codex']
+                    self.assertEqual(source['readStatus'], 'empty')
+                    self.assertEqual(data['meta']['collectionStatus'], 'no-activity')
+                    self.assertFalse(data['meta']['canGenerateLog'])
+                    self.assertEqual(data['repos'], [])
+                    self.assertEqual(source['adapters']['history']['status'], 'missing')
+                    self.assertEqual(source['adapters']['history']['reason'], 'database-not-found')
+                    self.assertTrue(source['adapters']['exact']['sessions'][0]['projectionComplete'])
+                    self.assertEqual(source['coverage']['limitHits'], [])
+                    self.assertFalse(source['coverage']['complete'])
+
+    def test_missing_history_exact_eof_never_hides_damage(self):
+        path = self.rollout()
+        meta = path.read_text(encoding='utf-8')
+        self.history.close()
+        (self.home / 'thread_history_1.sqlite').unlink()
+        for damage in ('malformed', 'unknown', 'lineage', 'compatibility', 'missing-exact'):
+            with self.subTest(damage=damage):
+                self.state.execute('update threads set cli_version=?', ('9.9.9' if damage == 'compatibility' else '0.164.0-alpha.11.1',))
+                self.state.commit()
+                content = meta.replace('"id": "old"', '"id": "wrong"') if damage == 'lineage' else meta
+                if damage == 'malformed':
+                    content += '\nnot-json'
+                elif damage == 'unknown':
+                    content += '\n' + json.dumps(self.event('undated', time=17))
+                path.write_text(content, encoding='utf-8')
+                if damage == 'missing-exact':
+                    path.unlink()
+                data = self.collect()
+                self.assertEqual(data['meta']['sources']['codex']['readStatus'], 'failed')
+                self.assertEqual(data['meta']['collectionStatus'], 'read-failed')
+                self.assertEqual(data['repos'], [])
 
     def test_missing_history_valid_empty_and_compatibility_draft_consent_gate(self):
         self.rollout(messages=[self.event('exact有證據')])
@@ -773,7 +937,7 @@ class CodexCollection(unittest.TestCase):
     def test_permission_is_not_empty_or_compatibility(self):
         import ctypes
         from ctypes import wintypes
-        self.rollout(messages=[self.event('permission補證')])
+        path = self.rollout(messages=[self.event('permission補證')])
         self.history.close()
         api = ctypes.WinDLL('kernel32', use_last_error=True)
         api.CreateFileW.argtypes = (wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID, wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE)
@@ -790,6 +954,13 @@ class CodexCollection(unittest.TestCase):
             self.assertEqual(capped['meta']['sources']['codex']['adapters']['history']['status'], 'permission')
             self.assertEqual(capped['meta']['sources']['codex']['readStatus'], 'failed')
             self.assertEqual(capped['meta']['collectionStatus'], 'read-failed')
+            path.write_text(path.read_text(encoding='utf-8').splitlines()[0], encoding='utf-8')
+            empty_exact = self.collect()
+            source = empty_exact['meta']['sources']['codex']
+            self.assertTrue(source['adapters']['exact']['sessions'][0]['projectionComplete'])
+            self.assertEqual(source['adapters']['history']['status'], 'permission')
+            self.assertEqual(source['readStatus'], 'failed')
+            self.assertEqual(empty_exact['meta']['collectionStatus'], 'read-failed')
         finally:
             api.CloseHandle.argtypes = (wintypes.HANDLE,)
             api.CloseHandle(handle)

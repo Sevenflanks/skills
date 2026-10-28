@@ -396,7 +396,7 @@
     },
     {
       "id": 20,
-      "prompt": "Codex 今天有一份昨天開啟、mtime 也是昨天的 session，事件 timestamp 落在今日台北時區；archived_sessions 裡有父子重播及同 ID 續行。請整理日誌。",
+      "prompt": "Codex metadata 不可用，本案使用 legacy 日期分區 fallback。今天有一份昨天開啟、mtime 也是昨天的 session，事件 timestamp 落在今日台北時區；archived_sessions 裡有父子重播及同 ID 續行。請整理日誌。",
       "expected_output": "先 probe，再以有界日期分區蒐集；對選中檔依事件 timestamp／指定時區範圍納入，不以檔名或 mtime 代替事件時間。Archive 與範圍外分區可略過並明講缺口；已選父子／續行去重保留 sessionIds、files 與 timestamps，不宣稱完整。",
       "files": [],
       "expectations": ["日期只縮小候選；archive 略過並揭露 coverage。", "已選事件 timestamp 是範圍判斷依據。", "已選父子／續行去重不刪來源證據。"],
@@ -404,7 +404,7 @@
     },
     {
       "id": 21,
-      "prompt": "OpenCode DB 失敗且所有 fallback 讀不到；Codex 選中日期分區有可讀當日活動及一份壞檔，archive 也存在。請整理日誌並明講缺口。",
+      "prompt": "Codex metadata 不可用，本案使用 legacy 日期分區 fallback。OpenCode DB 失敗且所有 fallback 讀不到；Codex 選中日期分區有可讀當日活動及一份壞檔，archive 也存在。請整理日誌並明講缺口。",
       "expected_output": "正式 collection 使用 Codex 成功部分，揭露 OpenCode failed、Codex partial 與 archive 略過的缺口；不宣稱完整。formatter 保留 coverage 與所有已選 session 證據，gh 預設停止／降級契約仍適用。",
       "files": [],
       "expectations": ["使用其他已驗證的來源，不因單一來源失敗停止所有蒐集。", "說明哪個來源 failed／partial，而非籠統稱沒有活動。"],
@@ -420,7 +420,7 @@
     },
     {
       "id": 23,
-      "prompt": "Codex 首次整理今天日報，日期分區外有十萬舊檔，cache 不存在或損壞。允許漏收，但禁止全歷史掃描。請使用最小方案。",
+      "prompt": "Codex metadata 不可用，本案使用 legacy 日期分區 fallback。首次整理今天日報，日期分區外有十萬舊檔，cache 不存在或損壞。允許漏收，但禁止全歷史掃描。請使用最小方案。",
       "expected_output": "使用無 cache 的直接日期分區有界 collector，probe 不讀 transcript；正式搜尋與讀取依固定 cap 停止，明講 archive／範圍外／達限缺口。首次、重跑及錯誤都不 fallback 全掃。",
       "files": [],
       "expectations": ["不先全列再 filter，不排序全部歷史。", "不強制新增 cache subsystem。", "舊歷史增量不擴大候選訪問。"],
@@ -428,7 +428,7 @@
     },
     {
       "id": 24,
-      "prompt": "Codex 指定日期有超過 128 檔與巨大單行，其中前幾筆有有效活動。請整理日誌並顯示實際涵蓋限制。",
+      "prompt": "Codex metadata 不可用，本案使用 legacy 日期分區 fallback。指定日期有超過 128 檔與巨大單行，其中前幾筆有有效活動。請整理日誌並顯示實際涵蓋限制。",
       "expected_output": "依固定日期／entry／file／實際 byte cap 有界讀取；巨大單行不經無界 ReadLine，超長或截斷行不解析。保留前面成功活動，partial 明講限制造成的缺口，不擴大搜尋。",
       "files": [],
       "expectations": ["最多32日期、2048 entries、128 candidates，預設64 MiB total／8 MiB file、固定64 KiB line。", "列舉 lazy 達限即停，actual readBytes 不超額；超長行丟棄至 newline 後續讀，丟棄 bytes 仍計額度。"],
@@ -436,7 +436,7 @@
     },
     {
       "id": 25,
-      "prompt": "用合成資料證明這次 Codex 有界蒐集的工作量，不准讀真實私人歷史。請分開量測 probe 與 collection，提供冷暖數據與可公開 JSON。",
+      "prompt": "Codex metadata 不可用，本案使用 legacy 日期分區 fallback。用合成資料證明此路徑有界蒐集的工作量，不准讀真實私人歷史。請分開量測 probe 與 collection，提供冷暖數據與可公開 JSON。",
       "expected_output": "執行隔離 synthetic benchmark，增加範圍外舊歷史後比較實際訪問 entries／opened files／read bytes，分開 probe／collection 冷暖耗時，保留外部 temp 的 sanitized JSON。註明 OS cache 未控制、memory 是 test process 累積 high-water、reference 只是合成 enumerate-read-parse，不宣稱 latency SLA 或等價速度比例。",
       "files": [],
       "expectations": ["全部紀錄入口與 CLI 隔離。", "記錄 output bytes 與量測範圍。", "reference 不作 production fallback。"],
@@ -444,7 +444,7 @@
     },
     {
       "id": 26,
-      "prompt": "用預設額度整理 Codex 日報；另一次請明確指定 128／16 MiB。若達限，不要自動加碼或重跑，也不要改成無上限。",
+      "prompt": "Codex metadata 不可用，本案使用 legacy 日期分區 fallback。用預設額度整理日報；另一次請明確指定 128／16 MiB。若達限，不要自動加碼或重跑，也不要改成無上限。",
       "expected_output": "預設 CodexTotalBytes=64 MiB／CodexFileBytes=8 MiB，另一次明確傳入 128／16 MiB；probe 與 collection 共用範圍及額度，單行仍固定64 KiB。參數只接受有限正整數 bytes，拒絕無效／無限值。達限保留缺口且不自動重跑。",
       "files": [],
       "expectations": ["明確參數調整，不改 days／entries／files／line cap。", "File 額度大於 total 時有效額度仍取剩餘總量較小值。"],
@@ -452,7 +452,7 @@
     },
     {
       "id": 27,
-      "prompt": "台北指定日期前一天有大量 Codex transcript。另有多日與負時區範圍。額度不足時，請先處理指定時區日期並如實呈現未訪問候選。",
+      "prompt": "Codex metadata 不可用，本案使用 legacy 日期分區 fallback。台北指定日期前一天有大量 transcript。另有多日與負時區範圍。額度不足時，請先處理指定時區日期並如實呈現未訪問候選。",
       "expected_output": "候選日期聯集不變，指定時區的實際日期升序在前、UTC 額外候選升序在後；filesystem 最多32日且 lazy。coverage 的 candidateDays／visitedDays／unvisitedDays 與 stopReason 揭露達限結果，visited 包含不存在或拒絕 partition path，不表示全日列舉。",
       "files": [],
       "expectations": ["指定日期不被 UTC 補日前置而餓死。", "未訪問候選為空、candidate-days-exhausted 或 empty 都不代表完整查無活動。"],
@@ -460,7 +460,7 @@
     },
     {
       "id": 28,
-      "prompt": "Codex 合成檔案有 UTF8 跨 chunk、BOM／CRLF、超長行前後活動及 byte cap 尾行。請保留可讀 evidence 並說清楚缺口，不要把截斷尾行稱為損壞 JSON。",
+      "prompt": "Codex metadata 不可用，本案使用 legacy 日期分區 fallback。合成檔案有 UTF8 跨 chunk、BOM／CRLF、超長行前後活動及 byte cap 尾行。請保留可讀 evidence 並說清楚缺口，不要把截斷尾行稱為損壞 JSON。",
       "expected_output": "4 KiB chunks 與64 KiB line buffer 有界串流，實讀不超過剩餘額度；超長行跳過至 newline 後續讀且每行計一次 oversizedLines。完整壞 UTF8／JSON 留警告及前後 evidence，真正 EOF 可解析無 newline 尾行，capped incomplete tail 不解析。局部 fileBytes／lineBytes 由 limitHits 揭露，全域 stopReason 分開說明，formatter 保留 additive coverage。",
       "files": [],
       "expectations": ["所有丟棄 bytes 都計單檔及總額度。", "4／64 KiB buffers 不被宣稱為整個 process 的 hard memory cap。"],
@@ -468,7 +468,7 @@
     },
     {
       "id": 29,
-      "prompt": "整理 Codex 日報：coverage complete=false，readBytes=67108864，openedFiles=8，fileCapStops=8，oversizedDiscardBytes=50331648，filesWithRangeEvents=2，readBytesDistribution count=8、totalBytes=67108864、minBytes=maxBytes=8388608，桶 upTo8MiB=8、其他0；stopReason=totalBytes，有未訪問日期，archive／分區外續行略過。最後只有一列去重 evidence。請解釋消耗與缺口，不加碼重跑。",
+      "prompt": "Codex metadata 不可用，本案使用 legacy 日期分區 fallback。整理日報：coverage complete=false，readBytes=67108864，openedFiles=8，fileCapStops=8，oversizedDiscardBytes=50331648，filesWithRangeEvents=2，readBytesDistribution count=8、totalBytes=67108864、minBytes=maxBytes=8388608，桶 upTo8MiB=8、其他0；stopReason=totalBytes，有未訪問日期，archive／分區外續行略過。最後只有一列去重 evidence。請解釋消耗與缺口，不加碼重跑。",
       "expected_output": "說明 64 MiB 實讀中 48 MiB／75% 為已判定超長行丟棄，8 個成功 open 檔各讀 8 MiB 且有未讀尾部；2 個貢獻事件檔可去重成1列，不是2 sessions。保留 total cap、未訪問、封存與分區外續行缺口；不推算遺漏事件數或斷言額度太小。",
       "files": [],
       "expectations": ["診斷是讀取預算內的子集，不把丟棄量再次加到64 MiB。", "桶為每檔實讀量，不是檔案大小、解析成功行數或 session 數。", "同時揭露 partial／complete=false 與已略過範圍，不因一列證據推論只有一個工作或完整無遺漏。"],
@@ -476,7 +476,7 @@
     },
     {
       "id": 30,
-      "prompt": "Codex probe 的 openedFiles/readBytes 都是0且沒有 collection coverage。正式可用空來源的 aggregate counters為0、distribution count/total/buckets為0、min/max=null；另一次所有 open 失敗，distribution也是空但readStatus=failed。還有一檔 file/global cap 同時70000、仍有尾部，讀到超過64KiB prefix後丟棄到cap；另一檔4096bytes恰好EOF。解讀這些差別。",
+      "prompt": "Codex metadata 不可用，本案使用 legacy 日期分區 fallback。Probe 的 openedFiles/readBytes 都是0且沒有 collection coverage。正式可用空來源的 aggregate counters為0、distribution count/total/buckets為0、min/max=null；另一次所有 open 失敗，distribution也是空但readStatus=failed。還有一檔 file/global cap 同時70000、仍有尾部，讀到超過64KiB prefix後丟棄到cap；另一檔4096bytes恰好EOF。解讀這些差別。",
       "expected_output": "Probe 未讀 transcript、沒有正式診斷；空正式來源是空母體、不代表完整查無活動。Open失敗不入分布，failed不是empty；若open後Read失敗則已實讀bytes仍入帳。70000截斷tie計fileCapStops一次、file/total兩個hit、stopReason=totalBytes，oversizedDiscardBytes包含prefix且只算已讀70000。EOFexact不計file stop，total達限仍保守hit。",
       "files": [],
       "expectations": ["維持既有readStatus／來源guard，不用新counter把failed改成可產生日誌。", "64KiB+LF未超長，64KiB+CRLF超長；未確認超長的capped尾行不算oversized。"],

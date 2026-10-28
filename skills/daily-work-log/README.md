@@ -52,6 +52,10 @@
 
 Codex 從 `-CodexRoot`（否則 `CODEX_HOME`，再否則 `~/.codex`）唯讀 state／history SQLite，以 state lifespan overlap 找候選、history item 的實際時間與 turn/item 關聯精選，再對候選 exact JSONL 補證。metadata 日期只代表候選，不代表實際工作日期；封存候選可納入。Metadata 先核對既有日期 index，所有日期分支通過 `EXPLAIN` 的 indexed `SEARCH` gate 後才讀候選；缺 index／不安全 plan 明示 compatibility gap 並走有界日期 fallback，不建立 index。`LIMIT` 不是禁止全歷史 scan 的保證，詳細 gate 見 SKILL.md。SQL projection 到 EOF 不代表來源互通完整。僅核對 `0.164.0-alpha.11.1` contract；Python 3.11+ 必要，child JSON pipe 固定 UTF-8。缺 Python 或相容性差異依狀況使用有界 legacy 日期分區 fallback；state 合法空結果亦走日期補證，保留 valid-empty 且不產相容性草稿。缺檔、權限、合法空結果與不相容狀態分開報告。SQL 證據僅以 lineage 相符的同 turn exact context 校正 repo，保留來源與 `repoContext` 定位；不同 thread／turn 不互用。舊檔名或 mtime 不取代事件時間；未選日期的續行仍可漏收。跨來源同 repo／工作主題由 agent 合併，不自造 NLP。
 
+History DB 缺檔時，若所有已選 exact 候選的 session identity 相符、無損讀至 EOF，且沒有未知時間、SQL 限額或相容性／權限缺口，無範圍內活動可回報 `empty/no-activity`；仍保留 history `missing` 診斷與 `coverage.complete=false`。缺檔本身不授予成功，損壞或無法確認 lineage 仍依失敗／部分讀取契約處理。
+
+Exact 父子／續行重播在所有 session 的 SQL／JSONL reconciliation 之後合併：實際 session metadata 須核對成功且構成可信祖先鏈，cwd、turn、時間、role、全文及原始事件 identity 均相同；完整原始事件的 SHA-256 存於 exact provenance 的 `eventIdentity`。保留 `sessionIds`、`files`、`timestamps`、所有 provenance 與 mirror details；不同工作、call、turn、cwd 或只有 state parent 提示不合併。逐 session reconciliation 計數保留合併前的結果。
+
 Legacy 日期分區 fallback 的 cap、日期與停止策略見 [`SKILL.md` 的「Codex 有界涵蓋」](SKILL.md#codex-有界涵蓋)：32 日期、2,048 entries、128 候選，預設 64 MiB total／8 MiB file／64 KiB line，固定路徑最多 64 ancestor components。指定時區的實際日期升序優先，再補 UTC 額外日期；filesystem 訪問 lazy 達限即停，不排序歷史檔案。首次、重跑與錯誤都不全掃，也不先全列再 filter。
 
 SQL 與 JSONL 資源分開計帳：SQL 預設最多 10,000 rows、16 MiB serialized UTF-8 returned-row payload；15 秒 deadline 共用於 SQLite 與 exact JSONL 讀取／解析。Payload 不代表實體 I/O、token 或成本。候選 exact JSONL 預設單行上限 1 MiB，可調 64 KiB–8 MiB；讀取 bytes 仍使用原 total/file 額度 64／8 MiB。Legacy 日期分區仍用 64 KiB line cap。細節及未讀範圍診斷見上方 SKILL.md。

@@ -1,5 +1,6 @@
 """Task-local, read-only Codex adapter. One JSON request/result; stdlib only."""
 import datetime as dt
+import hashlib
 import json
 import math
 import os
@@ -339,7 +340,8 @@ class Collector:
                             continue
                         event_turn = payload.get('turn_id', turn)
                         event_cwd = turn_contexts.get(event_turn, {}).get('path', cwd)
-                        self.add(sid, event_cwd, parent, when, pt, role, text, event, {'adapter': 'exact-jsonl', 'file': str(path), 'line': line_no, 'byteOffset': offset, 'metadataThreadId': candidate['id'], 'callId': payload.get('call_id')}, event_turn, payload.get('id'))
+                        identity = hashlib.sha256(json.dumps(event, ensure_ascii=False, sort_keys=True).encode('utf-8')).hexdigest()
+                        self.add(sid, event_cwd, parent, when, pt, role, text, event, {'adapter': 'exact-jsonl', 'file': str(path), 'line': line_no, 'byteOffset': offset, 'metadataThreadId': candidate['id'], 'callId': payload.get('call_id'), 'eventIdentity': identity}, event_turn, payload.get('id'))
                 used = accounting['bytes']
                 eof = eof or stream.tell() == os.fstat(stream.fileno()).st_size
                 if not eof and entry['status'] != 'limited':
@@ -352,6 +354,8 @@ class Collector:
                 if entry['status'] != 'limited':
                     entry['status'] = 'partial' if entry.get('invalidLines') or entry['lineageMatch'] is not True else 'success'
                 entry['projectionComplete'] = eof and entry['status'] == 'success'
+                if entry['lineageMatch'] is True:
+                    entry['parentSessionId'] = parent
         except FileNotFoundError:
             entry.update(status='missing', reason='exact-rollout-not-found')
         except PermissionError:
@@ -388,6 +392,47 @@ class Collector:
                 d['maxBytes'] = used if d['maxBytes'] is None else max(used, d['maxBytes'])
                 bucket = 'zero' if used == 0 else 'upTo256KiB' if used <= 262144 else 'upTo1MiB' if used <= 1048576 else 'upTo8MiB' if used <= 8388608 else 'over8MiB'
                 d['buckets'][bucket] += 1
+
+    def merge_replays(self):
+        # 先完成逐 session SQL/exact 歸屬校正，再合併可信祖先鏈的原始事件重播。
+        # family/text 相同不夠：cwd、turn、時間、role、全文及完整原始事件 identity 也須一致。
+        parents = {s['sessionId']: s.get('parentSessionId') for s in self.adapters['exact']['sessions']
+                   if s['status'] == 'success' and s['lineageMatch'] is True}
+        ancestors = {}
+        for sid in parents:
+            chain, current = set(), sid
+            while current in parents:
+                if current in chain:
+                    chain = set()  # 循環 metadata 不能授予跨 session 合併權。
+                    break
+                chain.add(current)
+                current = parents[current]
+            ancestors[sid] = chain - {sid}
+        groups, result = {}, []
+        for event in self.evidence:
+            self.check()
+            sid = event['sessionId']
+            identities = {p['eventIdentity'] for p in event['provenance']
+                          if p['adapter'] == 'exact-jsonl' and p['metadataThreadId'] == sid
+                          and sid in parents and 'eventIdentity' in p}
+            keys = [(event['path'], event['turnId'], tuple(event['timestamps']), event['role'], event['text'], identity)
+                    for identity in identities]
+            target = next((other for key in keys for other in groups.get(key, [])
+                           if any(sid != old and (old in ancestors.get(sid, set()) or sid in ancestors.get(old, set()))
+                                  for old in other['sessionIds'])), None)
+            if target is None:
+                target = event
+                result.append(event)
+            else:
+                for field in ('sessionIds', 'files', 'timestamps', 'provenance'):
+                    target[field].extend(value for value in event[field] if value not in target[field])
+                for raw in [event['detail'], *event.get('mirrorDetails', [])]:
+                    if raw != target['detail'] and raw not in target.get('mirrorDetails', []):
+                        target.setdefault('mirrorDetails', []).append(raw)
+            for key in keys:
+                if not any(other is target for other in groups.get(key, [])):
+                    groups.setdefault(key, []).append(target)
+        self.evidence = result
 
     def run(self):
         candidates, state, history = [], None, None
@@ -492,6 +537,7 @@ class Collector:
                 history.close()
         for candidate in candidates:
             self.exact(candidate)
+        self.merge_replays()
         return self.result()
 
     def result(self, fallback=False):
@@ -518,7 +564,12 @@ class Collector:
                             and s['lineageMatch'] is not False and s['reason'] == 'projection-not-completeness-proof' for s in sessions)
                     and self.adapters['state']['status'] in ('success', 'valid-empty') and history_nondamaging
                     and not self.unknown and not self.sql['limitHits'] and not self.drafts)
-        status = 'partial' if self.evidence and (gaps or self.unknown or self.sql['limitHits'] or self.drafts or unavailable) else 'success' if self.evidence else 'empty' if cap_only else 'failed' if gaps or self.drafts or unavailable or self.unknown else 'empty'
+        # 缺 history 但所有可信 exact 候選無損讀至 EOF，可回報已選資料無活動；
+        # missing 診斷及 complete=false 仍保留，不能延伸成完整歷史查無活動。
+        exact_empty = (bool(sessions) and all(s['projectionComplete'] and s['lineageMatch'] is True for s in sessions)
+                       and self.adapters['state']['status'] in ('success', 'valid-empty') and history_nondamaging
+                       and not self.unknown and not self.sql['limitHits'] and not self.drafts)
+        status = 'partial' if self.evidence and (gaps or self.unknown or self.sql['limitHits'] or self.drafts or unavailable) else 'success' if self.evidence else 'empty' if cap_only or exact_empty else 'failed' if gaps or self.drafts or unavailable or self.unknown else 'empty'
         return {'fallback': fallback, 'readStatus': status, 'evidence': self.evidence, 'coverage': self.coverage, 'adapters': self.adapters, 'sqliteResources': self.sql, 'unknownTimeEvents': self.unknown, 'compatibilityIssues': self.drafts, 'runtime': {'python': '.'.join(map(str, sys.version_info[:3])), 'sqlite': sqlite3.sqlite_version, 'codexContract': SUPPORTED}}
 
 
