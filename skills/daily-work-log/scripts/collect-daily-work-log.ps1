@@ -13,6 +13,14 @@ param(
   [decimal]$CodexTotalBytes = 64MB,
   [ValidateScript({ $_ -gt 0 -and $_ -le [long]::MaxValue -and $_ -eq [decimal]::Truncate($_) })]
   [decimal]$CodexFileBytes = 8MB,
+  [ValidateRange(1, 100000)]
+  [int]$CodexSqlRows = 10000,
+  [ValidateRange(1024, 67108864)]
+  [int]$CodexSqlPayloadBytes = 16MB,
+  [ValidateRange(0.01, 120)]
+  [double]$CodexQuerySeconds = 15,
+  [ValidateRange(65536, 8388608)]
+  [int]$CodexExactLineBytes = 1MB,
   [switch]$ProbeOnly
 )
 
@@ -128,15 +136,20 @@ function Get-SourceProbe {
     }
     $cliAvailable = $null -ne (Get-Command $name -ErrorAction SilentlyContinue)
     # Codex CLI 不提供本 collector 所需的非互動式歷史介面；僅紀錄入口能供 collection。
-    $available = (@($entries | Where-Object available).Count -gt 0) -or ($name -eq 'opencode' -and $cliAvailable)
+    $stateAvailable = $name -eq 'codex' -and [IO.File]::Exists((Join-Path $codexPath 'state_5.sqlite'))
+    $available = (@($entries | Where-Object available).Count -gt 0) -or ($name -eq 'opencode' -and $cliAvailable) -or $stateAvailable
     $sources[$name] = [pscustomobject][ordered]@{
       available = $available
       cliAvailable = $cliAvailable
-      reason = if (@($entries | Where-Object available).Count -gt 0) { 'local-records-readable' } elseif ($available) { 'db-cli-available' } else { 'no-readable-records' }
+      reason = if (@($entries | Where-Object available).Count -gt 0 -or $stateAvailable) { 'local-records-readable' } elseif ($available) { 'db-cli-available' } else { 'no-readable-records' }
       entries = $entries
       readStatus = if ($available) { 'not-read' } else { 'unavailable' }
     }
-    if ($name -eq 'codex') { $sources[$name] | Add-Member -NotePropertyName probeWork -NotePropertyValue $probeWork }
+    if ($name -eq 'codex') {
+      $sources[$name] | Add-Member -NotePropertyName probeWork -NotePropertyValue $probeWork
+      $sources[$name] | Add-Member -NotePropertyName root -NotePropertyValue $codexPath
+      $sources[$name] | Add-Member -NotePropertyName stateFilePresent -NotePropertyValue $stateAvailable
+    }
   }
   return $sources
 }
@@ -152,7 +165,7 @@ function Write-CollectionState {
       ghAvailable = $false; ghViewer = $null
     }
     repos = @(); warnings = @($warnings); errors = @($errors)
-  } | ConvertTo-Json -Depth 10
+  } | ConvertTo-Json -Depth 100
 }
 
 function Get-CodexFilesBounded {
@@ -333,10 +346,68 @@ function Read-CodexLinesBounded {
   }
 }
 
+function Invoke-CodexSqliteAdapter {
+  param([object]$Source, [datetimeoffset]$FromRange, [datetimeoffset]$ToRange)
+  $python = Get-Command python -ErrorAction SilentlyContinue
+  if (-not $python) {
+    return [pscustomobject]@{ fallback = $true; adapters = @{ state = @{ status = 'runtime-unavailable'; reason = 'python-not-found' } }; compatibilityIssues = @() }
+  }
+  $request = @{
+    root = $Source.root; from = $FromRange.ToString('o'); to = $ToRange.ToString('o')
+    rows = $CodexSqlRows; payloadBytes = $CodexSqlPayloadBytes; deadlineSeconds = $CodexQuerySeconds
+    totalBytes = [long]$CodexTotalBytes; fileBytes = [long]$CodexFileBytes; exactLineBytes = $CodexExactLineBytes
+  } | ConvertTo-Json -Compress
+  $process = [Diagnostics.Process]::new()
+  $process.StartInfo = [Diagnostics.ProcessStartInfo]::new()
+  $process.StartInfo.FileName = $python.Source
+  foreach ($arg in @('-B', (Join-Path $PSScriptRoot 'collect-codex-evidence.py'))) { $process.StartInfo.ArgumentList.Add($arg) }
+  $process.StartInfo.UseShellExecute = $false
+  $process.StartInfo.CreateNoWindow = $true
+  $process.StartInfo.RedirectStandardInput = $true
+  $process.StartInfo.RedirectStandardOutput = $true
+  $process.StartInfo.RedirectStandardError = $true
+  $process.StartInfo.StandardInputEncoding = [Text.UTF8Encoding]::new($false)
+  $process.StartInfo.StandardOutputEncoding = [Text.UTF8Encoding]::new($false)
+  $started = $false
+  try {
+    $null = $process.Start()
+    $started = $true
+    $stdout = $process.StandardOutput.ReadToEndAsync()
+    $stderr = $process.StandardError.ReadToEndAsync()
+    $process.StandardInput.Write($request)
+    $process.StandardInput.Close()
+    if (-not $process.WaitForExit([int](($CodexQuerySeconds + 5) * 1000))) { throw 'Codex adapter deadline exceeded.' }
+    if ($process.ExitCode -ne 0) { throw 'Codex adapter failed.' }
+    return ($stdout.GetAwaiter().GetResult() | ConvertFrom-Json -Depth 100)
+  }
+  catch {
+    # 子程序可能已花掉 JSONL 額度；沒有可靠計帳時停下，不另開一份 legacy 預算。
+    return [pscustomobject]@{ fallback = $false; readStatus = 'failed'; evidence = @(); coverage = @{ complete = $false; strategy = 'adapter-stopped'; accountingKnown = $false }; adapters = @{ state = @{ status = 'failed'; reason = 'adapter-process-failed' } }; compatibilityIssues = @() }
+  }
+  finally {
+    if ($started -and -not $process.HasExited) { $process.Kill($true); $null = $process.WaitForExit(5000) }
+    $process.Dispose()
+  }
+}
+
 function Get-CodexSessionDirectories {
   param([object]$Source, [datetimeoffset]$FromRange, [datetimeoffset]$ToRange,
     [System.Collections.Generic.List[string]]$Warnings)
 
+  $native = Invoke-CodexSqliteAdapter -Source $Source -FromRange $FromRange -ToRange $ToRange
+  foreach ($name in @('adapters', 'compatibilityIssues', 'sqliteResources', 'unknownTimeEvents', 'runtime')) {
+    $value = Get-ObjectPropertyValue $native $name
+    if ($name -eq 'compatibilityIssues' -and $null -ne $value) { $value = @($value) }
+    if ($null -ne $value) { $Source | Add-Member -NotePropertyName $name -NotePropertyValue $value -Force }
+  }
+  if (-not $native.fallback) {
+    $Source | Add-Member -NotePropertyName coverage -NotePropertyValue $native.coverage -Force
+    $Source.readStatus = $native.readStatus
+    Add-WarningMessage -List $Warnings -Message 'Codex state/history/exact evidence is bounded; metadata dates and projection EOF do not prove completeness. Inspect adapters, sqliteResources and coverage.'
+    foreach ($evidence in @($native.evidence)) { New-SessionCandidate -Path $evidence.path -Evidence $evidence }
+    return
+  }
+  Add-WarningMessage -List $Warnings -Message 'Codex metadata adapter unavailable or incompatible; using bounded legacy date partitions. Inspect adapters and compatibilityIssues; no issue was published.'
   $events = [System.Collections.Generic.List[object]]::new()
   $parents = @{}
   $readCount = 0
@@ -2193,7 +2264,7 @@ try {
     errors = $errors
   }
 
-  $payload | ConvertTo-Json -Depth 8
+  $payload | ConvertTo-Json -Depth 100
 }
 catch {
   $errors.Add($_.Exception.Message)

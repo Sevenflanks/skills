@@ -20,7 +20,7 @@ $erpPath = Join-Path $taskRoot 'erp-evidence.json'
   Set-Content -LiteralPath $erpPath -Encoding utf8NoBOM
 ```
 
-這兩次命令不把 JSON 印到工具輸出。Formatter 只讀既有檔案，不重 collect、不接 ERP、不補查 API。原始格式不變，舊 collector JSON 亦可直接使用。`-InputPath` 與 stdin JSON 擇一；預設 `-View summary`／`-MaxCommitsPerRepo 8` 的輸出格式維持相容，ERP 視圖不套 shown-commit 上限。
+這兩次命令不把 JSON 印到工具輸出。Formatter 只讀既有檔案，不重 collect、不接 ERP、不補查 API。原始格式不變，舊 collector JSON 亦可直接使用。`-InputPath` 與 stdin JSON 擇一；預設 `-View summary`／`-MaxCommitsPerRepo 8` 將正常 Codex routine tool 精簡為 status／exit／source IDs 與 raw JSON `detailRef`，critical 保留規則見 [`SKILL.md`](../SKILL.md#evidence-views-與私有原始證據)。ERP 視圖不套 shown-commit 上限，保留全文。
 
 ## 2. 先讀缺口與 repo 索引，再按需讀證據
 

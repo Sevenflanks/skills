@@ -1,6 +1,6 @@
 # daily-work-log
 
-`daily-work-log` 整理 OpenCode／Codex 活動、Git 跨 branch commits 與相關 GitHub PR／issue 證據。先以同一 collector 輕量 probe，由 agent 預告來源與略過原因，再正式蒐集並輸出適合貼上的主題分組日誌。
+`daily-work-log` 整理 OpenCode／Codex 活動、Git 跨 branch commits 與相關 GitHub PR／issue 證據。先以同一 collector 輕量 probe，由 agent 預告來源與略過原因，再正式蒐集並輸出適合貼上的主題分組日誌。Codex 使用 metadata 候選、SQLite history 精選及 exact JSONL 補證；僅支援已核對的 runtime contract，並如實揭露有限涵蓋。
 
 ## 解決的問題
 
@@ -50,11 +50,13 @@
 
 例如 synthetic home-started parent 可保留 `pathSource=bash-workdir`、`tool=bash`、`timestamp` 歸到 `C:\synthetic\repo`；相同 session／path 只列一次。已刪 worktree 不猜 canonical repo，只揭露 aggregate warning。DB 成功空結果、失敗 fallback 順序與 probe 契約維持。
 
-Codex 從 `-CodexRoot`（否則 `CODEX_HOME`，再否則 `~/.codex`）直接定位 `sessions/yyyy/MM/dd`，採無 cache 的有界蒐集。`archived_sessions` 僅 probe、正式略過；範圍外日期分區中的跨日續行可漏收。對選中資料仍以事件 `timestamp` 比對含頭尾的指定範圍，舊檔名或 mtime 不取代事件時間。collector 合併已選 event／response 鏡像、父子重播與相同 session ID 續行，保留 session IDs、檔案與時間證據。跨來源同 repo／工作主題由 agent 合併，不自造 NLP。
+Codex 從 `-CodexRoot`（否則 `CODEX_HOME`，再否則 `~/.codex`）唯讀 state／history SQLite，以 state lifespan overlap 找候選、history item 的實際時間與 turn/item 關聯精選，再對候選 exact JSONL 補證。metadata 日期只代表候選，不代表實際工作日期；封存候選可納入。Metadata 先核對既有日期 index，所有日期分支通過 `EXPLAIN` 的 indexed `SEARCH` gate 後才讀候選；缺 index／不安全 plan 明示 compatibility gap 並走有界日期 fallback，不建立 index。`LIMIT` 不是禁止全歷史 scan 的保證，詳細 gate 見 SKILL.md。SQL projection 到 EOF 不代表來源互通完整。僅核對 `0.164.0-alpha.11.1` contract；Python 3.11+ 必要。缺 Python 或相容性差異依狀況使用有界 legacy 日期分區 fallback；缺檔、權限、合法空結果與不相容狀態分開報告。舊檔名或 mtime 不取代事件時間；未選日期的續行仍可漏收。跨來源同 repo／工作主題由 agent 合併，不自造 NLP。
 
-具體 cap、日期與停止策略的權威定義在 [`SKILL.md` 的「Codex 有界涵蓋」](SKILL.md#codex-有界涵蓋)：32 日期、2,048 entries、128 候選，預設 64 MiB total／8 MiB file／64 KiB line，固定路徑最多 64 ancestor components。指定時區的實際日期升序優先，再補 UTC 額外日期；filesystem 訪問 lazy 達限即停，不排序歷史檔案。首次、重跑與錯誤都不全掃，也不先全列再 filter。
+Legacy 日期分區 fallback 的 cap、日期與停止策略見 [`SKILL.md` 的「Codex 有界涵蓋」](SKILL.md#codex-有界涵蓋)：32 日期、2,048 entries、128 候選，預設 64 MiB total／8 MiB file／64 KiB line，固定路徑最多 64 ancestor components。指定時區的實際日期升序優先，再補 UTC 額外日期；filesystem 訪問 lazy 達限即停，不排序歷史檔案。首次、重跑與錯誤都不全掃，也不先全列再 filter。
 
-`coverage.complete` 固定為 `false`。新增日期與停止欄位的解讀見下方；`success`／`empty` 只描述已選資料，不能說完整查過沒有工作。Reader 使用 4 KiB chunks 與 64 KiB line buffer，超長行丟棄至 newline 後續讀，丟棄 bytes 仍計額度。單行長度以 LF 前原始 bytes 計算，包含 CR／BOM；完整行才解碼與解析。Byte 截斷尾行不當作損壞 JSON；完整壞 UTF8／JSON 保留警告與前後 evidence，仍遵守 failed／partial 契約。Probe 的 `probeWork` 分開記錄入口檢查與單 entry 訪問，不開 transcript。
+SQL 與 JSONL 資源分開計帳：SQL 預設最多 10,000 rows、16 MiB serialized UTF-8 returned-row payload；15 秒 deadline 共用於 SQLite 與 exact JSONL 讀取／解析。Payload 不代表實體 I/O、token 或成本。候選 exact JSONL 預設單行上限 1 MiB，可調 64 KiB–8 MiB；讀取 bytes 仍使用原 total/file 額度 64／8 MiB。Legacy 日期分區仍用 64 KiB line cap。細節及未讀範圍診斷見上方 SKILL.md。
+
+`coverage.complete` 固定為 `false`。新增日期與停止欄位的解讀見下方；`success`／`empty` 只描述已選資料，不能說完整查過沒有工作。Legacy 日期 fallback 使用 4 KiB chunks 與 64 KiB line buffer；exact JSONL 使用可調 line cap（預設 1 MiB），同樣以 4 KiB chunks 讀取。超長行丟棄至 newline 後續讀，實讀及丟棄 bytes 仍計額度。行長以 LF 前原始 bytes 計算，含 CR／BOM；完整行才解碼與解析。Byte 截斷尾行不當作損壞 JSON；完整壞 UTF8／JSON 保留警告與前後 evidence，仍遵守 failed／partial 契約。Probe 的 `probeWork` 分開記錄入口檢查與單 entry 訪問，不開 transcript。
 
 ### Coverage 欄位怎麼讀
 
@@ -113,7 +115,7 @@ pwsh -NoProfile -File "<skill>\scripts\collect-daily-work-log.ps1" -From "<probe
 
 ### ERP 精簡結構視圖與私有落檔
 
-大型原始 JSON 直接落入當次私有暫存，依 [`references/evidence-views.md`](references/evidence-views.md) 的完整流程，用 formatter `-InputPath '<private-task-file>' -View erp` 產生結構視圖並按需查閱。預設 summary 格式維持相容；ERP 視圖保留全部 commits／refs／branchHints、PR head／Draft／closing issues／交付狀態、來源／續行、meta／coverage／warnings／errors，只移除 repo path 與排版空白，不任意截斷。證據檔仍是私有資料，完成後清理。
+大型原始 JSON 直接落入當次私有暫存，依 [`references/evidence-views.md`](references/evidence-views.md) 的完整流程，用 formatter `-InputPath '<private-task-file>' -View erp` 產生結構視圖並按需查閱。預設 summary 將正常 Codex routine tool 改為 status／exit／source IDs 與可追溯的 `detailRef`，避免 text／detail 重複全文；critical 證據仍完整展開，規則見 SKILL.md。ERP 視圖保留全部 commits／refs／branchHints、PR head／Draft／closing issues／交付狀態、來源／續行、meta／coverage／warnings／errors，只移除 repo path 與排版空白，不任意截斷。證據檔仍是私有資料，完成後清理。
 
 同次 collection 重用 viewer 與 canonical repo 的 PR 查詢，worktree 關聯仍獨立判斷。同作者的當日 PR commit 若無該 worktree hash／branch 關聯也不收；session-only 不自造完成成果。Resolver 原因未明的 HTTP 400 只回報解析失敗，不逐 branch 猜、不當作 missing mapping。
 
@@ -134,7 +136,9 @@ $parameters = @{
 & '<skill>\scripts\collect-daily-work-log.ps1' @parameters
 ```
 
-有效範圍為 1 至 9,223,372,036,854,775,807 的整數 bytes；0、負數、小數、NaN、Infinity、`unlimited` 與超出範圍的值均拒絕。單檔實際讀取上限是單檔額度與全域剩餘額度的較小值，允許 file 設定大於 total。64 KiB line cap 與其餘訪問上限不隨參數增加。達限只揭露缺口，不自動加碼或重跑；提高額度也不保證完整。
+有效範圍為 1 至 9,223,372,036,854,775,807 的整數 bytes；0、負數、小數、NaN、Infinity、`unlimited` 與超出範圍的值均拒絕。單檔實際讀取上限是單檔額度與全域剩餘額度的較小值，允許 file 設定大於 total。Legacy 64 KiB line cap 與其餘訪問上限不隨參數增加。達限只揭露缺口，不自動加碼或重跑；提高額度也不保證完整。
+
+另有 SQL 與 exact 單行參數：`-CodexSqlRows` 預設 10,000（1–100,000）、`-CodexSqlPayloadBytes` 預設 16 MiB（1 KiB–64 MiB）、`-CodexQuerySeconds` 預設 15 秒（0.01–120 秒，共用 SQLite／exact adapter deadline）；`-CodexExactLineBytes` 預設 1 MiB（64 KiB–8 MiB）。SQL deadline／row／payload 耗額會揭露未讀範圍，不以新預算重新啟動 legacy reader。SQL payload 只計回傳 row 的 serialized UTF-8 大小，不是實體 I/O、token、成本或整體記憶體界限。
 
 合成測試隔離全部入口與 CLI，不讀真實 transcripts。新增多來源 tests 使用 Git／GitHub 公開邊界 stub；既有 Pester 回歸使用合成 Git repo 與 OpenCode／GitHub CLI stub，驗證 `--all`、作者過濾與 PR 關聯。
 
@@ -161,6 +165,8 @@ npm run validate
 冷是同一測試 process 在 fixture 增量後首次呼叫，暖是重跑；不控制 OS filesystem cache。Collection 計時包含 collector 的 probe、合成 Git／gh 邊界呼叫與 JSON 序列化，排除 fixture 建立及外部測試啟動。Memory 為整個測試 process 累積 `PeakWorkingSet64`，包含 fixture 建立與 reference，不代表 collector-only、child processes 或每次配置量。Entries 是 application-level MoveNext，bytes 是 FileStream.Read 回傳量，排除 OS metadata／prefetch。Reference 不執行 Git／gh 或完整 collector，耗時不能當作同等流程的速度提升比例；其 output size 不適用。日期候選陣列隨要求日期範圍成長；4 KiB／64 KiB 只限 reader buffers，不是事件清單或整個 process 的 hard memory cap。64／8 MiB 是已確認預設，不是最佳門檻或性能 SLA；本回歸未確認真實 workload。
 
 ## 版本變更
+
+`0.7.0` 新增 Codex state metadata 候選、SQLite history item 精選與 exact JSONL 補證；核對 Python 3.11+ 與 Codex `0.164.0-alpha.11.1` contract，加入 SQL rows／payload／deadline 診斷及脫敏相容性草稿流程。維持有界讀取與既有 JSONL 額度；草稿僅於當次明確同意後才可發布，不宣稱完整 recall 或成本倍率。
 
 `0.5.1` 修正 CWD-dependent OpenCode 相對 path，新增單一有界當日 structured bash workdir 補證、session/path 去重、missing worktree 防誤歸與 partial 揭露。新增實際 SQLite SQL discovery boundary 與 collection/formatter 回歸；Git／gh、Codex 64／8 MiB 及其他既有 caps 維持。Boundary tests 需本機 Python 3 的標準庫 `sqlite3`，production collector 沒有 Python dependency。
 
