@@ -4,7 +4,7 @@ description: 整理每日工作日誌或跨 repo 今日工作時使用。先探�
 license: MIT
 metadata:
   author: sevenflankse
-  version: 0.7.0
+  version: 0.7.1
 ---
 
 # Daily Work Log
@@ -36,7 +36,7 @@ Do not use this skill when:
    - Before running the helper, try to recall user or project-specific daily-log collection preferences.
    - recall 僅鎖定本次指定日期、使用者點名的 repo，以及會影響本次 collection 的偏好；使用使用者給出的具體詞，不擴成寬泛同義詞搜尋。
    - 輸入仍有效時，沿用同任務有用的 collection 參數、證據與已完成查詢。handoff 本身不使其失效；不重做 collection，也不重問已回答欄位。
-   - recall 不可用、失敗或沒有有用結果時，停止 recall 搜尋，不擴大範圍，直接使用預設 helper workflow。
+   - recall 不可用、失敗或沒有有用結果（含截斷／大型回傳未取得有效偏好）時，停止 recall 搜尋，不擴大範圍，直接使用預設 helper workflow；截斷 recall 不作成果證據。
    - Do not add project-specific rules to this skill; project-specific collection habits belong in memory.
 
 2. **Confirm scope and defaults**
@@ -163,7 +163,7 @@ Treat collector JSON as source of truth:
 **允許漏收，但所有首次、重跑與錯誤路徑都禁止全歷史列舉／讀取／解析，包括先全列再 filter。** 不快取候選；metadata 日期分支先通過既有 index／query plan gate，再逐 exact rollout 補證；SQL 無法使用時，只對有界日期分區 fallback。錯誤只回報缺口，不擴大搜尋或另開預算。
 
 - Python adapter 僅支援 Python 3.11+；正式回報實際 Python／SQLite runtime 與已核對 Codex contract `0.164.0-alpha.11.1`。JSON pipe 雙向固定 UTF-8，僅在 child process 設定 IO encoding，不改全域環境。缺 Python、missing／permission、valid-empty 與 compatibility error 分開呈現；缺 Python、metadata 缺失／無權限／不相容或 valid-empty 無 exact ID 時，使用既有有界日期分區 fallback。保留 valid-empty 診斷，不產相容性草稿；補證後仍無活動才報 empty／no-activity。query 耗額或 adapter/process 失敗不以新預算重啟日期讀取。
-- Metadata 只對已知 `threads` 做必要唯讀 schema／index 核對。存在的 created／updated 秒／毫秒欄位須各有 leading-column、非 partial 的既有 index；每個有效 updated range 與 unknown/null 分支的 `EXPLAIN QUERY PLAN` 都須是 `SEARCH`，沒有 `SCAN`／temporary sort，才開始候選讀取。毫秒優先，缺值才用秒；unknown 不推定。缺 index 或不安全 plan 明示 compatibility gap，改走有界日期 fallback；不建 index。`LIMIT` 與 deadline 另限回傳／執行資源，不能取代此 gate。
+- Metadata 只對已知 `threads` 做必要唯讀 schema／index 核對。依欄位 NULLability 省略不可能的 NULL／秒 fallback 分支；其餘 created／updated 秒／毫秒查詢欄位須有 leading-column、非 partial 的既有 index。每個必要 updated range 與 unknown/null 分支的 `EXPLAIN QUERY PLAN` 都須是 indexed `SEARCH`（含 covering index），沒有 `SCAN`／temporary sort，才開始候選讀取。毫秒優先，缺值才用秒；nullable 的未知時間候選保留，unknown 不推定。缺 index 或不安全 plan 明示 compatibility gap 與固定分支／正規化計畫診斷，改走有界日期 fallback；不建 index。`LIMIT` 與 deadline 另限回傳／執行資源，不能取代此 gate。
 - SQL 資源預設 **10,000 rows、16 MiB serialized UTF-8 returned-row payload**；`-CodexQuerySeconds` 預設 15 秒，是涵蓋 SQLite 與 exact JSONL 讀取／解析的共用 adapter deadline。row cap 透過額外 sentinel row 偵測；payload 同時限制必要投影與 SQLite 單列長度。耗額時記錄 adapter、範圍及未讀區間。payload 是回傳列序列化大小，不是 SQLite 實體 I/O、token 數、延遲 SLA 或整個 process 記憶體上限。
 - State metadata 只用 lifespan overlap 篩候選，不以建立日篩除早建 session；history SQL 先以實際 `EXPLAIN QUERY PLAN` 確認既有 index／PK 對 `thread_id` 作 `SEARCH`，拒絕任何 `SCAN`，不限制 index 名稱；可保留單一候選 thread 內的 ordinal 排序。缺安全計畫時產生缺必要 index 的 compatibility 草稿，跳過該 SQL 並繼續有界 exact 補證。Item 依實際 `created_at_ms`、type 與 turn/item 關聯取材，unknown/null 時間不推定。封存候選不因封存而排除。保留可辨識的 user／assistant 內容、tool evidence／output 及其 turn/call lineage；對每個候選仍讀取 exact JSONL 補證，projection EOF 不宣稱 interop 完整。
 - SQL 的 repo cwd 是候選值；exact JSONL 的 session lineage 相符且同 turn 有明確絕對 cwd 時，校正該 turn 的鏡像及 SQL-only 證據歸屬，並以 `repoContext` 保留 thread／turn／file／line／byteOffset 來源。原始 detail／mirrorDetails／provenance 保留；不同 thread／turn 的 context 不互用，不同 call 的工具證據仍分開。
@@ -198,7 +198,7 @@ Legacy 日期分區上限限制 filesystem 訪問與 transcript 讀取；日期�
 
 ## Evidence views 與私有原始證據
 
-大型 collection 與 ERP 整理先依 [`references/evidence-views.md`](references/evidence-views.md) 的可執行流程，將原始 JSON 直接存入私有 task-local 暫存，再以 formatter `-InputPath` 按需讀取。不可先把整份原始 JSON 送入主上下文再壓縮。私有檔只供當次任務，完成後清理，不提交或公開。
+大型 collection 與 ERP 整理先依 [`references/evidence-views.md`](references/evidence-views.md) 的可執行流程：PS5.1／7 呼叫端只傳檔案路徑，pwsh 7 child 明確以 UTF-8 capture，JSON 參數與多行 Python 走檔案。將原始 JSON 直接存入私有 task-local 暫存，再以 formatter `-InputPath` 及 repo／session 選讀必要欄位。不可先把整份原始 JSON 送入主上下文再壓縮。私有檔只供當次任務，完成後清理，不提交或公開。
 
 - 預設 `summary`：`shownCommits` 最多 8、PR 文字引用、全部 `sessionEvidence`、`meta`／warnings／errors。Codex 已知正常的 routine tool 僅顯示 status／exit／source IDs，`detailRef` 的 JSON pointer 指回同次 raw collector JSON（`-InputPath` 時另附檔名）；按需讀取，不重 collect。失敗、驗證、交付／成功 readback、需求與 structuredContent／_meta 保守完整展開，依內容及同 source/session/turn 證據判斷，不按同名工具合併工作。適合一般日報，但不保證 ERP 歸屬證據保真。
 - ERP 使用 `-View erp`：不套 commit 上限；以無縮排 JSON 保留每個 repo 的 `githubRepo`、`source`、`isGitRepo`、完整 commits（refs／branchHints）、PR（head／Draft／state／closing issues）、全部 session／續行、warnings 及完整頂層 meta／sources／coverage／errors。省略 repo `path`，缺值維持缺值；這仍是私有證據，不是公開用的去識別輸出。

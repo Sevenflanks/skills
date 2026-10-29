@@ -78,9 +78,9 @@ class Collector:
             # 同時限制 SQLite 與 Python 邊界；CASE 投影不能單獨限制 SQLite 解碼大 row 的記憶體。
             db.setlimit(sqlite3.SQLITE_LIMIT_LENGTH, max(16384, self.r['payloadBytes']))
             db.set_progress_handler(lambda: int(time.monotonic() >= self.deadline), 1000)
-            columns = {r[1] for r in db.execute('pragma table_info(' + table + ')')}
-            if not required <= columns:
-                self.adapters['state' if table == 'threads' else 'history']['missingRequiredColumns'] = sorted(required - columns)
+            columns = {r[1]: bool(r[3]) for r in db.execute('pragma table_info(' + table + ')')}
+            if not required <= columns.keys():
+                self.adapters['state' if table == 'threads' else 'history']['missingRequiredColumns'] = sorted(required - columns.keys())
                 db.close()
                 raise Gap('compatibility-error', 'required-' + table + '-columns-missing')
             return db, columns
@@ -464,20 +464,27 @@ class Collector:
             for base in ('created_at', 'updated_at'):
                 ms = base + '_ms'
                 has_ms = ms in columns
-                for field, scale, guard in ([(ms, 1000, '1')] if has_ms else []) + [(base, 1, ms + ' is null' if has_ms else '1')]:
+                # 只省略 schema 保證不可能的 NULL；nullable 的未知時間仍須進 exact 補證。
+                fallback = [(base, 1, ms + ' is null' if has_ms else '1')] if not has_ms or not columns[ms] else []
+                for field, scale, guard in ([(ms, 1000, '1')] if has_ms else []) + fallback:
                     if field not in indexes:
+                        self.adapters['state']['missingRequiredIndexes'] = [f'threads({field}, ...)']
+                        self.adapters['state']['queryPlan'] = {'gate': 'indexed-range-search', 'rejection': 'missing-leading-column-index', 'branch': {'field': field}}
                         raise Gap('compatibility-error', 'date-index-required')
                     lo, hi = 946684800 * scale, 4102444800 * scale
-                    conditions = [(f'{field}<?', (lo,)), (f'{field}>?', (hi,))]
-                    if field == base:
-                        conditions.append((f'{field} is null', ()))
+                    conditions = [('below-known-unit', f'{field}<?', (lo,)), ('above-known-unit', f'{field}>?', (hi,))]
+                    if field == base and not columns[field]:
+                        conditions.append(('unknown-null', f'{field} is null', ()))
                     if base == 'updated_at':
-                        conditions.append((f'{field} between ? and ?', (self.start * scale, hi)))
-                    for predicate, params in conditions:
+                        conditions.append(('overlap-updated', f'{field} between ? and ?', (self.start * scale, hi)))
+                    for condition, predicate, params in conditions:
                         query = f'{select} indexed by {indexes[field]} where ({predicate}) and ({guard}) and {overlap} limit ?'
                         args = (*params, self.end * 1000, self.start * 1000)
                         plan = [r[3] for r in state.execute('EXPLAIN QUERY PLAN ' + query, (*args, self.r['rows'] + 1))]
-                        if not any('SEARCH threads USING INDEX' in p for p in plan) or any('SCAN ' in p or 'TEMP B-TREE' in p for p in plan):
+                        if not any(re.match(r'^SEARCH threads USING (?:COVERING )?INDEX ', p) for p in plan) or any(re.match(r'^(?:SCAN\b|USE TEMP B-TREE\b)', p) for p in plan):
+                            # Index 名稱是使用者資料；只輸出固定 plan 類型與程式產生的分支標籤。
+                            safe_plan = [match.group() if (match := re.match(r'^(?:SEARCH threads USING (?:COVERING )?INDEX|SCAN threads|USE TEMP B-TREE)\b', p)) else 'OTHER' for p in plan]
+                            self.adapters['state']['queryPlan'] = {'gate': 'indexed-range-search', 'rejection': 'unsafe-query-plan', 'branch': {'field': field, 'condition': condition, 'guard': guard}, 'plan': safe_plan}
                             raise Gap('compatibility-error', 'date-query-not-indexed')
                         branches.append((query, args))
             self.adapters['state']['queryPlan'] = {'gate': 'indexed-range-search', 'branches': len(branches), 'unknownTimes': 'indexed-null-or-outside-known-unit; never inferred'}

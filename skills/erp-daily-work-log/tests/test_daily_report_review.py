@@ -225,6 +225,50 @@ class ReadbackTests(unittest.TestCase):
 
 
 class LocalCliTests(unittest.TestCase):
+    def test_mixed_topic_plan_cli_preview_keeps_all_fields_and_both_impact_scopes(self):
+        # seam 是 CLI 保真；topic 歸屬的語意判斷由 eval 54 驗收，不由 helper 推論。
+        fixture = SCRIPT.parent.parent / 'evals' / 'fixtures' / 'topic-routing-plan.json'
+        value = json.loads(fixture.read_text(encoding='utf-8'))
+        existing = copy.deepcopy(value['context']['details'])
+        expected_details = [copy.deepcopy(row['detail']) for row in value['rows']]
+        business_fields = {'reportType', 'projectId', 'projectModuleId', 'mandateCharterId',
+                           'subject', 'description', 'todos', 'hours'}
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root) / 'plan.json'
+            for mode in ('append', 'replace'):
+                if mode == 'replace':
+                    value['mode'] = mode
+                    retained = {key: item for key, item in existing[0].items() if key != 'id'}
+                    value['rows'].append({'detail': retained})
+                    expected_details.append(copy.deepcopy(retained))
+                original = json.dumps(value, ensure_ascii=False)
+                path.write_text(original, encoding='utf-8')
+                command = [sys.executable, '-B', str(SCRIPT), '--plan', str(path)]
+                environment = dict(os.environ, PYTHONIOENCODING='utf-8')
+                with self.subTest(mode=mode):
+                    preview = subprocess.run(command + ['--preview'], capture_output=True, text=True,
+                                             encoding='utf-8', env=environment, timeout=15)
+                    dry_run = subprocess.run(command, capture_output=True, text=True,
+                                             encoding='utf-8', env=environment, timeout=15)
+                    self.assertEqual(preview.returncode, 0, preview.stderr)
+                    self.assertEqual(dry_run.returncode, 0, dry_run.stderr)
+                    result, prepared = json.loads(preview.stdout), json.loads(dry_run.stdout)
+                    self.assertRegex(result['intent'], r'^[0-9a-f]{64}$')
+                    self.assertEqual(result, {
+                        'action': 'preview', 'mode': mode, 'reportDate': '2026-10-14',
+                        'expectedSnapshot': 'synthetic-topic-routing-snapshot', 'intent': prepared['intent'],
+                        'details': expected_details,
+                        'impact': {'scope': 'append_new_only' if mode == 'append' else 'replace_entire_day',
+                                   'preserved': existing if mode == 'append' else [],
+                                   'replaced': existing if mode == 'replace' else []},
+                        'hours': {'existing': 1 if mode == 'append' else 0,
+                                  'new': 7 if mode == 'append' else 8, 'work': 7, 'leave': 1, 'total': 8},
+                    })
+                    self.assertEqual(result['details'], prepared['payload']['details'])
+                    for detail in result['details']:
+                        self.assertEqual(set(detail), business_fields)
+                    self.assertEqual(path.read_text(encoding='utf-8'), original)
+
     def test_cli_preview_and_readback_have_actionable_exit_codes(self):
         value = plan()
         value['rows'][0]['detail']['description'] = DESCRIPTION

@@ -74,6 +74,30 @@ red／green 命令：`python -B -m unittest discover -s skills/erp-daily-work-lo
 
 未啟動 mutation framework，不宣稱 mutation score。**Unprotected by unit tests**：agent 寫出的 repo 條列／PR 狀態、授權語意與低噪音；以 eval 48–52 規格涵蓋但尚未執行。測試 subprocess 皆同步結束、新增 CLI subprocess 有 15 秒 timeout，沒有殘留 process；全部資料合成，未查真 ERP 或實際認證。
 
+## #52：混合主題 plan 的 CLI 保真
+
+新增 `LocalCliTests.test_mixed_topic_plan_cli_preview_keeps_all_fields_and_both_impact_scopes`，在已核准的既有 CLI seam 執行真正 `--preview`／dry-run。手工合成 fixture 覆蓋跨 repo RD 合列、同 repo 跨 RD／兩個 PROJECT modules、部分請假與既有 COMPANY；輸入的全文／全部欄位是保真 oracle，範圍與工時期待另按案例給定。完整物件比較會捕捉省欄、改值與多加欄位，也核對同 plan dry-run intent／details 及原 plan 未被修改。
+
+本輪不是 helper bug 修復：既有程式已滿足保真契約，先觀察新增 characterization 綠燈，再在 **repo 外 helper 副本**拿掉 preview 的 `expectedSnapshot`；同一測試在append／replace兩變體均失敗於完整物件相等斷言（2 failures、0 errors），換回原helper綠燈（0 failures、0 errors）。正式helper未修改，不把這次mutation red當成模型指令的red→green證明。
+
+| Mutation | Oracle／結果 |
+| --- | --- |
+| CLI preview 省 `expectedSnapshot` | **實跑**，兩mode均失敗；原helper再跑通過。 |
+| 省intent／任一業務欄位（含null與todos）、改description／參照ID、少列／錯列 | **Reasoned**：完整物件與原合成details、dry-run intent的比對會失敗；未宣稱逐項實跑mutation。 |
+| append／replace範圍顛倒、漏existing全文或錯算工作／請假／新舊合計 | **Reasoned**：scope、preserved/replaced及1/7/7/1/8或0/8/7/1/8的literal期待失敗。 |
+| agent把topic放錯row，或展示時省欄／用label取代ID | **Unprotected by unit tests**：helper不知道使用者的語意歸屬或agent的展示內容。另有兩個錯置草稿的bounded consuming-agent smoke；分支與限制見[`../evals/README.md`](../evals/README.md)，非完整eval54–55通過。 |
+
+實際命令：
+
+```powershell
+python -B -m unittest discover -s skills/erp-daily-work-log/tests -p test_daily_report_review.py -v
+python -B -m unittest discover -s skills/erp-daily-work-log/tests -p "test_daily_report*.py" -q
+```
+
+結果分別為 **13 tests通過（1.494s）**、**75 tests通過（2.846s）**。純本地CLI與dry-run subprocess同步結束，各有15秒timeout；每個測試自己的TemporaryDirectory在結束清理，不依機器時鐘或測試順序。另保留append／replace完整原始CLI stdout與合成plan於repo外temp供PR evidence，可依eval55重現；沒有常駐process。這些是先前獨立CLI證據；主agent其後回報完整 `npm run validate` 已通過（245 tests：244 pass、1 skip），本次只更新docs驗證狀態，未重跑。
+
+本次另用本機Python解析兩個consuming-agent最終合成plan及各自CLI stdout，首份依BOM以UTF-16解碼、次份UTF-8，完整JSON／topic歸屬／欄位與null／既有80／工時皆相符。這不是最終對話展示的獨立深比；展示完整性由主agent目視核對。兩案仍未驗證已授權原文不變、existing charter collision、replace模型展示、A–E注入省欄／label替ID或todos變更重新授權分支。檢查僅讀本地artifacts、沒有啟動child process或存取network／ERP／config；Python命令同步結束，無殘留process。
+
 ## 重跑
 
 ```powershell

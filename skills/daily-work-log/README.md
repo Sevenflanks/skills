@@ -121,6 +121,8 @@ pwsh -NoProfile -File "<skill>\scripts\collect-daily-work-log.ps1" -From "<probe
 
 大型原始 JSON 直接落入當次私有暫存，依 [`references/evidence-views.md`](references/evidence-views.md) 的完整流程，用 formatter `-InputPath '<private-task-file>' -View erp` 產生結構視圖並按需查閱。預設 summary 將正常 Codex routine tool 改為 status／exit／source IDs 與可追溯的 `detailRef`，避免 text／detail 重複全文；critical 證據仍完整展開，規則見 SKILL.md。ERP 視圖保留全部 commits／refs／branchHints、PR head／Draft／closing issues／交付狀態、來源／續行、meta／coverage／warnings／errors，只移除 repo path 與排版空白，不任意截斷。證據檔仍是私有資料，完成後清理。
 
+Windows PowerShell 5.1 的預設 redirect 會產生 UTF-16LE；上述 recipe 在 pwsh 7 child 內明確 capture UTF-8，支援 PS5.1 → pwsh 7 與 pwsh 7 直接呼叫。JSON 參數及多行 Python 存在當次暫存檔，跨 process 只傳路徑；先看缺口／repo 索引，再選 repo／session，不將大型 raw 或無效 recall 灌入上下文。無效 recall 停止搜尋且不作成果證據。沿用 probe → 公告 → collect、停止條件與任務結束清理。
+
 同次 collection 重用 viewer 與 canonical repo 的 PR 查詢，worktree 關聯仍獨立判斷。同作者的當日 PR commit 若無該 worktree hash／branch 關聯也不收；session-only 不自造完成成果。Resolver 原因未明的 HTTP 400 只回報解析失敗，不逐 branch 猜、不當作 missing mapping。
 
 ### 調整 Codex 讀取額度
@@ -153,10 +155,13 @@ Invoke-Pester -Script skills/daily-work-log/tests/collect-daily-work-log.tests.p
 pwsh -NoProfile -File skills/daily-work-log/tests/diagnostics.tests.ps1 -EvidenceRoot "<existing-external-temp-directory>"
 pwsh -NoProfile -File skills/daily-work-log/tests/repo-discovery.tests.ps1 -Case all -EvidenceRoot "<existing-external-temp-directory>"
 pwsh -NoProfile -File skills/daily-work-log/tests/evidence-view.tests.ps1 -Case all -EvidenceRoot "<existing-external-temp-directory>"
+pwsh -NoProfile -File skills/daily-work-log/tests/windows-capture.tests.ps1 -EvidenceRoot "<existing-external-temp-directory>"
 npm run validate
 ```
 
 ## 有界驗證與量測
+
+`windows-capture.tests.ps1` 在 PS5.1 → pwsh 7 與 pwsh 7 → pwsh 7 實際執行 evidence-view recipe；只替換 collector 為合成輸出，formatter 使用既有 CLI。驗證中文／多行／引號／大型 JSON 往返、參數檔、Python 選讀與跨 worktree 續行；`-Mutation utf16` 應在 UTF-8 斷言失敗。測試 child 的 execution policy 旗標只影響該 process；當次 runtime 暫存自動清理，指定 EvidenceRoot 才保留合成 JSON。
 
 `evidence-view.tests.ps1` 以合成雙 worktree／OpenCode＋Codex 續行、git／gh 公開邊界替身驗證 canonical、查詢次數、worktree PR 隔離、錯誤缺口、ERP 欄位與 default 相容。`-Case reuse -BaselineRevision 9ff9580 -MeasureOnly -EvidenceRoot '<external-temp>'` 可對同一 fixture 量測基線，移除 baseline／MeasureOnly 即測目前版。保留 sanitized `collection.json`、`query-counts.json`；`-Case formatter` 保留合成 input／ERP view／UTF-8 bytes。界限與 mutation 對應見 [`tests/evidence/README.md`](tests/evidence/README.md)；沒有真實 GitHub、個人歷史或 latency 結論。
 
@@ -169,6 +174,8 @@ npm run validate
 冷是同一測試 process 在 fixture 增量後首次呼叫，暖是重跑；不控制 OS filesystem cache。Collection 計時包含 collector 的 probe、合成 Git／gh 邊界呼叫與 JSON 序列化，排除 fixture 建立及外部測試啟動。Memory 為整個測試 process 累積 `PeakWorkingSet64`，包含 fixture 建立與 reference，不代表 collector-only、child processes 或每次配置量。Entries 是 application-level MoveNext，bytes 是 FileStream.Read 回傳量，排除 OS metadata／prefetch。Reference 不執行 Git／gh 或完整 collector，耗時不能當作同等流程的速度提升比例；其 output size 不適用。日期候選陣列隨要求日期範圍成長；4 KiB／64 KiB 只限 reader buffers，不是事件清單或整個 process 的 hard memory cap。64／8 MiB 是已確認預設，不是最佳門檻或性能 SLA；本回歸未確認真實 workload。
 
 ## 版本變更
+
+`0.7.1` 修正 NOT NULL 欄位的不可達日期分支及 covering index 誤拒，補上脫敏 query-plan 診斷；保留真實 SCAN／排序拒絕、唯讀 DB 與既有 fallback 額度。補強 Windows 呼叫端的 UTF-8 capture、參數檔及大型證據按需選讀範例。
 
 `0.7.0` 新增 Codex state metadata 候選、SQLite history item 精選與 exact JSONL 補證；核對 Python 3.11+ 與 Codex `0.164.0-alpha.11.1` contract，加入 SQL rows／payload／deadline 診斷及脫敏相容性草稿流程。維持有界讀取與既有 JSONL 額度；草稿僅於當次明確同意後才可發布，不宣稱完整 recall 或成本倍率。
 

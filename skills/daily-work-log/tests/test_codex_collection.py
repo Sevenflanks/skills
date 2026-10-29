@@ -426,6 +426,80 @@ class CodexCollection(unittest.TestCase):
         self.assertEqual(source['readStatus'], 'partial')
         self.assertEqual(source['adapters']['history']['status'], 'partial')
 
+    def test_not_null_seconds_keep_indexed_archive_candidates_without_date_fallback(self):
+        self.state.execute('drop table threads')
+        self.state.execute('create table threads(id text primary key, rollout_path text, cwd text, created_at integer not null, updated_at integer not null, created_at_ms integer, updated_at_ms integer, archived integer, cli_version text, source text)')
+        for column in ('created_at', 'updated_at', 'created_at_ms', 'updated_at_ms'):
+            self.state.execute(f'create index idx_threads_{column} on threads({column},id)')
+        self.rollout(messages=[self.event('archived exact after NOT NULL gate')])
+        self.item('SQL after NOT NULL gate')
+        files = [self.home / 'state_5.sqlite', self.home / 'thread_history_1.sqlite']
+        before = [(p.stat().st_mtime_ns, hashlib.sha256(p.read_bytes()).hexdigest()) for p in files]
+        data = self.collect()
+        source = data['meta']['sources']['codex']
+        self.assertEqual(source['adapters']['state']['status'], 'success')
+        self.assertEqual(source['coverage']['strategy'], 'state-history-exact-no-cache')
+        self.assertEqual({e['text'] for e in data['repos'][0]['sessionEvidence']},
+                         {'archived exact after NOT NULL gate', 'SQL after NOT NULL gate'})
+        self.assertEqual(before, [(p.stat().st_mtime_ns, hashlib.sha256(p.read_bytes()).hexdigest()) for p in files])
+
+    def test_covering_date_indexes_keep_sql_and_archived_exact_evidence(self):
+        fields = ('id', 'rollout_path', 'cwd', 'created_at', 'updated_at', 'created_at_ms', 'updated_at_ms', 'cli_version', 'source')
+        for column in ('created_at', 'updated_at', 'created_at_ms', 'updated_at_ms'):
+            self.state.execute(f'drop index idx_threads_{column}')
+            covering = ','.join((column, *(field for field in fields if field != column)))
+            self.state.execute(f'create index idx_threads_{column} on threads({covering})')
+        self.rollout(messages=[self.event('archived through covering index')])
+        self.item('SQL through covering index')
+        data = self.collect()
+        source = data['meta']['sources']['codex']
+        self.assertEqual(source['adapters']['state']['status'], 'success')
+        self.assertEqual(source['coverage']['strategy'], 'state-history-exact-no-cache')
+        self.assertEqual({e['text'] for e in data['repos'][0]['sessionEvidence']},
+                         {'archived through covering index', 'SQL through covering index'})
+
+    def test_not_null_milliseconds_do_not_require_unreachable_seconds_indexes(self):
+        self.rollout(messages=[self.event('authoritative ms archived exact')])
+        self.item('authoritative ms SQL')
+        self.state.execute('alter table threads rename to previous_threads')
+        self.state.execute('create table threads(id text primary key, rollout_path text, cwd text, created_at integer, updated_at integer, created_at_ms integer not null, updated_at_ms integer not null, archived integer, cli_version text, source text)')
+        self.state.execute('insert into threads select id,rollout_path,cwd,null,null,created_at*1000,updated_at*1000,archived,cli_version,source from previous_threads')
+        self.state.execute('drop table previous_threads')
+        for column in ('created_at_ms', 'updated_at_ms'):
+            self.state.execute(f'create index idx_threads_{column} on threads({column},id)')
+        self.state.commit()
+        data = self.collect()
+        source = data['meta']['sources']['codex']
+        self.assertEqual(source['adapters']['state']['status'], 'success')
+        self.assertEqual(source['coverage']['strategy'], 'state-history-exact-no-cache')
+        self.assertEqual({e['text'] for e in data['repos'][0]['sessionEvidence']},
+                         {'authoritative ms archived exact', 'authoritative ms SQL'})
+
+    def test_unsafe_date_index_scan_reports_safe_branch_plan_and_keeps_bounded_fallback(self):
+        text = 'synthetic private work must not enter plan diagnostics'
+        path = self.rollout(messages=[self.event(text)])
+        dated = self.home / 'sessions/2026/05/29/dated.jsonl'
+        dated.parent.mkdir(parents=True)
+        shutil.copyfile(path, dated)
+        self.state.execute('drop index idx_threads_created_at_ms')
+        self.state.execute('create index "private index name" on threads(created_at_ms collate nocase,id)')
+        self.state.commit()
+        data = self.collect()
+        source = data['meta']['sources']['codex']
+        state = source['adapters']['state']
+        self.assertEqual(state['status'], 'compatibility-error')
+        self.assertEqual(state['reason'], 'date-query-not-indexed')
+        self.assertEqual(source['sqliteResources']['rows'], 0)
+        self.assertEqual(state['queryPlan']['rejection'], 'unsafe-query-plan')
+        self.assertEqual(state['queryPlan']['branch'],
+                         {'field': 'created_at_ms', 'condition': 'below-known-unit', 'guard': '1'})
+        self.assertEqual(state['queryPlan']['plan'], ['SCAN threads'])
+        diagnostics = json.dumps([state, source['compatibilityIssues']], ensure_ascii=False)
+        for private in ('private index name', text, str(self.home), str(self.repo)):
+            self.assertNotIn(private, diagnostics)
+        self.assertEqual(source['coverage']['strategy'], 'date-partitions-no-cache')
+        self.assertEqual([e['title'] for e in data['repos'][0]['sessionEvidence']], [text])
+
     def test_lineage_mismatch_interop_and_missing_sql_items_are_explicit(self):
         path = self.rollout(messages=[self.event('中間需求'), {'timestamp': '2026-05-29T04:00:00Z', 'type': 'response_item', 'payload': {'type': 'interop_message', 'message': '協作代理必要修正', '_meta': {'source': 'child'}}}])
         content = path.read_text(encoding='utf-8').replace('"id": "old"', '"id": "reused"')
@@ -788,6 +862,10 @@ class CodexCollection(unittest.TestCase):
         data = self.collect()
         source = data['meta']['sources']['codex']
         self.assertEqual(source['adapters']['state']['status'], 'compatibility-error')
+        self.assertEqual(source['adapters']['state']['reason'], 'date-index-required')
+        self.assertEqual(source['adapters']['state']['missingRequiredIndexes'], ['threads(created_at_ms, ...)'])
+        self.assertEqual(source['adapters']['state']['queryPlan']['rejection'], 'missing-leading-column-index')
+        self.assertEqual(source['adapters']['state']['queryPlan']['branch'], {'field': 'created_at_ms'})
         self.assertEqual(source['sqliteResources']['rows'], 0)
         self.assertEqual(source['coverage']['strategy'], 'date-partitions-no-cache')
         self.assertTrue(source['compatibilityIssues'])

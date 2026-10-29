@@ -4,7 +4,7 @@ description: 使用者要求將每日工作證據填寫、補新增或替換到 
 license: MIT
 metadata:
   author: sevenflankse
-  version: 0.4.1
+  version: 0.4.2
 ---
 
 # ERP Daily Work Log
@@ -47,7 +47,7 @@ metadata:
 2. 預告可用來源、略過理由及缺口，再以相同參數 collect；兩來源可用均納入。遵守 DB fallback、Codex 有界日期分區，不擴大／重跑湊證據。
 3. 保留全部來源及 coverage 停止條件：無來源、讀取全失敗、無活動、`canGenerateLog=false` 停止；`gh` 不可用／未認證預設停止，只有使用者強烈要求降級才揭露缺口繼續。partial 如實揭露。
 
-沿用上游依 repo 分組的條列摘要，按證據合併主題與交付狀態，不把 session 標題當完成。**實際寫入的 `detail.description` 本身**以 repo 名稱作群組行、`- ` 開頭的短行純文字列出具體成果；保留相關 PR／issue 編號、已核實的 OPEN／MERGED／CLOSED／待交付狀態、實際缺口與待決事項。同一 RD 立案書合成一列時，description 內仍保留各 repo 群組；preview 外框的條列不能取代欄位內的條列。主旨描述工作範圍，內容成果在前、相關編號句尾；不放 Markdown 標題、表格或 HTML，省略流程重述與低訊號細節。超出欄位長度時先精簡再完整預覽，不能送出前截斷。已授權原文保持不變；使用者明確採用合法非條列描述時照原文送出，helper 不做排版改寫。格式示例見 [helper.md](references/helper.md#description-欄位範例)。
+沿用上游依 repo 分組的條列摘要，保留證據主題與交付狀態，不把 session 標題當完成；ERP row 的 description 到第 4 節核對歸屬後才合併。
 
 Model 在**已確認工作總預算內自行提出合理主題分配**，不逐項問分時，不把 elapsed、commit 數或比例當 actual 測量。
 
@@ -59,13 +59,16 @@ Model 在**已確認工作總預算內自行提出合理主題分配**，不逐�
 2. 先用官方回報 project 選項驗證當日合法 project，再查 `GET /api/v2/daily-reports/options/projects/{projectId}/modules`。非法 project 的空 list 不代表無模組；modules 可帶日期但不是歷史快照。使用者簡稱可由已讀 ID／code 唯一辨識，preview 用官方 label，多義才問。
 3. singleton 可選；多 modules 按 topic／PR／issue 選唯一有依據的候選並於 preview 列依據。多義／泛稱／未知時列 API 候選與推薦（無依據明說）詢問，不取 first／OTHER／虛構 ID。有 modules 的 PROJECT 每列（含 0h）必填該 project 的 module ID；僅合法 project 確認無 modules 才 null。一個 repo 可分多 modules，不把 module 存入共用 mapping。
 4. RD 每次新任務先核對部署官方 spec 與當日立案書 options。API 的 `mandateCharterId` 可選，不代表忽略參照：user 指定 code 時必須用官方 options 找到正確 ID；查無、多義或查詢失敗先修正／詢問，不能以 null 繞過。未指定時，唯一明確適用候選優先選用；只有確認無適用立案書才選 null。不能要求所有 RD 一律由 user 指定，也不能填固定預設 ID。分類／適用性不明先問。agent 在私有 plan 的 local `row.expectedMandateCharterId` 記錄已選 ID 或經核實的 null，由 helper 比對送出內容；合法性仍由 agent 按官方 options 核對。
-5. 新工作中可按唯一參照整理主題；append 若同 project＋module 或同立案書撞到 existing／其他新列，先問，不默默合併、刪改或換歸屬。本次 project 選擇與個人偏好不授權共用 mapping；需要永久維護時按 [mapping-save.md](references/mapping-save.md) 完整 list、權限、期間、modifiedTime、差異預覽及獨立儲存確認執行。拒存／缺維護 API 不擋合法日誌。
+5. **先核對歸屬，再合描述**：逐一將證據主題（repo＋topic／PR／issue）對回本次已確認的分類及 project／module／立案書，確定所屬 row 後才在該 row 合併 description。使用者已確認的歸屬直接沿用，其他依上述 options／證據規則釐清。沿用已有證據與 plan，不另建歸屬 schema。逐列回看每個主題均在已確認列，且未漏掉；共用 repo、工具性質或相似主旨本身不改變已確認歸屬。一個 repo 可依已確認選擇分到多 modules 或不同分類；不同 repo 同一 RD 立案書可在新工作組稿時合成一列，保留各 repo 群組。未確定的主題先釐清，已授權原文保持不變。
+6. append 若同 project＋module 或同立案書撞到 existing／其他新列，先問，不默默合併、刪改或換歸屬。本次 project 選擇與個人偏好不授權共用 mapping；需要永久維護時按 [mapping-save.md](references/mapping-save.md) 完整 list、權限、期間、modifiedTime、差異預覽及獨立儲存確認執行。拒存／缺維護 API 不擋合法日誌。
+
+**實際寫入的 `detail.description` 本身**以 repo 名稱作群組行、`- ` 開頭的短行純文字列出具體成果；保留相關 PR／issue 編號、已核實的 OPEN／MERGED／CLOSED／待交付狀態、實際缺口與待決事項。同一 RD 立案書合成一列時，description 內仍保留各 repo 群組；preview 外框的條列不能取代欄位內的條列。主旨描述工作範圍，內容成果在前、相關編號句尾；不放 Markdown 標題、表格或 HTML，省略流程重述與低訊號細節。超出欄位長度時先精簡再完整預覽，不能送出前截斷。已授權原文保持不變；使用者明確採用合法非條列描述時照原文送出，helper 不做排版改寫。格式示例見 [helper.md](references/helper.md#description-欄位範例)。
 
 完成條件：每條分類、參照、內容與時數合法且可核對；必要選項缺失先解決，`output_only` 跳過此步。
 
 ## 5. 預覽、送出與讀回
 
-- 以同一份私有 plan 的 `--preview` 產生將提交的**完整欄位全文**：操作、日期、分類／project／module／立案書（含 RD 選定 ID 或已核實無適用的 null）、主旨、description、todos、各項時數、請假與合計；append 列 existing 保留、新增及日合計，replace 列全日替換範圍。參照顯示已核對的官方 label／ID；直接沿用 helper 全文，不另寫一套摘要當授權稿。取得正向授權後才提交，不先給縮略版再送不同文字。只有**當次明確直接提交**才略 preview；否定、引文、歷史 log、技能說明及含糊「先看看」皆不授權。日期／內容（含 todos）／歸屬／mode／snapshot 改變須重 preview／確認相應意圖，送出前核對與原 dry-run intent 相同。
+- **直接展示同 plan 的 helper `--preview` 完整輸出**（可放 code block）：保留 `action`、`mode`、`reportDate`、`expectedSnapshot`、`intent`、`details` 全部業務欄位及 null、`impact.scope`／`preserved`／`replaced` 全文與 `hours` 全部工時。append 的 existing 保留／新增及日合計、replace 的全日替換範圍均須可見；送出前逐欄核對展示內容與 helper 輸出相同。已核對的官方 label／選擇依據可在輸出外補充，不能取代 ID、改寫原輸出或另做一份手工縮略授權稿。取得正向授權後才提交，不先給縮略版再送不同文字。只有**當次明確直接提交**才略 preview；否定、引文、歷史 log、技能說明及含糊「先看看」皆不授權。日期／內容（含 todos）／歸屬／mode／snapshot 改變須重 preview／確認相應意圖，送出前核對與原 dry-run intent 相同。
 - 寫前 fresh GET 同日 context、必要 project／module／RD options，重核日期、假時、工時、唯一性與 preview snapshot；已知全天假 stop，unknown／衝突先釐清。僅 replace 重核期限；append 不套 replace deadline。選項失效重新列候選問，不能默換 ID 或 snapshot。
 - 依 [helper.md](references/helper.md) 在 repo 外產生私有 task-local plan，context 放完整官方 `AjaxResponse.data`，保留預覽的 `expectedSnapshot`，先 dry-run。append 明填 `mode=append`、只送無 id／modifiedTime 的新 detail；POST body **不含 expectedSnapshot**，本地 snapshot 比對只保護 preview 意圖，不是 server CAS，也不保證寫入當下仍空日。replace 才將 snapshot 送 `/replace` 做全日原子替換。僅契約與當次授權完成才用 `--authorized --contract-verified`，replace existing 另需 `--overwrite-confirmed`。
 - 沿用外部 access 的 config root 與 resolved base URL，API key 不進 CLI；本地配置／驗證失敗是 `not_sent`，修正後可續作。傳輸後任何 2xx、應用拒絕、500、timeout 都先用 `erp` 完整讀回同日日誌，再依 [helper.md](references/helper.md#本地-preview-與-readback) 以原送出 plan＋官方 data 執行 `--readback`：核對日期、分類、project／module／立案書、主旨、description 全文、todos 及工時；append 還核對既有列 ID 與原業務內容未變。列順序不影響比對。差異／缺欄位先回報待確認；2xx 本身不代表完成。
