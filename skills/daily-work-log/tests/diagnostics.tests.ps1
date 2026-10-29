@@ -10,6 +10,12 @@ if ($parseErrors.Count -gt 0) { throw 'Collector syntax errors' }
 foreach ($statement in $ast.EndBlock.Statements) {
   if ($statement -is [Management.Automation.Language.FunctionDefinitionAst]) { Invoke-Expression $statement.Extent.Text }
 }
+# 此 fixture 驗證 legacy stream 的 Read／Dispose catch/finally，不能被 metadata adapter 短路。
+# 只隔離外部 adapter；下方仍使用 production traversal／reader／parser 與完整計帳斷言。
+function Invoke-CodexSqliteAdapter {
+  param([object]$Source, [datetimeoffset]$FromRange, [datetimeoffset]$ToRange)
+  return [pscustomobject]@{ fallback = $true; adapters = @{ state = @{ status = 'not-read'; reason = 'isolated-legacy-stream-fixture' } }; compatibilityIssues = @() }
+}
 Add-Type -TypeDefinition @'
 using System;
 using System.IO;

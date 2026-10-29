@@ -94,6 +94,48 @@ end {
     }
   }
 
+  function Format-SummaryEvidence {
+    param($Evidence, [string]$RawPointer, [object[]]$AllEvidence)
+
+    if ((Get-PropertyValue $Evidence 'source') -ne 'codex' -or (Get-PropertyValue $Evidence 'role') -ne 'tool') { return $Evidence }
+    $tool = Get-PropertyValue $Evidence 'tool'
+    $status = [string](Get-PropertyValue $tool 'status')
+    $exitCode = Get-PropertyValue $tool 'exitCode'
+    $errorValue = Get-PropertyValue $tool 'error'
+    # 只有已知正常的工具結果可 compact。未知／失敗及 structured metadata 保守展開，
+    # 成功 readback、驗證與交付也屬 critical；不可只憑工具名稱或 exit 0 丟內容。
+    if (($null -eq $exitCode -and $status -notin @('completed', 'success')) -or
+        ($null -ne $exitCode -and $exitCode -ne 0) -or $errorValue -or
+        $status -in @('failed', 'error', 'cancelled', 'interrupted')) { return $Evidence }
+    $context = [System.Collections.Generic.List[object]]::new()
+    $context.Add((Get-PropertyValue $Evidence 'detail'))
+    foreach ($related in $AllEvidence) {
+      if ((Get-PropertyValue $related 'sourceId') -eq (Get-PropertyValue $Evidence 'sourceId') -and
+          (Get-PropertyValue $related 'sessionId') -eq (Get-PropertyValue $Evidence 'sessionId') -and
+          (Get-PropertyValue $related 'turnId') -eq (Get-PropertyValue $Evidence 'turnId')) {
+        $context.Add((Get-PropertyValue $related 'detail'))
+        $context.Add((Get-PropertyValue $related 'mirrorDetails'))
+      }
+    }
+    $meaning = ConvertTo-Json -InputObject @($context) -Depth 100 -Compress
+    if ($meaning -match '"(structuredContent|_meta|error|isError)"\s*:' -or
+        $meaning -match '(?i)\b(readback|receipt|verification|verified|requirement|delivery)\b|讀回|驗證|交付|需求' -or
+        $meaning -match '(?i)(^|[\s"/:.\\-])(tests?|unittest|pytest|verify|validate|checks?|build)([\s"/:.\\-]|$)|\bgh\s+(pr|issue|release)\b|\bgit\s+(push|commit|tag)\b') { return $Evidence }
+
+    $compact = [ordered]@{}
+    foreach ($property in $Evidence.PSObject.Properties) {
+      if ($property.Name -notin @('title', 'text', 'detail', 'mirrorDetails')) { $compact[$property.Name] = $property.Value }
+    }
+    $label = [string](Get-PropertyValue $tool 'name')
+    if (-not $label) { $label = [string](Get-PropertyValue $Evidence 'eventType') }
+    $compact.title = "tool: $label; status: $status; exitCode: $exitCode"
+    $compact.text = $compact.title
+    # 指向同一次 raw collector document；即使 stdin 沒有檔名，也能依 pointer + source IDs 精確追溯。
+    $compact.detailRef = [ordered]@{ document = 'raw-collector-json'; jsonPointer = $RawPointer }
+    if ($InputPath) { $compact.detailRef.inputPath = $InputPath }
+    return $compact
+  }
+
   $warnings = [System.Collections.Generic.List[string]]::new()
   $errors = [System.Collections.Generic.List[string]]::new()
   $repos = [System.Collections.Generic.List[object]]::new()
@@ -126,7 +168,9 @@ end {
       $errors.Add([string]$errorMessage)
     }
 
+    $repoIndex = -1
     foreach ($repo in (ConvertTo-Array -Value (Get-PropertyValue -Object $collector -Name 'repos'))) {
+      $repoIndex++
       if ($View -eq 'erp') {
         # ERP 歸屬需 refs、PR 結構及全部來源續行；只省不需要的 repo path 與排版，不能套 summary 上限。
         $repos.Add([ordered]@{
@@ -178,6 +222,10 @@ end {
         }
       }
 
+      $allEvidence = @(ConvertTo-Array -Value (Get-PropertyValue -Object $repo -Name 'sessionEvidence'))
+      $summaryEvidence = @(for ($i = 0; $i -lt $allEvidence.Count; $i++) {
+        Format-SummaryEvidence -Evidence $allEvidence[$i] -RawPointer "/repos/$repoIndex/sessionEvidence/$i" -AllEvidence $allEvidence
+      })
       $repos.Add([ordered]@{
         name = Get-PropertyValue -Object $repo -Name 'name'
         githubRepo = Get-PropertyValue -Object $repo -Name 'githubRepo'
@@ -186,7 +234,7 @@ end {
         prs = @($prTexts)
         lowSignalPrRefs = @($lowSignalPrRefs)
         # 主題合併需要全部來源證據；截斷前五筆會讓另一來源或續行消失。
-        sessionEvidence = @(ConvertTo-Array -Value (Get-PropertyValue -Object $repo -Name 'sessionEvidence'))
+        sessionEvidence = $summaryEvidence
         warnings = @($repoWarnings)
       })
     }
@@ -196,7 +244,7 @@ end {
       warnings = @($warnings)
       errors = @($errors)
       repos = $repos
-    } | ConvertTo-Json -Depth $(if ($View -eq 'erp') { 100 } else { 8 }) -Compress:($View -eq 'erp')
+    } | ConvertTo-Json -Depth 100 -Compress:($View -eq 'erp')
   }
   catch {
     $errors.Add($_.Exception.Message)

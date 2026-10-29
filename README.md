@@ -9,7 +9,7 @@
 | Skill | 版本 | 狀態 | 說明 | 路徑 |
 | --- | --- | --- | --- | --- |
 | `code-intent-comments` | `0.1.0` | stable | 引導 agent 以白話繁中撰寫高價值程式註解，補足 class 責任、核心邏輯、CR、相容性與高風險脈絡。 | [`skills/code-intent-comments/`](skills/code-intent-comments/) |
-| `daily-work-log` | `0.6.1` | stable | 合併 OpenCode／Codex 與 Git／GitHub 證據；以 canonical repo 補查引用 issue 狀態並揭露涵蓋缺口。 | [`skills/daily-work-log/`](skills/daily-work-log/) |
+| `daily-work-log` | `0.7.0` | stable | 合併 OpenCode／Codex 與 Git／GitHub 證據；Codex metadata、SQLite history 與 exact JSONL 有界補證，依 canonical repo 查 issue 狀態並揭露缺口。 | [`skills/daily-work-log/`](skills/daily-work-log/) |
 | `erp-daily-work-log` | `0.4.1` | stable | 依工作證據與 canonical repo／issue 狀態填報；只刷新失效補證並保留 preview／授權流程。 | [`skills/erp-daily-work-log/`](skills/erp-daily-work-log/) |
 | `gh-body-file` | `0.1.1` | stable | 在 Windows、PowerShell、OpenCode shell 環境中，安全使用 GitHub CLI 支援 `--body-file` 的指令。 | [`skills/gh-body-file/`](skills/gh-body-file/) |
 | `agent-process-lifecycle` | `1.1.1` | stable | 管理可能卡住或跨越 tool call 的本機 process；Windows 同 tool Stop 採當次 owner cleanup 契約，跨 tool Preserve 才需背景返回；缺證據的特殊路由可診斷；non-Windows 僅分類、handoff 或 launch 前 blocked。 | [`skills/agent-process-lifecycle/`](skills/agent-process-lifecycle/) |
@@ -39,7 +39,7 @@
 
 ## daily-work-log
 
-`daily-work-log` 先用固定 PowerShell collector 的 `-ProbeOnly` 探測 OpenCode／Codex，向使用者預告來源與略過理由，再合併本機活動、`git log --all` 與相關 GitHub PR／issue 證據。Codex 直接定位日期分區並限制 entries／files／bytes，archive 與範圍外續行可漏收，達限停止並揭露 coverage；所有路徑禁止全歷史掃描。無來源或讀取全失敗時停止；collector stdout 維持純 JSON，由 agent 去重相同工作主題，輸出優先依 GitHub repo name 分組的每日工作日誌。
+`daily-work-log` 先用固定 PowerShell collector 的 `-ProbeOnly` 探測 OpenCode／Codex，向使用者預告來源與略過理由，再合併本機活動、`git log --all` 與相關 GitHub PR／issue 證據。Codex 以 metadata 找候選、SQLite history 按 item 時間精選，再用 exact JSONL 補證；Python 3.11+ 與已核對的 `0.164.0-alpha.11.1` contract 必要。SQL／JSONL 額度分開揭露，有限涵蓋與相容性缺口不推論完整 recall；無來源或讀取全失敗時停止。Collector stdout 維持純 JSON，由 agent 去重相同工作主題，輸出優先依 GitHub repo name 分組的每日工作日誌。
 
 適用於需要整理今日或指定時間範圍的工作摘要，例如：
 
