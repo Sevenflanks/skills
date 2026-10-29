@@ -323,6 +323,28 @@
         "確認狀態變化若改變 report description／todos，須重產完整 preview 並取得新授權；舊授權不得寫入。",
         "未取得新授權前零 report write；後續仍保留 fresh context、必要 options、snapshot 與完整 readback。"
       ]
+    },
+    {
+      "id": 54,
+      "prompt": "只準備合成2026-10-14 ERP預覽，不提交、不查真ERP或config。當日來源、契約與options均已核對，偏好未啟用、未授權mapping維護。User已確認逐主題歸屬：acme/widget issue#44『檢核工具分析』及acme/tools PR#32『驗證案例』同屬RD charter81（RC-81／工具研發），合成一列3h；acme/widget PR#31『發票對帳』屬PROJECT project7（P-7／營運系統）module71（帳務）2h；同repo issue#45『打卡重複分析』屬project7/module72（出勤）1h；PASS假1h另列。existing COMPANY id80內訓1h原文保留，合計8h。狀態已核實：issue44 CLOSED、PR32 OPEN待合併、PR31 MERGED、issue45 OPEN尚待實作，未授權全文提交。使用evals/fixtures/topic-routing-plan.json作既有helper plan形狀與context fixture，不新增schema。請先逐主題核對確認歸屬，再組稿及執行同plan --preview。負例變體（各自獨立）：交接草稿把PR31放RD81，或把issue45放module71，其他歸屬欄位/合計仍合法；再一變體context多出existing RD81 1h且工時另已對平。",
+      "expected_output": "主案逐主題對回既定row後才合description，得到RD81含widget#44/tools#32、PROJECT7/71只含widget#31、PROJECT7/72只含widget#45、LEAVE1h，保留existing80。合併RD仍有兩repo群組；同repo同時RD及兩PROJECT modules合法，不限制repo唯一。兩種錯置草稿均需指出並在未授權組稿階段修正到已確認列，不能因總工時/ID合法或工具性質便接受。existing RD81碰撞變體先問，不刪改/合併existing、不換charter。完整helper輸出直接呈現並等待授權，零write。",
+      "expectations": [
+        "檢查逐主題核對紀錄及最終plan/preview，RD81只含widget#44與tools#32，PROJECT7/71含widget#31，7/72含widget#45，不能僅核總時數或row參照ID。",
+        "PR31錯置RD及issue45錯置71兩種變體均被辨識且改回已確認列；主案的同repo跨分類/多module與跨repo同RD合列均接受。",
+        "保留repo群組、核實狀態與todos，existing80原文不變；分類歧義先問，不憑相似主旨重分。",
+        "existing RD81碰撞先問，不默默合併、刪改或換歸屬；未授權前所有businesswrite為0。"
+      ]
+    },
+    {
+      "id": 55,
+      "prompt": "純合成離線preview呈現驗收，不讀ERP/config、不提交。以evals/fixtures/topic-routing-plan.json同一份plan執行既有helper --preview，直接向User展示完整輸出；官方label可補充：project7=營運系統、module71=帳務、module72=出勤、charter81=工具研發。主變體append保留existing80；獨立replace變體僅將mode改replace並把原existing80的完整業務欄位去掉id後加入rows，形成全日8h替換，User尚未授權覆蓋或提交。評估者注入的錯誤呈現變體（不改plan）：A省expectedSnapshot/intent，B把null參照或todos略掉，C僅用官方label取代原ID，D省impact.preserved/replaced全文，E省hours.existing/new/work/leave/total之一；請核對展示與helper輸出，修復省欄後等授權。另有已確認原preview後只更改todos的變體；不得沿用舊授權。",
+      "expected_output": "主案及replace變體直接展示各自同plan的helper完整JSON輸出，可包code block但不手工重寫/摘要化，保留action、mode、reportDate、expectedSnapshot、intent、每列八個業務欄位及null、impact scope與preserved/replaced全文、hours五欄；label在輸出外補充。A–E都辨識為不完整呈現並以同plan完整輸出補足，不另建授權稿、格式器或validator；所有未授權變體零write。todos變更重新preview並等待相應正向確認；write仍須fresh context/必要options、snapshot/intent與完整readback，未執行不聲稱已驗證。",
+      "expectations": [
+        "捕捉CLI stdout及agent展示code block，解析後逐欄深比對整個輸出；只比工時/description或搜尋指引文字不算通過。",
+        "A–E省欄/label替ID變體每個均失敗於對應欄位；正例完整展示通過；display外label不改原JSON。",
+        "append retained80全文/replaced空及hours 1/7/7/1/8可見；replace preserved空/replaced80全文及hours 0/8/7/1/8可見。",
+        "只有todos變更也重preview/確認，零businesswrite；後續fresh context/options與snapshot/intent/readback規則保留，不宣稱已連線驗證。"
+      ]
     }
   ]
 }

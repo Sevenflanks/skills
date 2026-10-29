@@ -24,7 +24,7 @@
       "name": "daily-work-log",
       "path": "skills/daily-work-log",
       "summary": "先探測並合併 OpenCode／Codex 與 Git／GitHub 證據；Codex metadata、SQLite history 與 exact JSONL 有界補證，依 canonical repo 查 issue 狀態並揭露缺口。",
-      "version": "0.7.0",
+      "version": "0.7.1",
       "license": "MIT",
       "author": "sevenflankse",
       "tags": [
@@ -43,7 +43,7 @@
       "name": "erp-daily-work-log",
       "path": "skills/erp-daily-work-log",
       "summary": "依工作證據與 canonical repo／issue 狀態填寫 ERP 日誌；只刷新失效補證並保留 preview／授權流程。",
-      "version": "0.4.1",
+      "version": "0.4.2",
       "license": "MIT",
       "author": "sevenflankse",
       "tags": ["erp", "work-log", "daily-report", "python", "authorization"],

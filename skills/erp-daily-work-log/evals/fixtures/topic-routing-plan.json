@@ -1,0 +1,79 @@
+{
+  "mode": "append",
+  "reportDate": "2026-10-14",
+  "expectedSnapshot": "synthetic-topic-routing-snapshot",
+  "context": {
+    "reportDate": "2026-10-14",
+    "details": [
+      {
+        "id": 80,
+        "reportType": "COMPANY",
+        "projectId": null,
+        "projectModuleId": null,
+        "mandateCharterId": null,
+        "subject": "既有內訓",
+        "description": "acme/training\n- 完成合成操作演練。",
+        "todos": "保留原文",
+        "hours": 1
+      }
+    ],
+    "expectedSnapshot": "synthetic-topic-routing-snapshot",
+    "serverNow": "2026-10-14T18:00:00+08:00",
+    "replaceDeadline": "2026-10-15T10:00:00+08:00",
+    "canReplace": true,
+    "leaves": [{"detailId": 31, "status": "PASS", "hours": 1}],
+    "leaveHours": 1,
+    "attendances": [{"id": 41, "recordTime": "2026-10-14T09:00:00", "classification": "ATTENDANCE", "leaveType": null}]
+  },
+  "rows": [
+    {
+      "expectedMandateCharterId": 81,
+      "detail": {
+        "reportType": "RD",
+        "projectId": null,
+        "projectModuleId": null,
+        "mandateCharterId": 81,
+        "subject": "檢核工具研發",
+        "description": "acme/widget\n- 完成檢核工具分析；issue #44 CLOSED。\nacme/tools\n- 補上驗證案例；PR #32 OPEN，待合併。",
+        "todos": "等待 acme/tools PR #32 合併",
+        "hours": 3
+      }
+    },
+    {
+      "detail": {
+        "reportType": "PROJECT",
+        "projectId": 7,
+        "projectModuleId": 71,
+        "mandateCharterId": null,
+        "subject": "帳務對帳",
+        "description": "acme/widget\n- 修正發票對帳；PR #31 MERGED。",
+        "todos": null,
+        "hours": 2
+      }
+    },
+    {
+      "detail": {
+        "reportType": "PROJECT",
+        "projectId": 7,
+        "projectModuleId": 72,
+        "mandateCharterId": null,
+        "subject": "出勤修正分析",
+        "description": "acme/widget\n- 分析打卡重複；issue #45 OPEN，尚待實作。",
+        "todos": "實作 issue #45 修正",
+        "hours": 1
+      }
+    },
+    {
+      "detail": {
+        "reportType": "LEAVE",
+        "projectId": null,
+        "projectModuleId": null,
+        "mandateCharterId": null,
+        "subject": "請假",
+        "description": null,
+        "todos": null,
+        "hours": 1
+      }
+    }
+  ]
+}
