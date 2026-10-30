@@ -65,8 +65,8 @@ if ($Note -cne $data.meta.note -or $From -ne $data.meta.from -or $To -ne $data.m
 [IO.File]::AppendAllText("$PSScriptRoot/calls.txt", $(if ($ProbeOnly) { "probe`n" } else { "collect`n" }))
 if ($ProbeOnly) { @{meta=$data.meta} | ConvertTo-Json -Depth 100 } else { Get-Content -LiteralPath "$PSScriptRoot/fixture.json" -Raw -Encoding utf8 }
 '@
-  Write-Utf8 "$root\scenario.ps1" @'
-param([string]$Root, [string]$RecipePath, [string]$SkillRoot, [string]$Mutation)
+  $scenario = @'
+param([string]$Root, [string]$RecipePath, [string]$SkillRoot, [string]$Mutation, [string]$RunLabel = $PSVersionTable.PSVersion.Major)
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 function Assert($Condition, $Message) { if (-not $Condition) { throw $Message } }
@@ -185,7 +185,7 @@ try {
   Assert ($blocked -and (Test-Path -LiteralPath $taskRoot)) 'Controlled consumer cleaned evidence after render only.'
   # 實際檔案 sink 只模擬對話邊界，不是真實 agent／使用者交付。
   $presentation = @($draftView.drafts | ForEach-Object { "目的地：$($_.destination)`n尚未發布；發布需本次明確同意。`n$($_.title)`n$($_.body)" }) -join "`n`n"
-  $presentationPath = Join-Path $Root ('synthetic-presentation-' + $PSVersionTable.PSVersion.Major + '.txt')
+  $presentationPath = Join-Path $Root ('synthetic-presentation-' + $RunLabel + '.txt')
   [IO.File]::WriteAllText($presentationPath, $presentation, $utf8)
   $sink = [IO.File]::ReadAllText($presentationPath, [Text.Encoding]::UTF8)
   foreach ($expected in $expectedDrafts) {
@@ -206,7 +206,7 @@ try {
   Assert ($selected[0].sessionEvidence[0].sessionId -ceq $selection.sessionId -and $selected[1].sessionEvidence[0].sessionIds[1] -ceq $selection.sessionId) 'Quoted/multiline selector or continuation changed.'
   Assert ($selected[0].sessionEvidence[0].title -ceq $fixture.meta.note -and [Text.Encoding]::UTF8.GetByteCount($selectedText) -lt 16000 -and $selectedText -notmatch 'LARGE-PRIVATE-SYNTHETIC') 'Selected read damaged text or included large unselected content (UTF-8 bytes).'
   Assert ([IO.File]::ReadAllText("$Root/calls.txt") -eq "probe`ncollect`n") 'Formatter/selection recollected evidence.'
-  $run = Join-Path $Root ('result-' + $PSVersionTable.PSVersion.Major)
+  $run = Join-Path $Root ('result-' + $RunLabel)
   $null = New-Item -ItemType Directory -Path $run
   foreach ($path in @($probePath,$rawPath,$erpPath,$selectedPath,$indexPath,$compatibilityPath)) { Copy-Item -LiteralPath $path -Destination $run }
   [IO.File]::WriteAllText((Join-Path $run 'index.json'), $index, $utf8)
@@ -223,19 +223,33 @@ try {
   if ($taskRoot -and (Test-Path -LiteralPath $taskRoot)) { Remove-Item -LiteralPath $taskRoot -Recurse -Force }
 }
 '@
+  # PS5.1 的 -File 以 ANSI 解讀無 BOM 原始碼；只替含中文的 scenario 加 BOM。
+  # Capture JSON 仍由 Write-Utf8／配方維持 UTF-8 無 BOM 契約。
+  [IO.File]::WriteAllText("$root\scenario.ps1", $scenario, [Text.UTF8Encoding]::new($true))
+  # 固定 ANSI fallback，避免本機 ACP 65001 掩蓋 PS5.1 對無 BOM 原始碼的誤讀。
+  # 讀取同一份 scenario 後真正執行配方及輸出斷言，不只檢查 BOM bytes。
+  Write-Utf8 "$root\ansi-source-consumer.ps1" @'
+param([string]$Root, [string]$RecipePath, [string]$SkillRoot, [string]$Mutation)
+$ErrorActionPreference = 'Stop'
+$source = [IO.File]::ReadAllText((Join-Path $Root 'scenario.ps1'), [Text.Encoding]::GetEncoding(1252))
+& ([scriptblock]::Create($source)) -Root $Root -RecipePath $RecipePath -SkillRoot $SkillRoot -Mutation $Mutation -RunLabel '5-ansi1252'
+'@
   foreach ($shell in @($ps5, $pwsh)) {
     if (Test-Path -LiteralPath "$root\calls.txt") { Remove-Item -LiteralPath "$root\calls.txt" }
     # Process-only policy for synthetic scripts; no registry/profile/global change.
     & $shell -NoProfile -ExecutionPolicy Bypass -File "$root\scenario.ps1" -Root $root -RecipePath $recipePath -SkillRoot $skillRoot -Mutation $Mutation
     if ($LASTEXITCODE -ne 0) { throw "Windows capture failed with $shell (mutation=$Mutation)." }
   }
+  if (Test-Path -LiteralPath "$root\calls.txt") { Remove-Item -LiteralPath "$root\calls.txt" }
+  & $ps5 -NoProfile -ExecutionPolicy Bypass -File "$root\ansi-source-consumer.ps1" -Root $root -RecipePath $recipePath -SkillRoot $skillRoot -Mutation $Mutation
+  if ($LASTEXITCODE -ne 0) { throw "Windows capture failed with ANSI-1252 source fallback (mutation=$Mutation)." }
   if ($EvidenceRoot) {
     $destination = Join-Path $EvidenceRoot ('windows-capture-' + [guid]::NewGuid().ToString('N'))
     $null = New-Item -ItemType Directory -Path $destination
     Copy-Item -Path "$root\result-*" -Destination $destination -Recurse
     "Synthetic evidence: $destination"
   }
-  'PASS Windows PowerShell 5.1 -> pwsh 7 and pwsh 7 -> pwsh 7; UTF-8 capture, bounded large-meta index, full compatibility drafts, Python selection and synthetic checkpoint-controlled cleanup (not actual conversation delivery).'
+  'PASS Windows PowerShell 5.1 -> pwsh 7, pwsh 7 -> pwsh 7 and ANSI-1252 source fallback; UTF-8 capture, bounded large-meta index, full compatibility drafts, Python selection and synthetic checkpoint-controlled cleanup (not actual conversation delivery).'
 } finally {
   if (Test-Path -LiteralPath $root) { Remove-Item -LiteralPath $root -Recurse -Force }
 }
