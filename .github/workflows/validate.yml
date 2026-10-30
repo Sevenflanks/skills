@@ -93,6 +93,15 @@ jobs:
       - name: Verify Windows 5.1 capture recipes and controlled consumer checkpoints
         run: pwsh -NoProfile -File skills/daily-work-log/tests/windows-capture.tests.ps1 -EvidenceRoot $env:DAILY_WORK_LOG_EVIDENCE_ROOT
 
+      - name: Verify bundled capture CLI and probe boundaries
+        run: pwsh -NoProfile -File skills/daily-work-log/tests/capture-cli.tests.ps1
+
+      - name: Verify fixed selection CLI and original raw pointers
+        run: pwsh -NoProfile -File skills/daily-work-log/tests/selection-cli.tests.ps1
+
+      - name: Verify collector efficiency and bounded historical PR evidence
+        run: python -B -m unittest discover -s skills/daily-work-log/tests -p test_collector_efficiency.py -v
+
   opencode-db-tests:
     strategy:
       fail-fast: false
