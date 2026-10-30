@@ -1068,7 +1068,7 @@ function Get-SessionDirectoriesFromDb {
   foreach ($key in @($metadata.results.Keys)) { $metadata.results[$key] = 0 }
 
   $paths = [System.Collections.Generic.List[object]]::new()
-  $seenCandidates = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+  $seenCandidates = [System.Collections.Generic.Dictionary[string,object]]::new([System.StringComparer]::OrdinalIgnoreCase)
   $unresolvedCount = 0
 
   if (@($rows).Count -eq 0) {
@@ -1096,7 +1096,8 @@ function Get-SessionDirectoriesFromDb {
         continue
       }
 
-      if (-not $seenCandidates.Add($sessionId + "`n" + $candidatePath)) {
+      $candidateKey = $sessionId + "`n" + $candidatePath
+      if (-not $seenCandidates.TryAdd($candidateKey, $null)) {
         $metadata.duplicateInputs++
         continue
       }
@@ -1105,12 +1106,16 @@ function Get-SessionDirectoriesFromDb {
       $repoRoot = Resolve-GitRepoRootFromPath -Path $candidatePath
       if ($repoRoot) {
         $metadata.results.repo++
-        $paths.Add((New-SessionCandidate -Path $repoRoot -Evidence (New-SessionEvidence -Source 'session' -Path $candidatePath -Session $row)))
+        $evidence = New-SessionEvidence -Source 'session' -Path $candidatePath -Session $row
+        $seenCandidates[$candidateKey] = $evidence
+        $paths.Add((New-SessionCandidate -Path $repoRoot -Evidence $evidence))
       }
       elseif (-not $repoRoot) {
         if (Test-Path -LiteralPath $candidatePath -PathType Container) {
           $metadata.results.aggregateDirectory++
-          $paths.Add((New-SessionCandidate -Path $candidatePath -Evidence (New-SessionEvidence -Source 'session' -Path $candidatePath -Session $row)))
+          $evidence = New-SessionEvidence -Source 'session' -Path $candidatePath -Session $row
+          $seenCandidates[$candidateKey] = $evidence
+          $paths.Add((New-SessionCandidate -Path $candidatePath -Evidence $evidence))
         }
         else {
           $metadata.results.notResolved++
@@ -1141,13 +1146,33 @@ function Get-SessionDirectoriesFromDb {
       if (-not (Test-Path -LiteralPath $candidatePath -PathType Container)) { $unresolvedWorkdirs++; $workdir.results.notResolvedRows++; continue }
       $repoRoot = Resolve-GitRepoRootFromPath -Path $candidatePath
       if (-not $repoRoot) { $unresolvedWorkdirs++; $workdir.results.notResolvedRows++; continue }
-      if (-not $seenCandidates.Add($candidateKey)) { $workdir.results.alreadyAttributedRows++; continue }
-      $workdir.results.repoRows++
-      $evidence = New-SessionEvidence -Source 'session' -Path $candidatePath -Session $row
-      $evidence | Add-Member -NotePropertyName pathSource -NotePropertyValue 'bash-workdir'
-      $evidence | Add-Member -NotePropertyName tool -NotePropertyValue 'bash'
-      $evidence | Add-Member -NotePropertyName timestamp -NotePropertyValue $row.timestamp
-      $paths.Add((New-SessionCandidate -Path $repoRoot -Evidence $evidence))
+      if ($seenCandidates.ContainsKey($candidateKey)) {
+        $workdir.results.alreadyAttributedRows++
+        $evidence = $seenCandidates[$candidateKey]
+        if ($null -eq $evidence) { continue }
+      }
+      else {
+        $workdir.results.repoRows++
+        $evidence = New-SessionEvidence -Source 'session' -Path $candidatePath -Session $row
+        $evidence | Add-Member -NotePropertyName pathSource -NotePropertyValue 'bash-workdir'
+        $evidence | Add-Member -NotePropertyName tool -NotePropertyValue 'bash'
+        $evidence | Add-Member -NotePropertyName timestamp -NotePropertyValue $row.timestamp
+        $seenCandidates.Add($candidateKey, $evidence)
+        $paths.Add((New-SessionCandidate -Path $repoRoot -Evidence $evidence))
+      }
+      # 同 session/path 仍只保留一列與原身份；去重不能丟掉當日 part 的時間補證。
+      # 只合併已通過 range/shape guard 的 workdir 列，不借用其他 session 或 path 的日期。
+      if (-not $evidence.PSObject.Properties['timestamps']) {
+        $evidence | Add-Member -NotePropertyName timestamps -NotePropertyValue @()
+        $evidence | Add-Member -NotePropertyName provenance -NotePropertyValue @()
+      }
+      if ($row.timestamp -notin $evidence.timestamps) {
+        $evidence.timestamps += $row.timestamp
+        $evidence.provenance += [ordered]@{
+          pathSource = 'bash-workdir'; tool = 'bash'; sessionId = [string]$row.id
+          path = $candidatePath; timestamp = $row.timestamp
+        }
+      }
     }
     if ($unresolvedWorkdirs -gt 0) {
       $script:OpenCodeReadFailures++

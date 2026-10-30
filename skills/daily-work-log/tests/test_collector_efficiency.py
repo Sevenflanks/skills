@@ -280,14 +280,32 @@ param([Parameter(ValueFromRemainingArguments=$true)][string[]]$Arguments)
         self.fixture['workdirs'] = [
             dict(id='cross-day', title='https://github.com/synthetic/project/pull/17', tool='bash',
                  workdir=str(workdir), timestamp=1791424800000),
+            dict(id='cross-day', title='https://github.com/synthetic/project/pull/17', tool='bash',
+                 workdir=str(workdir), timestamp=1791428400000),
+            dict(id='cross-day', title='https://github.com/synthetic/project/pull/17', tool='bash',
+                 workdir=str(workdir), timestamp=1791424800000),
             dict(id='foreign', title='https://github.com/foreign/project/pull/18', tool='bash',
                  workdir=str(workdir), timestamp=1791424800000),
         ]
 
         data = self.collect()
 
+        evidence = [e for e in data['repos'][0]['sessionEvidence'] if e['sessionId'] == 'cross-day']
+        self.assertEqual(len(evidence), 2, 'distinct metadata and nested paths must remain separate candidates')
+        self.assertNotIn('timestamps', evidence[0], 'nested day proof must not alter the metadata path')
+        self.assertEqual(evidence[1]['pathSource'], 'bash-workdir')
+        self.assertEqual(evidence[1]['timestamp'], 1791424800000)
+        self.assertEqual(evidence[1]['timestamps'], [1791424800000, 1791428400000])
+        self.assertEqual(evidence[1]['provenance'], [
+            dict(pathSource='bash-workdir', tool='bash', sessionId='cross-day',
+                 path=str(workdir), timestamp=1791424800000),
+            dict(pathSource='bash-workdir', tool='bash', sessionId='cross-day',
+                 path=str(workdir), timestamp=1791428400000),
+        ])
         workdir = data['meta']['sources']['opencode']['discovery']['workdir']
-        self.assertEqual((workdir['status'], workdir['returnedRows'], workdir['processedRows']), ('success', 2, 2))
+        self.assertEqual((workdir['status'], workdir['returnedRows'], workdir['processedRows']), ('success', 4, 4))
+        self.assertEqual((workdir['normalizedUniqueCandidates'], workdir['repeatedCandidateRows']), (2, 2))
+        self.assertEqual(workdir['results'], dict(repoRows=2, alreadyAttributedRows=2, notResolvedRows=0))
         self.assertEqual([p['number'] for p in data['repos'][0]['prs']], [17])
         self.assertEqual(data['repos'][0]['prs'][0]['reportEvidence'], 'session-reference')
         self.assertEqual([c[:3] for c in self.calls()], [['api', 'user'], ['pr', 'view', '17']],
@@ -301,6 +319,89 @@ param([Parameter(ValueFromRemainingArguments=$true)][string[]]$Arguments)
         self.assertEqual([p['number'] for p in data['repos'][0]['prs']], [7])
         self.assertTrue(any('not valid JSON' in w for w in data['repos'][0]['warnings']))
         self.assertTrue(any('gh pr view failed' in w for w in data['repos'][0]['warnings']))
+
+    def test_same_exact_metadata_path_merges_workdir_times_without_duplicate_evidence(self):
+        # Observer: raw evidence and GitHub requests. Dedup must not discard same-session day proof.
+        self.fixture['commits'] = []
+        metadata = self.row('cross-day', 'repo-a', 'https://github.com/synthetic/project/pull/17')
+        metadata.update(path=str(self.root / 'repo-a') + os.sep + '.',
+                        time_created=1791302400000, time_updated=1791561600000)
+        self.fixture['rows'] = [metadata]
+        self.fixture['exact'] = {'17': self.pr(17)}
+        self.fixture['workdirs'] = [
+            dict(id='cross-day', title='supplement must not replace metadata PR #91', tool='bash',
+                 workdir=str(self.root / 'repo-a') + (os.sep + suffix if suffix else ''), timestamp=timestamp)
+            for suffix, timestamp in (('', 1791424800000), ('.', 1791428400000), ('', 1791424800000))
+        ]
+
+        data = self.collect()
+
+        self.assertEqual([p['number'] for p in data['repos'][0]['prs']], [17])
+        self.assertEqual([c[:3] for c in self.calls()], [['api', 'user'], ['pr', 'view', '17']])
+        evidence, = data['repos'][0]['sessionEvidence']
+        self.assertEqual({k: evidence[k] for k in ('source', 'agent', 'discoverySource', 'sessionId',
+                                                  'path', 'title', 'timeCreated', 'timeUpdated')},
+                         dict(source='session', agent='opencode', discoverySource='session', sessionId='cross-day',
+                              path=str(self.root / 'repo-a'), title=metadata['title'],
+                              timeCreated=1791302400000, timeUpdated=1791561600000))
+        self.assertNotIn('pathSource', evidence, 'metadata identity must not become bash-workdir')
+        self.assertEqual(evidence['timestamps'], [1791424800000, 1791428400000])
+        self.assertEqual(evidence['provenance'], [
+            dict(pathSource='bash-workdir', tool='bash', sessionId='cross-day',
+                 path=str(self.root / 'repo-a'), timestamp=1791424800000),
+            dict(pathSource='bash-workdir', tool='bash', sessionId='cross-day',
+                 path=str(self.root / 'repo-a'), timestamp=1791428400000),
+        ])
+        discovery = data['meta']['sources']['opencode']['discovery']
+        self.assertEqual(discovery['metadata']['duplicateInputs'], 1)
+        w = discovery['workdir']
+        self.assertEqual((w['returnedRows'], w['processedRows'], w['normalizedUniqueCandidates'],
+                          w['repeatedCandidateRows']), (3, 3, 1, 2))
+        self.assertEqual(w['results'], dict(repoRows=0, alreadyAttributedRows=3, notResolvedRows=0))
+        self.assertEqual(data['meta']['sources']['opencode']['readStatus'], 'success')
+        self.assertEqual(data['meta']['diagnostics']['stages']['github']['calls'], 2)
+
+    def test_workdir_day_proof_cannot_cross_session_path_or_range(self):
+        self.fixture['commits'] = []
+        self.fixture['rows'] = [
+            self.row('missing-part', 'repo-a', 'PR #19'),
+            self.row('out-of-range', 'repo-a', 'PR #20'),
+            self.row('other-path', 'repo-a', 'PR #21'),
+            self.row('foreign', 'repo-a', 'https://github.com/foreign/project/pull/18'),
+            self.row('positive', 'repo-a', 'PR #17'),
+        ]
+        for row in self.fixture['rows']:
+            row.update(time_created=1791302400000, time_updated=1791561600000)
+        self.fixture['exact'] = {str(n): self.pr(n) for n in (17, 18, 19, 20, 21)}
+        self.fixture['workdirs'] = [
+            dict(id=sid, title=title, tool='bash', workdir=str(self.root / path), timestamp=timestamp)
+            for sid, title, path, timestamp in (
+                ('another-session', 'no PR reference', 'repo-a', 1791424800000),
+                ('out-of-range', 'PR #20', 'repo-a', 1791302400000),
+                ('other-path', 'no PR reference', 'repo-b', 1791424800000),
+                ('foreign', 'https://github.com/foreign/project/pull/18', 'repo-a', 1791424800000),
+                ('positive', 'PR #17', 'repo-a', 1791424800000),
+            )
+        ]
+
+        data = self.collect()
+
+        self.assertEqual([[p['number'] for p in repo['prs']] for repo in data['repos']], [[17], []])
+        self.assertEqual([c[:3] for c in self.calls()], [['api', 'user'], ['pr', 'view', '17']])
+        evidence = data['repos'][0]['sessionEvidence']
+        self.assertEqual([e['sessionId'] for e in evidence],
+                         ['missing-part', 'out-of-range', 'other-path', 'foreign', 'positive', 'another-session'])
+        for row in evidence[:3]:
+            self.assertNotIn('timestamps', row)
+            self.assertNotIn('provenance', row)
+        self.assertEqual(evidence[3]['timestamps'], [1791424800000])
+        self.assertEqual(evidence[4]['timestamps'], [1791424800000])
+        w = data['meta']['sources']['opencode']['discovery']['workdir']
+        self.assertEqual((w['returnedRows'], w['processedRows'], w['invalidRows'],
+                          w['normalizedUniqueCandidates'], w['repeatedCandidateRows']), (5, 5, 1, 4, 0))
+        self.assertEqual(w['results'], dict(repoRows=2, alreadyAttributedRows=2, notResolvedRows=0))
+        self.assertEqual(data['meta']['sources']['opencode']['readStatus'], 'partial')
+        self.assertTrue(any('invalid row shape' in warning for warning in data['warnings']))
 
     def test_exact_session_lookup_is_bounded_and_reports_coverage(self):
         self.fixture['commits'] = []
