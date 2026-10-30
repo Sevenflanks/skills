@@ -39,7 +39,7 @@
 
 ## daily-work-log
 
-`daily-work-log` 先用固定 PowerShell collector 的 `-ProbeOnly` 探測 OpenCode／Codex，向使用者預告來源與略過理由，再合併本機活動、`git log --all` 與相關 GitHub PR／issue 證據。Codex 以 metadata 找候選、SQLite history 按 item 時間精選，再用 exact JSONL 補證；Python 3.11+ 與已核對的 `0.164.0-alpha.11.1` contract 必要。SQL／JSONL 額度分開揭露，有限涵蓋與相容性缺口不推論完整 recall；無來源或讀取全失敗時停止。Collector stdout 維持純 JSON，由 agent 去重相同工作主題，輸出優先依 GitHub repo name 分組的每日工作日誌。
+`daily-work-log` 先用固定 PowerShell collector 的 `-ProbeOnly` 探測 OpenCode／Codex，向使用者預告來源與略過理由，再合併本機活動、`git log --all` 與相關 GitHub PR／issue 證據。Codex 以 metadata 找候選、SQLite history 按 item 時間精選，再用 exact JSONL 補證；Python 3.11+ 為必要，已核對的 `0.164.0-alpha.11.1` 僅作 reference contract，不因 Codex 版本不同、未知或缺少版本而拒絕、降級或產生相容性草稿，依實際 schema／時間／內容與安全 indexed query 能力處理。SQL／JSONL 額度分開揭露，有限涵蓋與相容性缺口不推論完整 recall；無來源或讀取全失敗時停止。Collector stdout 維持純 JSON，由 agent 去重相同工作主題，輸出優先依 GitHub repo name 分組的每日工作日誌。
 
 適用於需要整理今日或指定時間範圍的工作摘要，例如：
 
