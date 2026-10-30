@@ -7,6 +7,7 @@ import shutil
 import signal
 import sqlite3
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -111,6 +112,22 @@ param([Parameter(ValueFromRemainingArguments=$true)][string[]]$Arguments)
                                  '-OpenCodeLogRoot', str(self.root / 'missing-log'),
                                  '-OpenCodeStorageRoot', str(self.root / 'missing-storage'),
                                  '-CodexRoot', str(self.codex_root), *extra]
+        result = self.run_child(command, 'collector')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        data = json.loads(result.stdout)
+        self.assertEqual(bool(data['errors']), expect_error)
+        if os.environ.get('DWL57_EVIDENCE_ROOT'):
+            evidence = Path(os.environ['DWL57_EVIDENCE_ROOT'])
+            evidence.mkdir(parents=True, exist_ok=True)
+            summary = dict(test=self.id(), command='python -B -m unittest discover -s skills/daily-work-log/tests -p test_collector_efficiency.py -v',
+                           diagnostics=data['meta']['diagnostics'], collectionStatus=data['meta'].get('collectionStatus'),
+                           prs=[[p['number'] for p in r['prs']] for r in data['repos']],
+                           ghCalls=self.calls(), rgCalls=len(self.calls('rg')), exitCode=result.returncode)
+            (evidence / (self.id().split('.')[-1] + '.json')).write_text(json.dumps(summary, indent=2), encoding='utf-8')
+        return data
+
+    def run_child(self, command, boundary):
+        # Share the same runner deadline and process-tree cleanup for CLI and native harness.
         with subprocess.Popen(command, env=self.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                               text=True, encoding='utf-8', start_new_session=(os.name != 'nt')) as child:
             try:
@@ -129,20 +146,8 @@ param([Parameter(ValueFromRemainingArguments=$true)][string[]]$Arguments)
                     except ProcessLookupError:
                         pass
                 stdout, stderr = child.communicate()
-                self.fail(f'collector stdout/stderr completion deadline expired; stdout={stdout!r}; stderr={stderr!r}')
-        result = subprocess.CompletedProcess(command, child.returncode, stdout, stderr)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        data = json.loads(result.stdout)
-        self.assertEqual(bool(data['errors']), expect_error)
-        if os.environ.get('DWL57_EVIDENCE_ROOT'):
-            evidence = Path(os.environ['DWL57_EVIDENCE_ROOT'])
-            evidence.mkdir(parents=True, exist_ok=True)
-            summary = dict(test=self.id(), command='python -B -m unittest discover -s skills/daily-work-log/tests -p test_collector_efficiency.py -v',
-                           diagnostics=data['meta']['diagnostics'], collectionStatus=data['meta'].get('collectionStatus'),
-                           prs=[[p['number'] for p in r['prs']] for r in data['repos']],
-                           ghCalls=self.calls(), rgCalls=len(self.calls('rg')), exitCode=result.returncode)
-            (evidence / (self.id().split('.')[-1] + '.json')).write_text(json.dumps(summary, indent=2), encoding='utf-8')
-        return data
+                self.fail(f'{boundary} stdout/stderr completion deadline expired; stdout={stdout!r}; stderr={stderr!r}')
+        return subprocess.CompletedProcess(command, child.returncode, stdout, stderr)
 
     def calls(self, name='gh'):
         path = self.root / f'{name}.jsonl'
@@ -322,6 +327,59 @@ param([Parameter(ValueFromRemainingArguments=$true)][string[]]$Arguments)
         self.assertEqual(failure['meta']['collectionStatus'], 'read-failed')
         self.assertGreater(failure['meta']['diagnostics']['stages']['sourceAdapter']['calls'], 0)
         self.assertIsNone(failure['meta']['diagnostics']['stages']['github']['calls'])
+
+    def test_native_wrapper_preserves_full_dual_stream_and_exact_exit(self):
+        # Observer: Invoke-Native callers. Breaks: lost/truncated/swapped streams or normalized exit code.
+        # Extract real definitions without executing collector discovery or copying its implementation.
+        self.write('native-harness.ps1', r'''
+param([string]$Collector, [string]$Python, [string]$ChildScript)
+$ErrorActionPreference = 'Stop'
+$tokens = $null; $parseErrors = $null
+$ast = [System.Management.Automation.Language.Parser]::ParseFile($Collector, [ref]$tokens, [ref]$parseErrors)
+if ($parseErrors.Count) { throw ($parseErrors | Out-String) }
+foreach ($name in @('Start-CollectionStage', 'Complete-CollectionStage', 'Invoke-Native')) {
+  $definitions = @($ast.FindAll({ param($node)
+    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name
+  }, $true))
+  if ($definitions.Count -ne 1) { throw "Expected one production definition for $name" }
+  . ([scriptblock]::Create($definitions[0].Extent.Text))
+}
+$results = foreach ($code in @(0, 7)) {
+  Invoke-Native -FilePath $Python -Arguments @($ChildScript, [string]$code) -WorkingDirectory $PSScriptRoot
+}
+ConvertTo-Json -InputObject @($results) -Compress
+''')
+        self.write('native-child.py', r'''
+import sys
+# Each identifiable ASCII payload is exactly 256 KiB; internal whitespace must survive.
+sys.stdout.write('OUT:0123456789 |' * 16384 + ' \t\r\n')
+sys.stdout.flush()
+sys.stderr.write('ERR:abcdefghij\t|' * 16384 + ' \t\r\n')
+sys.stderr.flush()
+sys.exit(int(sys.argv[1]))
+''')
+        result = self.run_child([PWSH, '-NoProfile', '-File', str(self.root / 'native-harness.ps1'),
+                                 str(COLLECTOR), sys.executable, str(self.root / 'native-child.py')], 'Invoke-Native')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr, '')
+        outputs = json.loads(result.stdout)
+        self.assertEqual(len(outputs), 2)
+        for expected_code, output in zip((0, 7), outputs):
+            with self.subTest(exit_code=expected_code):
+                self.assertEqual(output['ExitCode'], expected_code, 'Invoke-Native must retain the exact child exit code')
+                self.assertEqual(output['StdOut'], 'OUT:0123456789 |' * 16384,
+                                 'Invoke-Native must preserve all stdout except trailing whitespace')
+                self.assertEqual(output['StdErr'], 'ERR:abcdefghij\t|' * 16384,
+                                 'Invoke-Native must preserve all stderr except trailing whitespace')
+        if os.environ.get('DWL57_EVIDENCE_ROOT'):
+            evidence = Path(os.environ['DWL57_EVIDENCE_ROOT'])
+            evidence.mkdir(parents=True, exist_ok=True)
+            summary = dict(test=self.id(), harnessExitCode=result.returncode,
+                           cases=[dict(exitCode=o['ExitCode'], stdoutBytes=len(o['StdOut'].encode('utf-8')),
+                                       stderrBytes=len(o['StdErr'].encode('utf-8')),
+                                       stdoutExact=o['StdOut'] == 'OUT:0123456789 |' * 16384,
+                                       stderrExact=o['StdErr'] == 'ERR:abcdefghij\t|' * 16384) for o in outputs])
+            (evidence / (self.id().split('.')[-1] + '.json')).write_text(json.dumps(summary, indent=2), encoding='utf-8')
 
     def test_native_dual_stream_preserves_json_and_nonzero_error(self):
         self.fixture['flood'] = True
