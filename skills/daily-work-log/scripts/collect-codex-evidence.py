@@ -146,7 +146,7 @@ class Collector:
         finally:
             cursor.close()
 
-    def gap(self, adapter, gap, scope='requested-range'):
+    def gap(self, adapter, gap, scope='requested-range', time_fields=()):
         self.adapters[adapter].update(status=gap.status, reason=gap.reason)
         if gap.status == 'limited':
             self.sql['limitHits'].append(gap.reason)
@@ -159,7 +159,25 @@ class Collector:
             elif 'index' in gap.reason or 'query' in gap.reason:
                 category, reproduce = 'query-capability', '建立完整合成 table，但移除列出的 leading-column index；確認 collector 拒絕非 SEARCH 計畫。'
             elif 'time' in gap.reason:
-                category, reproduce = 'time-capability', '在已選合成 item 的時間欄位填入 17、null 或非數值字串，並附上一筆有效時間的 item。'
+                category = 'time-capability'
+                if adapter == 'state' and gap.reason == 'unknown-metadata-time':
+                    # threads 的 lifespan 與 item 時間是不同層；按本次可用欄位重現，不能誤導去改 item。
+                    assignments = ','.join(field + '=NULL' for field in time_fields)
+                    reproduce = '建立相同時間欄位的合成 threads（允許 NULL），保留可讀 rollout 與有效 item；_ms 欄位是毫秒，其餘是秒。只在合成 state_5.sqlite 執行：\n```sql\nUPDATE threads SET ' + assignments + ';\n```\n'
+                elif adapter == 'history':
+                    value = 'NULL' if gap.reason == 'unknown-history-item-time' else "'synthetic-invalid'" if gap.reason == 'non-numeric-time' else '17'
+                    reproduce = '在合成 thread_history_1.sqlite 的 thread_items 建立已選 thread 下 item_id=bad 的有效訊息與另一筆有效時間訊息。created_at_ms 是毫秒；只修改合成 item：\n```sql\nUPDATE thread_items SET created_at_ms=' + value + " WHERE item_id='bad';\n```\n"
+                elif adapter == 'exact':
+                    event = {'type': 'event_msg', 'timestamp': None if gap.reason == 'unknown-event-time' else 17,
+                             'payload': {'type': 'user_message', 'message': 'synthetic time reproduction'}}
+                    if gap.reason == 'non-numeric-time':
+                        event = {'type': 'event_msg', 'timestamp': '2026-05-29T02:00:00Z', 'payload': {
+                            'type': 'item_completed', 'thread_id': 'old', 'turn_id': 'turn-a',
+                            'item': {'type': 'AgentMessage', 'id': 'bad-time', 'content': [{'type': 'Text', 'text': 'synthetic time reproduction'}]},
+                            'started_at_ms': 'synthetic-invalid', 'completed_at_ms': 1780020001000}}
+                    reproduce = '建立合成 rollout，session_meta.id=old 且 cwd 指向合成 repo；保留一筆指定日期內有效訊息，再加入此 event。canonical started_at_ms 有值時是權威毫秒，否則採 envelope timestamp：\n```json\n' + encoded(event) + '\n```\n'
+                else:
+                    reproduce = '在隔離合成資料中核對對應 adapter 的時間欄位與單位，保留一筆有效時間的訊息供對照。'
             elif 'item' in gap.reason or 'message' in gap.reason:
                 category, reproduce = 'content-capability', '在已選合成 thread 放入未知 type 或無效 item JSON，並在其後放一筆有效訊息。'
             elif gap.reason.startswith('python-'):
@@ -267,6 +285,33 @@ class Collector:
         # 只正規化對照用欄位，原始 canonical event 仍完整保留於 detail/mirrorDetails。
         normalized = {re.sub(r'_([a-z])', lambda m: m[1].upper(), k): v for k, v in raw.items()}
         normalized['type'] = projected_type
+        if typ == 'FileChange':
+            changes, status = raw.get('changes'), raw.get('status')
+            if not isinstance(changes, dict) or status is not None and status not in ('completed', 'failed', 'declined'):
+                raise Gap('compatibility-error', 'invalid-canonical-item-file-change')
+            converted = []
+            # 官方 convert_patch_changes 依 path 排序；move_path 同時影響 kind 與 diff 尾註。
+            # 只投影 ThreadItem 保留的欄位；stdout/auto_approved 等原文仍留在 mirrorDetails。
+            for path, change in sorted(changes.items()):
+                if not isinstance(change, dict):
+                    raise Gap('compatibility-error', 'invalid-canonical-item-file-change')
+                action = change.get('type')
+                if action in ('add', 'delete'):
+                    diff, kind = change.get('content'), {'type': action}
+                elif action == 'update':
+                    diff, move_path = change.get('unified_diff'), change.get('move_path')
+                    if move_path is not None and not isinstance(move_path, str):
+                        raise Gap('compatibility-error', 'invalid-canonical-item-file-change')
+                    kind = {'type': 'update', 'move_path': move_path}
+                    if isinstance(diff, str) and move_path is not None:
+                        diff += '\n\nMoved to: ' + move_path
+                else:
+                    raise Gap('compatibility-error', 'invalid-canonical-item-file-change')
+                if not isinstance(diff, str):
+                    raise Gap('compatibility-error', 'invalid-canonical-item-file-change')
+                converted.append({'path': path, 'kind': kind, 'diff': diff})
+            normalized = {'type': projected_type, 'id': raw['id'], 'changes': converted,
+                          'status': status if status is not None else 'inProgress'}
         if typ not in ('UserMessage', 'AgentMessage'):
             return projected_type, 'tool', encoded(normalized), normalized
         content = raw.get('content')
@@ -606,7 +651,7 @@ class Collector:
                 candidates.append(row)
             versions = sorted({c['cli_version'] for c in candidates if isinstance(c['cli_version'], str) and re.fullmatch(r'\d{1,3}\.\d{1,3}\.\d{1,3}(?:-alpha\.\d{1,4}\.\d{1,4})?', c['cli_version'])})[:8]
             if self.adapters['state'].get('unknownMetadataTimes'):
-                self.gap('state', Gap('compatibility-error', 'unknown-metadata-time'))
+                self.gap('state', Gap('compatibility-error', 'unknown-metadata-time'), time_fields=tuple(field for field in ('created_at', 'updated_at', 'created_at_ms', 'updated_at_ms') if field in columns))
             self.adapters['state'].update(status='partial' if self.adapters['state'].get('unknownMetadataTimes') else 'success' if candidates else 'valid-empty', candidates=len(candidates), runtime=','.join(versions) if versions else 'unverified')
         except (Gap, sqlite3.Error) as error:
             self.gap('state', error if isinstance(error, Gap) else self.sqlite_gap(error))
