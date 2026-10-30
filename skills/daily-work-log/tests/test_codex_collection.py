@@ -270,7 +270,8 @@ class CodexCollection(unittest.TestCase):
         self.rollout(messages=records)
         sql_items = [dict(type='commandExecution', id='cmd', command='echo ok', status='completed', aggregatedOutput='ok', exitCode=0),
                      dict(type='dynamicToolCall', id='dyn', tool='lookup', arguments={'q': 'test'}, status='completed', contentItems=dynamic['content_items'], success=True),
-                     {**mcp, 'type': 'mcpToolCall'}, {**output, 'type': 'functionCallOutput'}]
+                     {**mcp, 'type': 'mcpToolCall', 'result': {'content': [{'type': 'text', 'text': 'mcp found'}], 'structuredContent': None, '_meta': None}},
+                     {**output, 'type': 'functionCallOutput'}]
         for item in sql_items:
             self.item(None, iid=item['id'], **item)
         data = self.collect()
@@ -297,8 +298,8 @@ class CodexCollection(unittest.TestCase):
                    self.completed({**search, 'action': {'type': 'search', 'queries': ['different query']}})]
         self.rollout(messages=records)
         sql_change = {'id': 'file-a', 'type': 'fileChange', 'changes': [], 'status': 'completed'}
-        sql_search = {'action': {'queries': ['synthetic query'], 'type': 'search'},
-                      'query': 'synthetic query', 'id': 'web-a', 'type': 'webSearch'}
+        sql_search = {'action': {'queries': ['synthetic query'], 'query': None, 'type': 'search'},
+                      'query': 'synthetic query', 'id': 'web-a', 'type': 'webSearch', 'results': None}
         for iid, raw in [('file-a', sql_change), ('web-a', sql_search)]:
             self.item(None, iid=iid)
             self.history.execute('update thread_items set item_json=?,item_type=? where item_id=?',
@@ -317,6 +318,184 @@ class CodexCollection(unittest.TestCase):
         self.assertEqual(sum(e['turnId'] == 'other-turn' for e in events), 1)
         self.assertEqual(sum(e['tool']['status'] == 'failed' for e in events), 1)
         self.assertEqual(data['meta']['sources']['codex']['readStatus'], 'success')
+
+    def test_reasoning_real_projection_mirrors_only_same_summary_content_and_identity(self):
+        reasoning = {'type': 'Reasoning', 'id': 'reason', 'summary_text': ['summary one', 'summary two'],
+                     'raw_content': ['reason one', 'reason two']}
+        records = [self.completed(reasoning),
+                   self.completed({**reasoning, 'summary_text': ['different summary']}),
+                   self.completed({**reasoning, 'raw_content': ['different content']}),
+                   self.completed({**reasoning, 'id': 'other-item'}),
+                   self.completed(reasoning, turn='other-turn')]
+        self.rollout(messages=records)
+        projected = {'type': 'reasoning', 'id': 'reason', 'summary': ['summary one', 'summary two'],
+                     'content': ['reason one', 'reason two']}
+        self.item(None, iid='reason')
+        self.history.execute('update thread_items set item_json=?,item_type=?', (json.dumps(projected), 'reasoning'))
+        self.history.commit()
+        events = self.collect()['repos'][0]['sessionEvidence']
+        self.assertEqual(len(events), 5)
+        mirror = next(e for e in events if len(e['provenance']) == 2)
+        self.assertEqual(mirror['sourceId'], 'reason')
+        self.assertEqual(mirror['detail'], projected)
+        self.assertEqual(mirror['mirrorDetails'], [records[0]])
+        self.assertEqual({p['adapter'] for p in mirror['provenance']}, {'history', 'exact-jsonl'})
+        self.assertEqual(sum(e['itemId'] == 'other-item' for e in events), 1)
+        self.assertEqual(sum(e['turnId'] == 'other-turn' for e in events), 1)
+
+    def projected(self, raw):
+        # 直接保存公開 ThreadItem 的 literal fixture，不附上 item() 的 legacy text 欄位。
+        self.item(None, iid=raw['id'])
+        self.history.execute('update thread_items set item_json=?,item_type=? where item_id=?',
+                             (json.dumps(raw), raw['type'], raw['id']))
+        self.history.commit()
+
+    def test_hook_prompt_projection_maps_nested_fragment_identity(self):
+        hook = {'type': 'HookPrompt', 'id': 'hook', 'fragments': [{'text': 'synthetic hook', 'hook_run_id': 'run-a'}]}
+        records = [self.completed(hook), self.completed({**hook, 'fragments': [{'text': 'synthetic hook', 'hook_run_id': 'run-b'}]})]
+        self.rollout(messages=records)
+        projected = {'type': 'hookPrompt', 'id': 'hook', 'fragments': [{'text': 'synthetic hook', 'hookRunId': 'run-a'}]}
+        self.projected(projected)
+        events = self.collect()['repos'][0]['sessionEvidence']
+        self.assertEqual(len(events), 2)
+        mirror = next(e for e in events if len(e['provenance']) == 2)
+        self.assertEqual(mirror['detail'], projected)
+        self.assertEqual(mirror['mirrorDetails'], [records[0]])
+
+    def test_collab_projection_maps_enums_and_agent_states_without_losing_messages(self):
+        worker = '11111111-1111-4111-8111-111111111111'
+        pending, running, interrupted, done, empty, error, shutdown, missing = [
+            f'{index:08d}-1111-4111-8111-111111111111' for index in range(1, 9)]
+        states = {pending: 'pending_init', running: 'running', interrupted: 'interrupted',
+                  done: {'completed': 'synthetic done'}, empty: {'completed': None},
+                  error: {'errored': 'synthetic failure'}, shutdown: 'shutdown', missing: 'not_found'}
+        collab = {'type': 'CollabAgentToolCall', 'id': 'collab', 'tool': 'send_input', 'status': 'in_progress',
+                  'sender_thread_id': worker, 'receiver_thread_ids': [worker], 'receiver_agents': [],
+                  'prompt': None, 'model': None, 'reasoning_effort': None, 'agents_states': states}
+        records = [self.completed(collab), self.completed({**collab, 'agents_states': {**states, error: {'errored': 'different failure'}}}),
+                   self.completed({**collab, 'tool': 'resume_agent'})]
+        self.rollout(messages=records)
+        projected = {'type': 'collabAgentToolCall', 'id': 'collab', 'tool': 'sendInput', 'status': 'inProgress',
+                     'senderThreadId': worker, 'receiverThreadIds': [worker], 'prompt': None, 'model': None,
+                     'reasoningEffort': None, 'agentsStates': {
+                         pending: {'status': 'pendingInit', 'message': None}, running: {'status': 'running', 'message': None},
+                         interrupted: {'status': 'interrupted', 'message': None}, done: {'status': 'completed', 'message': 'synthetic done'},
+                         empty: {'status': 'completed', 'message': None}, error: {'status': 'errored', 'message': 'synthetic failure'},
+                         shutdown: {'status': 'shutdown', 'message': None}, missing: {'status': 'notFound', 'message': None}}}
+        self.projected(projected)
+        events = self.collect()['repos'][0]['sessionEvidence']
+        self.assertEqual(len(events), 3)
+        mirror = next(e for e in events if len(e['provenance']) == 2)
+        self.assertEqual(mirror['detail'], projected)
+        self.assertEqual(mirror['mirrorDetails'], [records[0]])
+
+    def test_web_search_projection_maps_action_variants_and_keeps_changed_results(self):
+        pairs = [
+            ({'type': 'search', 'query': 'synthetic', 'queries': ['one', 'two']},
+             {'type': 'search', 'query': 'synthetic', 'queries': ['one', 'two']}),
+            ({'type': 'open_page', 'url': 'https://example.invalid/page'},
+             {'type': 'openPage', 'url': 'https://example.invalid/page'}),
+            ({'type': 'find_in_page', 'url': None, 'pattern': 'needle'},
+             {'type': 'findInPage', 'url': None, 'pattern': 'needle'}),
+            ({'type': 'other'}, {'type': 'other'})]
+        records, projections = [], []
+        for index, (core_action, sql_action) in enumerate(pairs):
+            core = {'type': 'WebSearch', 'id': f'web-{index}', 'query': 'synthetic', 'action': core_action}
+            records.extend([self.completed(core), self.completed({**core, 'results': [{'title': 'different result'}]})])
+            projections.append({'type': 'webSearch', 'id': f'web-{index}', 'query': 'synthetic', 'action': sql_action, 'results': None})
+        self.rollout(messages=records)
+        for projection in projections:
+            self.projected(projection)
+        events = self.collect()['repos'][0]['sessionEvidence']
+        self.assertEqual(len(events), 8)
+        mirrors = [e for e in events if len(e['provenance']) == 2]
+        self.assertEqual({e['itemId'] for e in mirrors}, {'web-0', 'web-1', 'web-2', 'web-3'})
+        for index, projection in enumerate(projections):
+            mirror = next(e for e in mirrors if e['itemId'] == projection['id'])
+            self.assertEqual(mirror['detail'], projection)
+            self.assertEqual(mirror['mirrorDetails'], [records[index * 2]])
+
+    def test_review_modes_project_hint_and_rendered_findings_not_raw_review_object(self):
+        finding = {'title': 'Synthetic finding', 'body': 'first line\nsecond line\n', 'confidence_score': 0.8, 'priority': 1,
+                   'code_location': {'absolute_file_path': '/synthetic/file.py', 'line_range': {'start': 2, 'end': 3}}}
+        output = {'findings': [finding], 'overall_correctness': 'incorrect', 'overall_explanation': '  Synthetic explanation  ',
+                  'overall_confidence_score': 0.9}
+        cases = [
+            ({'type': 'EnteredReviewMode', 'id': 'enter', 'target': {'type': 'uncommittedChanges'}, 'user_facing_hint': 'Synthetic review'},
+             {'type': 'enteredReviewMode', 'id': 'enter', 'review': 'Synthetic review'}),
+            ({'type': 'ExitedReviewMode', 'id': 'exit', 'review_output': output},
+             {'type': 'exitedReviewMode', 'id': 'exit', 'review': 'Synthetic explanation\n\nReview comment:\n\n- Synthetic finding — /synthetic/file.py:2-3\n  first line\n  second line'}),
+            ({'type': 'ExitedReviewMode', 'id': 'empty', 'review_output': None},
+             {'type': 'exitedReviewMode', 'id': 'empty', 'review': 'Reviewer failed to output a response.'})]
+        records = []
+        for core, projection in cases:
+            different = {**core, 'user_facing_hint': 'Different hint'} if core['type'] == 'EnteredReviewMode' else {
+                **core, 'review_output': {**output, 'overall_explanation': 'Different explanation'}}
+            records.extend([self.completed(core), self.completed(different)])
+        self.rollout(messages=records)
+        for core, projection in cases:
+            self.projected(projection)
+        events = self.collect()['repos'][0]['sessionEvidence']
+        self.assertEqual(len(events), 6)
+        for index, (core, projection) in enumerate(cases):
+            mirror = next(e for e in events if e['itemId'] == core['id'] and len(e['provenance']) == 2)
+            self.assertEqual(mirror['detail'], projection)
+            self.assertEqual(mirror['mirrorDetails'], [records[index * 2]])
+
+    def test_image_generation_projection_supplies_nullable_extension_fields_without_losing_result(self):
+        image = {'type': 'ImageGeneration', 'id': 'image', 'status': 'completed', 'result': 'synthetic-image',
+                 'revised_prompt': 'synthetic prompt', 'saved_path': str(self.repo / 'synthetic.png')}
+        minimal = {'type': 'ImageGeneration', 'id': 'minimal-image', 'status': 'in_progress', 'result': ''}
+        records = [self.completed(image), self.completed({**image, 'result': 'different-image'}),
+                   self.completed({**image, 'revised_prompt': 'different prompt'}), self.completed(minimal)]
+        self.rollout(messages=records)
+        projections = [
+            {'type': 'imageGeneration', 'id': 'image', 'status': 'completed', 'result': 'synthetic-image',
+             'revisedPrompt': 'synthetic prompt', 'savedPath': str(self.repo / 'synthetic.png'), 'transparentBackground': None, 'failure': None},
+            {'type': 'imageGeneration', 'id': 'minimal-image', 'status': 'in_progress', 'result': '',
+             'revisedPrompt': None, 'transparentBackground': None, 'failure': None}]
+        for projection in projections:
+            self.projected(projection)
+        events = self.collect()['repos'][0]['sessionEvidence']
+        self.assertEqual(len(events), 4)
+        for projection, record in zip(projections, (records[0], records[3])):
+            mirror = next(e for e in events if e['itemId'] == projection['id'] and len(e['provenance']) == 2)
+            self.assertEqual(mirror['detail'], projection)
+            self.assertEqual(mirror['mirrorDetails'], [record])
+
+    def test_image_view_path_uri_projects_lexically_to_native_path_without_reading_images(self):
+        paths = [('file:///synthetic/a%20dir/image%252F.png', '/synthetic/a dir/image%2F.png'),
+                 ('file:///C:/synthetic/a%20dir/image.png', 'C:\\synthetic\\a dir\\image.png'),
+                 ('file://example.invalid/share/image.png', '\\\\example.invalid\\share\\image.png')]
+        records, projections = [], []
+        for index, (uri, native) in enumerate(paths):
+            image = {'type': 'ImageView', 'id': f'view-{index}', 'path': uri}
+            records.extend([self.completed(image), self.completed({**image, 'path': uri + '.different'})])
+            projections.append({'type': 'imageView', 'id': f'view-{index}', 'path': native})
+        self.rollout(messages=records)
+        for projection in projections:
+            self.projected(projection)
+        events = self.collect()['repos'][0]['sessionEvidence']
+        self.assertEqual(len(events), 6)
+        for index, projection in enumerate(projections):
+            mirror = next(e for e in events if e['itemId'] == projection['id'] and len(e['provenance']) == 2)
+            self.assertEqual(mirror['detail'], projection)
+            self.assertEqual(mirror['mirrorDetails'], [records[index * 2]])
+
+    def test_subagent_projection_defaults_optional_metadata_and_keeps_kind_and_agent_path(self):
+        worker = '11111111-1111-4111-8111-111111111111'
+        activity = {'type': 'SubAgentActivity', 'id': 'activity', 'kind': 'started', 'agent_thread_id': worker, 'agent_path': '/root/worker'}
+        records = [self.completed(activity), self.completed({**activity, 'kind': 'completed'}),
+                   self.completed({**activity, 'agent_path': '/root/other'}), self.completed({**activity, 'model': 'different model'})]
+        self.rollout(messages=records)
+        projection = {'type': 'subAgentActivity', 'id': 'activity', 'kind': 'started', 'agentThreadId': worker,
+                      'agentPath': '/root/worker', 'model': None, 'reasoningEffort': None}
+        self.projected(projection)
+        events = self.collect()['repos'][0]['sessionEvidence']
+        self.assertEqual(len(events), 4)
+        mirror = next(e for e in events if len(e['provenance']) == 2)
+        self.assertEqual(mirror['detail'], projection)
+        self.assertEqual(mirror['mirrorDetails'], [records[0]])
 
     def test_file_change_real_projection_mirrors_add_delete_update_move_and_default_status(self):
         # Literal oracle from convert_patch_changes: sorted path array; Update.move_path stays snake_case.
@@ -413,6 +592,103 @@ class CodexCollection(unittest.TestCase):
         success = next(e for e in events if e['tool']['exitCode'] == 0)
         self.assertEqual({p['adapter'] for p in success['provenance']}, {'history', 'exact-jsonl'})
         self.assertEqual(next(e for e in events if e['tool']['exitCode'] == 1)['tool']['status'], 'failed')
+
+    def test_command_empty_string_projects_to_null_but_distinct_results_do_not_merge(self):
+        command = {'type': 'CommandExecution', 'id': 'cmd', 'command': ['true'], 'cwd': str(self.repo),
+                   'parsed_cmd': [], 'source': 'agent', 'status': 'in_progress', 'aggregated_output': '', 'exit_code': None}
+        records = [self.completed(command),
+                   self.completed({**command, 'aggregated_output': ' '}),
+                   self.completed({**command, 'status': 'completed'}),
+                   self.completed({**command, 'exit_code': 1}),
+                   self.completed({**command, 'error': {'message': 'synthetic error'}}),
+                   self.completed({**command, 'id': 'other-call'})]
+        self.rollout(messages=records)
+        projected = {'type': 'commandExecution', 'id': 'cmd', 'command': 'true', 'cwd': str(self.repo),
+                     'pluginId': None, 'scriptPath': None, 'processId': None, 'source': 'agent',
+                     'status': 'inProgress', 'commandActions': [], 'aggregatedOutput': None, 'exitCode': None, 'durationMs': None}
+        self.item(None, iid='cmd')
+        self.history.execute('update thread_items set item_json=?,item_type=?', (json.dumps(projected), 'commandExecution'))
+        self.history.commit()
+        data = self.collect()
+        events = data['repos'][0]['sessionEvidence']
+        self.assertEqual(len(events), 6)
+        mirror = next(e for e in events if len(e['provenance']) == 2)
+        self.assertEqual(mirror['detail'], projected)
+        self.assertEqual(mirror['mirrorDetails'], [records[0]])
+        self.assertEqual(mirror['sourceId'], 'cmd')
+        self.assertEqual({p['adapter'] for p in mirror['provenance']}, {'history', 'exact-jsonl'})
+        self.assertEqual(sum(e['itemId'] == 'other-call' for e in events), 1)
+        self.assertEqual(sum(e['tool']['error'] == {'message': 'synthetic error'} for e in events), 1)
+        self.assertEqual(data['meta']['sources']['codex']['readStatus'], 'success')
+
+    def test_mcp_projection_maps_result_without_merging_changed_output_error_or_call(self):
+        mcp = {'type': 'McpToolCall', 'id': 'mcp', 'server': 'synthetic', 'tool': 'read', 'arguments': {}, 'status': 'completed',
+               'result': {'content': [{'type': 'text', 'text': 'synthetic result'}], 'isError': False}, 'error': None}
+        records = [self.completed(mcp),
+                   self.completed({**mcp, 'result': {'content': [{'type': 'text', 'text': 'different result'}], 'isError': False}}),
+                   self.completed({**mcp, 'error': {'message': 'different error'}}),
+                   self.completed({**mcp, 'status': 'failed'}), self.completed({**mcp, 'id': 'other-mcp'}),
+                   self.completed({**mcp, 'result': {**mcp['result'], 'isError': True}})]
+        self.rollout(messages=records)
+        projection = {'type': 'mcpToolCall', 'id': 'mcp', 'server': 'synthetic', 'tool': 'read', 'arguments': {},
+                      'appContext': None, 'mcpAppUi': None, 'status': 'completed', 'durationMs': None,
+                      'result': {'content': [{'type': 'text', 'text': 'synthetic result'}], 'structuredContent': None, '_meta': None}, 'error': None}
+        self.projected(projection)
+        events = self.collect()['repos'][0]['sessionEvidence']
+        self.assertEqual(len(events), 6)
+        mirror = next(e for e in events if len(e['provenance']) == 2)
+        self.assertEqual(mirror['detail'], projection)
+        self.assertEqual(mirror['mirrorDetails'], [records[0]])
+        self.assertEqual(mirror['sourceId'], 'mcp')
+        self.assertEqual(sum(e['tool']['error'] == {'message': 'different error'} for e in events), 1)
+
+    def test_dynamic_projection_maps_in_progress_and_keeps_full_content_and_success(self):
+        content = [{'type': 'inputText', 'text': 'synthetic text'}, {'type': 'inputImage', 'imageUrl': 'https://example.invalid/img'},
+                   {'type': 'inputAudio', 'audioUrl': 'https://example.invalid/audio'}]
+        dynamic = {'type': 'DynamicToolCall', 'id': 'dynamic', 'tool': 'synthetic', 'arguments': {'a': 1},
+                   'status': 'in_progress', 'content_items': content, 'success': None}
+        records = [self.completed(dynamic), self.completed({**dynamic, 'content_items': [{'type': 'inputText', 'text': 'different'}]}),
+                   self.completed({**dynamic, 'success': False}), self.completed({**dynamic, 'error': 'different error'})]
+        self.rollout(messages=records)
+        projection = {'type': 'dynamicToolCall', 'id': 'dynamic', 'namespace': None, 'tool': 'synthetic', 'arguments': {'a': 1},
+                      'status': 'inProgress', 'contentItems': content, 'success': None, 'durationMs': None}
+        self.projected(projection)
+        events = self.collect()['repos'][0]['sessionEvidence']
+        self.assertEqual(len(events), 4)
+        mirror = next(e for e in events if len(e['provenance']) == 2)
+        self.assertEqual(mirror['detail'], projection)
+        self.assertEqual(mirror['mirrorDetails'], [records[0]])
+        self.assertEqual(mirror['sourceId'], 'dynamic')
+
+    def test_malformed_projected_variants_remain_partial_and_do_not_stop_later_evidence(self):
+        malformed = [
+            {'type': 'Reasoning', 'id': 'bad-reason', 'summary_text': None, 'raw_content': []},
+            {'type': 'HookPrompt', 'id': 'bad-hook', 'fragments': [{'text': 'private'}]},
+            {'type': 'CollabAgentToolCall', 'id': 'bad-collab', 'tool': 'wait', 'status': 'completed', 'agents_states': {'bad': {'completed': []}}},
+            {'type': 'WebSearch', 'id': 'bad-web', 'query': 'private', 'action': []},
+            {'type': 'ImageGeneration', 'id': 'bad-image', 'status': 'completed', 'result': []},
+            {'type': 'ExitedReviewMode', 'id': 'bad-review', 'review_output': {'overall_explanation': '', 'findings': [None]}},
+            {'type': 'McpToolCall', 'id': 'bad-mcp', 'status': 'completed', 'result': {'content': 'private'}},
+            {'type': 'CommandExecution', 'id': 'bad-cmd', 'status': 'completed', 'aggregated_output': []},
+            {'type': 'DynamicToolCall', 'id': 'bad-dynamic', 'status': 'completed', 'content_items': {}}]
+        good = {'type': 'Reasoning', 'id': 'good-reason', 'summary_text': ['valid after malformed'], 'raw_content': []}
+        record = self.completed(good)
+        self.rollout(messages=[self.completed(item) for item in malformed] + [record])
+        self.item('valid SQL')
+        self.rollout(sid='later', messages=[self.event('valid later candidate')])
+        data = self.collect()
+        source = data['meta']['sources']['codex']
+        events = data['repos'][0]['sessionEvidence']
+        self.assertEqual(len(events), 3)
+        self.assertEqual({e['text'] for e in events if e['role'] != 'tool'}, {'valid SQL', 'valid later candidate'})
+        self.assertEqual(next(e for e in events if e['itemId'] == 'good-reason')['detail'], record)
+        self.assertEqual(source['readStatus'], 'partial')
+        self.assertEqual(source['adapters']['state']['status'], 'success')
+        self.assertEqual(source['adapters']['history']['status'], 'success')
+        old = next(session for session in source['adapters']['exact']['sessions'] if session['sessionId'] == 'old')
+        self.assertEqual(old['semanticGaps'], 9)
+        self.assertFalse(old['projectionComplete'])
+        self.assertNotIn('private', json.dumps(source))
 
     def test_canonical_tool_and_identity_bad_types_do_not_stop_later_items_or_candidates(self):
         command = {'type': 'CommandExecution', 'id': 'cmd', 'command': ['echo', 'ok'], 'cwd': str(self.repo),

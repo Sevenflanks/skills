@@ -10,6 +10,7 @@ import sqlite3
 import stat
 import sys
 import time
+from urllib.parse import unquote, urlsplit
 
 UTC = dt.timezone.utc
 SUPPORTED = '0.164.0-alpha.11.1'
@@ -274,6 +275,30 @@ class Collector:
             raise Gap('compatibility-error', 'unknown-history-item-time')
         self.add(candidate['id'], candidate['cwd'], candidate.get('parent'), when, typ, role, text, raw, {'adapter': 'history', 'threadId': row['thread_id'], 'turnId': row['turn_id'], 'itemId': row['item_id'], 'ordinal': row['rollout_ordinal']}, row['turn_id'], row['item_id'])
 
+    def review_text(self, output):
+        if output is None:
+            return 'Reviewer failed to output a response.'
+        if not isinstance(output, dict) or not isinstance(output.get('overall_explanation'), str) or not isinstance(output.get('findings'), list):
+            raise Gap('compatibility-error', 'invalid-canonical-item-review')
+        sections, findings = [], output['findings']
+        if output['overall_explanation'].strip():
+            sections.append(output['overall_explanation'].strip())
+        if findings:
+            lines = ['Full review comments:' if len(findings) > 1 else 'Review comment:']
+            for finding in findings:
+                location = finding.get('code_location') if isinstance(finding, dict) else None
+                bounds = location.get('line_range') if isinstance(location, dict) else None
+                if not isinstance(bounds, dict) or any(not isinstance(finding.get(k), str) for k in ('title', 'body')) or not isinstance(location.get('absolute_file_path'), str) or any(not isinstance(bounds.get(k), int) for k in ('start', 'end')):
+                    raise Gap('compatibility-error', 'invalid-canonical-item-review')
+                lines.extend(['', f"- {finding['title']} — {location['absolute_file_path']}:{bounds['start']}-{bounds['end']}"])
+                # Rust str::lines 只使用 LF／CRLF，不把內容中的其他 Unicode 字元當換行。
+                body_lines = finding['body'].split('\n')
+                if body_lines[-1] == '':
+                    body_lines.pop()
+                lines.extend('  ' + line.removesuffix('\r') for line in body_lines)
+            sections.append('\n'.join(lines).strip())
+        return '\n\n'.join(sections) if sections else 'Reviewer failed to output a response.'
+
     def canonical_item(self, payload):
         raw = payload.get('item')
         if not isinstance(raw, dict) or not isinstance(raw.get('id'), str) or not raw['id']:
@@ -285,7 +310,113 @@ class Collector:
         # 只正規化對照用欄位，原始 canonical event 仍完整保留於 detail/mirrorDetails。
         normalized = {re.sub(r'_([a-z])', lambda m: m[1].upper(), k): v for k, v in raw.items()}
         normalized['type'] = projected_type
-        if typ == 'FileChange':
+        if typ == 'HookPrompt':
+            fragments = raw.get('fragments')
+            if not isinstance(fragments, list) or any(not isinstance(f, dict) or not isinstance(f.get('text'), str) or not isinstance(f.get('hook_run_id'), str) for f in fragments):
+                raise Gap('compatibility-error', 'invalid-canonical-item-hook-prompt')
+            normalized = {'type': projected_type, 'id': raw['id'], 'fragments': [
+                {'text': f['text'], 'hookRunId': f['hook_run_id']} for f in fragments]}
+        elif typ == 'Reasoning':
+            summary, content = raw.get('summary_text'), raw.get('raw_content', [])
+            if not isinstance(summary, list) or not isinstance(content, list) or any(not isinstance(s, str) for s in summary + content):
+                raise Gap('compatibility-error', 'invalid-canonical-item-reasoning')
+            normalized = {'type': projected_type, 'id': raw['id'], 'summary': summary, 'content': content}
+        elif typ in ('CommandExecution', 'DynamicToolCall'):
+            statuses = ('in_progress', 'completed', 'failed', 'declined') if typ == 'CommandExecution' else ('in_progress', 'completed', 'failed')
+            if raw.get('status') not in statuses:
+                raise Gap('compatibility-error', 'invalid-canonical-item-tool-status')
+            # Core 的 snake_case enum 值也需投影；command 空 output 在 ThreadItem 中是 null。
+            if normalized.get('status') == 'in_progress':
+                normalized['status'] = 'inProgress'
+            if typ == 'CommandExecution':
+                if raw.get('aggregated_output') is not None and not isinstance(raw['aggregated_output'], str):
+                    raise Gap('compatibility-error', 'invalid-canonical-item-command-output')
+                if normalized.get('aggregatedOutput') == '':
+                    normalized['aggregatedOutput'] = None
+            else:
+                content = raw.get('content_items')
+                if raw.get('success') is not None and not isinstance(raw['success'], bool):
+                    raise Gap('compatibility-error', 'invalid-canonical-item-dynamic-output')
+                if content is not None:
+                    if not isinstance(content, list):
+                        raise Gap('compatibility-error', 'invalid-canonical-item-dynamic-output')
+                    fields = {'inputText': 'text', 'inputImage': 'imageUrl', 'inputAudio': 'audioUrl'}
+                    for part in content:
+                        if not isinstance(part, dict) or part.get('type') not in tuple(fields) or not isinstance(part.get(fields[part['type']]), str):
+                            raise Gap('compatibility-error', 'invalid-canonical-item-dynamic-output')
+        elif typ == 'McpToolCall':
+            result = raw.get('result')
+            if result is not None:
+                if not isinstance(result, dict) or not isinstance(result.get('content'), list) or result.get('isError') is not None and not isinstance(result['isError'], bool):
+                    raise Gap('compatibility-error', 'invalid-canonical-item-mcp')
+                # ThreadItem 的 MCP result 不含 isError；status/error 仍各自參與鏡像識別。
+                normalized['result'] = {'content': result['content'], 'structuredContent': result.get('structuredContent'), '_meta': result.get('_meta')}
+                if result.get('isError') is True:
+                    # SQL projection 已捨棄 true error flag，不能據此證明它與成功 output 是鏡像。
+                    normalized['result']['isError'] = True
+        elif typ == 'CollabAgentToolCall':
+            states, converted = raw.get('agents_states', {}), {}
+            if not isinstance(states, dict) or raw.get('tool') not in ('spawn_agent', 'send_input', 'resume_agent', 'wait', 'close_agent', 'send_message', 'followup_task', 'interrupt_agent', 'list_agents') or raw.get('status') not in ('in_progress', 'completed', 'failed', 'interrupted'):
+                raise Gap('compatibility-error', 'invalid-canonical-item-collab')
+            for thread, state in states.items():
+                if isinstance(state, str) and state in ('pending_init', 'running', 'interrupted', 'shutdown', 'not_found'):
+                    status, message = re.sub(r'_([a-z])', lambda m: m[1].upper(), state), None
+                elif isinstance(state, dict) and len(state) == 1 and next(iter(state)) in ('completed', 'errored'):
+                    status, message = next(iter(state.items()))
+                    if message is not None and not isinstance(message, str) or status == 'errored' and message is None:
+                        raise Gap('compatibility-error', 'invalid-canonical-item-collab')
+                else:
+                    raise Gap('compatibility-error', 'invalid-canonical-item-collab')
+                converted[thread] = {'status': status, 'message': message}
+            normalized = {'type': projected_type, 'id': raw['id'], 'tool': re.sub(r'_([a-z])', lambda m: m[1].upper(), raw['tool']),
+                          'status': 'inProgress' if raw['status'] == 'in_progress' else raw['status'],
+                          'senderThreadId': raw.get('sender_thread_id'), 'receiverThreadIds': raw.get('receiver_thread_ids', []),
+                          'prompt': raw.get('prompt'), 'model': raw.get('model'), 'reasoningEffort': raw.get('reasoning_effort'), 'agentsStates': converted}
+        elif typ == 'SubAgentActivity':
+            if raw.get('kind') not in ('started', 'interacted', 'interrupted', 'completed') or any(not isinstance(raw.get(field), str) for field in ('agent_thread_id', 'agent_path')):
+                raise Gap('compatibility-error', 'invalid-canonical-item-subagent-activity')
+            normalized = {'type': projected_type, 'id': raw['id'], 'kind': raw['kind'], 'agentThreadId': raw['agent_thread_id'],
+                          'agentPath': raw['agent_path'], 'model': raw.get('model'), 'reasoningEffort': raw.get('reasoning_effort')}
+        elif typ == 'ImageView':
+            path = raw.get('path')
+            if not isinstance(path, str):
+                raise Gap('compatibility-error', 'invalid-canonical-item-image-view-path')
+            if path.startswith('file:'):
+                uri = urlsplit(path)
+                parts = [unquote(part) for part in uri.path.split('/')[1:]]
+                if any('\0' in part for part in parts) or not uri.path.startswith('/'):
+                    raise Gap('compatibility-error', 'invalid-canonical-item-image-view-path')
+                # 僅轉換 wire spelling，不解析磁碟路徑或讀取影像；native convention 由 URI 決定。
+                if uri.netloc and uri.netloc != 'localhost':
+                    path = '\\\\' + uri.netloc + '\\' + '\\'.join(parts)
+                elif parts and re.fullmatch('[A-Za-z]:', parts[0]):
+                    path = '\\'.join(parts) + ('\\' if len(parts) == 1 else '')
+                else:
+                    path = '/' + '/'.join(parts)
+            normalized = {'type': projected_type, 'id': raw['id'], 'path': path}
+        elif typ == 'ImageGeneration':
+            if any(not isinstance(raw.get(field), str) for field in ('status', 'result')) or raw.get('revised_prompt') is not None and not isinstance(raw['revised_prompt'], str):
+                raise Gap('compatibility-error', 'invalid-canonical-item-image-generation')
+            normalized = {'type': projected_type, 'id': raw['id'], 'status': raw['status'], 'result': raw['result'],
+                          'revisedPrompt': raw.get('revised_prompt'), 'transparentBackground': None, 'failure': None}
+            if raw.get('saved_path') is not None:
+                if not isinstance(raw['saved_path'], str):
+                    raise Gap('compatibility-error', 'invalid-canonical-item-image-generation')
+                normalized['savedPath'] = raw['saved_path']
+        elif typ in ('EnteredReviewMode', 'ExitedReviewMode'):
+            review = raw.get('user_facing_hint') if typ == 'EnteredReviewMode' else self.review_text(raw.get('review_output'))
+            if not isinstance(review, str):
+                raise Gap('compatibility-error', 'invalid-canonical-item-review')
+            normalized = {'type': projected_type, 'id': raw['id'], 'review': review}
+        elif typ == 'WebSearch':
+            action = raw.get('action')
+            if not isinstance(action, dict) or action.get('type') not in ('search', 'open_page', 'find_in_page', 'other'):
+                raise Gap('compatibility-error', 'invalid-canonical-item-web-search')
+            kind = action['type']
+            fields = {'search': ('query', 'queries'), 'open_page': ('url',), 'find_in_page': ('url', 'pattern'), 'other': ()}[kind]
+            normalized = {'type': projected_type, 'id': raw['id'], 'query': raw.get('query'), 'results': raw.get('results'),
+                          'action': {'type': re.sub(r'_([a-z])', lambda m: m[1].upper(), kind), **{field: action.get(field) for field in fields}}}
+        elif typ == 'FileChange':
             changes, status = raw.get('changes'), raw.get('status')
             if not isinstance(changes, dict) or status is not None and status not in ('completed', 'failed', 'declined'):
                 raise Gap('compatibility-error', 'invalid-canonical-item-file-change')
