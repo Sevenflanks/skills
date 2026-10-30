@@ -101,6 +101,323 @@ class CodexCollection(unittest.TestCase):
         self.assertFalse(data['meta']['sources']['codex']['coverage']['complete'])
         self.assertEqual(data['meta']['sources']['codex']['adapters']['exact']['sessions'][0]['reason'], 'projection-not-completeness-proof')
 
+    def test_version_is_diagnostic_only_including_absent_column_and_mixed_candidates(self):
+        for sid in ('known', 'different', 'absent', 'unknown'):
+            self.rollout(sid=sid, messages=[self.event('exact-' + sid)])
+            self.item('sql-' + sid, sid=sid)
+        self.state.execute("update threads set cli_version='9.9.9' where id='different'")
+        self.state.execute("update threads set cli_version=null where id='absent'")
+        self.state.execute("update threads set cli_version='private-version-token' where id='unknown'")
+        self.state.commit()
+        for shape in ('mixed-values', 'absent-column'):
+            with self.subTest(shape=shape):
+                if shape == 'absent-column':
+                    self.state.execute('alter table threads drop column cli_version')
+                    self.state.commit()
+                data = self.collect()
+                source = data['meta']['sources']['codex']
+                self.assertEqual(source['readStatus'], 'success')
+                self.assertEqual(source['adapters']['state']['status'], 'success')
+                self.assertEqual(source['adapters']['history']['status'], 'success')
+                self.assertNotIn('compatibilityIssues', source)
+                self.assertEqual({e['text'] for e in data['repos'][0]['sessionEvidence']},
+                                 {kind + '-' + sid for kind in ('exact', 'sql') for sid in ('known', 'different', 'absent', 'unknown')})
+                self.assertNotIn('private-version-token', json.dumps(source))
+
+    def test_millisecond_only_schema_and_irrelevant_fields_keep_indexed_collection(self):
+        self.rollout(messages=[self.event('minimal exact')])
+        self.item('minimal SQL')
+        self.state.execute('alter table threads rename to previous_threads')
+        self.state.execute('create table threads(id text primary key, rollout_path text, cwd text, created_at_ms integer, updated_at_ms integer, extra_private text)')
+        self.state.execute('insert into threads select id,rollout_path,cwd,created_at*1000,updated_at*1000,? from previous_threads', ('private' * 10000,))
+        self.state.execute('drop table previous_threads')
+        for column in ('created_at_ms', 'updated_at_ms'):
+            self.state.execute(f'create index idx_threads_{column} on threads({column},id)')
+        self.state.commit()
+        data = self.collect()
+        source = data['meta']['sources']['codex']
+        self.assertEqual(source['readStatus'], 'success')
+        self.assertEqual(source['coverage']['strategy'], 'state-history-exact-no-cache')
+        self.assertEqual({e['text'] for e in data['repos'][0]['sessionEvidence']}, {'minimal exact', 'minimal SQL'})
+        self.assertNotIn('compatibilityIssues', source)
+        self.assertNotIn('private', json.dumps(source))
+
+    def test_unusable_version_diagnostic_does_not_consume_content_payload_budget(self):
+        self.rollout(messages=[self.event('bounded exact')])
+        self.item('bounded SQL')
+        # 大於內容 payload 預算，但仍低於既有 SQLite row decode hard limit；不測試繞過該 guard。
+        self.state.execute('update threads set cli_version=?', ('private' * 1000,))
+        self.state.commit()
+        data = self.collect('-CodexSqlPayloadBytes', '1024')
+        source = data['meta']['sources']['codex']
+        self.assertEqual(source['readStatus'], 'success')
+        self.assertEqual({e['text'] for e in data['repos'][0]['sessionEvidence']}, {'bounded exact', 'bounded SQL'})
+        self.assertNotIn('compatibilityIssues', source)
+        self.assertLessEqual(source['sqliteResources']['payloadBytes'], 1024)
+
+    def test_bad_history_item_is_isolated_and_later_items_and_candidates_survive(self):
+        self.rollout(sid='first', messages=[self.event('exact-first')])
+        self.rollout(sid='later', messages=[self.event('exact-later')])
+        self.item('sql-before', sid='first', iid='a')
+        self.item('sql-after', sid='first', iid='z')
+        self.item('sql-later', sid='later')
+        for iid, payload, when in [('b', 'private malformed JSON', 1780020000000),
+                                   ('c', json.dumps({'type': 'privateUnknownItem'}), 1780020000000),
+                                   ('d', json.dumps({'type': 'agentMessage', 'text': 'private bad time'}), 'private-time')]:
+            self.history.execute('insert into thread_items values(?,?,?,?,?,?,?,?,?,?)',
+                                 ('first', 'turn-a', iid, 1, when, payload, 'agentMessage', 1, None, None))
+        self.history.commit()
+        data = self.collect()
+        source = data['meta']['sources']['codex']
+        self.assertEqual({e['text'] for e in data['repos'][0]['sessionEvidence']},
+                         {'sql-before', 'sql-after', 'sql-later', 'exact-first', 'exact-later'})
+        self.assertEqual(source['readStatus'], 'partial')
+        self.assertEqual(source['adapters']['history']['status'], 'partial')
+        self.assertEqual(source['adapters']['history']['rejectedItems'], 3)
+        self.assertEqual(source['adapters']['history']['returnedItems'], 6)
+        self.assertFalse(source['coverage']['complete'])
+        self.assertNotIn('private', json.dumps(source))
+
+    def completed(self, item, sid='old', turn='turn-a', started=1780020000000, envelope='2026-05-30T02:00:00Z'):
+        return {'timestamp': envelope, 'type': 'event_msg', 'payload': {
+            'type': 'item_completed', 'thread_id': sid, 'turn_id': turn, 'item': item,
+            'started_at_ms': started, 'completed_at_ms': 1780020001000}}
+
+    def test_null_history_payload_is_isolated_before_good_items_in_same_and_later_candidates(self):
+        self.rollout(sid='first', messages=[self.event('exact-first')])
+        self.rollout(sid='later', messages=[self.event('exact-later')])
+        self.history.execute('insert into thread_items values(?,?,?,?,?,?,?,?,?,?)',
+                             ('first', 'turn-a', 'a-null', 0, 1780020000000, None, 'agentMessage', 0, None, None))
+        self.history.commit()
+        self.item('sql-after-null', sid='first', iid='good')
+        self.item('sql-later', sid='later')
+        data = self.collect()
+        source = data['meta']['sources']['codex']
+        self.assertEqual({e['text'] for e in data['repos'][0]['sessionEvidence']},
+                         {'exact-first', 'exact-later', 'sql-after-null', 'sql-later'})
+        self.assertEqual(source['readStatus'], 'partial')
+        history = source['adapters']['history']
+        self.assertEqual(history['status'], 'partial')
+        self.assertEqual(history['returnedItems'], 3)
+        self.assertEqual(history['rejectedItems'], 1)
+        self.assertEqual(history['queryPlan']['gate'], 'indexed-thread-search')
+        self.assertEqual(source['sqliteResources']['limitHits'], [])
+        self.assertLessEqual(source['sqliteResources']['rows'], source['sqliteResources']['limits']['rows'])
+        self.assertLessEqual(source['sqliteResources']['payloadBytes'], source['sqliteResources']['limits']['payloadBytes'])
+        self.assertIn('content-capability', source['compatibilityIssues'][0]['title'])
+
+    def test_legacy_response_message_bad_content_keeps_later_items_candidates_and_sql(self):
+        bad = {'timestamp': '2026-05-29T02:00:00Z', 'type': 'response_item',
+               'payload': {'type': 'message', 'role': 'assistant', 'content': 17}}
+        self.rollout(sid='first', messages=[bad, self.event('good-after-bad')])
+        self.rollout(sid='later', messages=[self.event('good-next-candidate')])
+        self.item('sql-first', sid='first')
+        self.item('sql-later', sid='later')
+        data = self.collect()
+        source = data['meta']['sources']['codex']
+        self.assertEqual({e['text'] for e in data['repos'][0]['sessionEvidence']},
+                         {'good-after-bad', 'good-next-candidate', 'sql-first', 'sql-later'})
+        self.assertEqual(source['adapters']['state']['status'], 'success')
+        self.assertEqual(source['adapters']['history']['status'], 'success')
+        self.assertEqual(source['readStatus'], 'partial')
+        session = next(s for s in source['adapters']['exact']['sessions'] if s['sessionId'] == 'first')
+        self.assertEqual(session['semanticGaps'], 1)
+        self.assertEqual(session['status'], 'partial')
+        self.assertFalse(session['projectionComplete'])
+        self.assertEqual(session['reason'], 'invalid-event-message-content')
+        self.assertIn('content-capability', source['compatibilityIssues'][0]['title'])
+
+    def test_canonical_messages_use_materializer_time_and_item_identity(self):
+        # PascalCase TurnItem/Text → app-server agentMessage/text at the pinned official tag.
+        canonical = {'type': 'AgentMessage', 'id': 'msg-a', 'content': [{'type': 'Text', 'text': 'canonical result'}]}
+        records = [self.completed(canonical),
+                   self.completed({**canonical, 'id': 'msg-b'}),
+                   self.completed(canonical, turn='other-turn'),
+                   self.completed({**canonical, 'id': 'outside'}, started=1780106400000, envelope='2026-05-29T02:00:00Z'),
+                   self.completed({'type': 'UserMessage', 'id': 'user-a', 'content': [{'type': 'text', 'text': 'fallback time', 'text_elements': []}]}, started=None, envelope='2026-05-29T03:00:00Z')]
+        self.rollout(messages=records)
+        self.item('canonical result', iid='msg-a', id='msg-a')
+        self.rollout(sid='other-thread', messages=[self.completed(canonical, sid='other-thread')])
+        data = self.collect()
+        events = data['repos'][0]['sessionEvidence']
+        self.assertEqual(len(events), 5)
+        merged = next(e for e in events if e['sessionId'] == 'old' and e['itemId'] == 'msg-a' and e['turnId'] == 'turn-a')
+        self.assertEqual({p['adapter'] for p in merged['provenance']}, {'history', 'exact-jsonl'})
+        self.assertEqual(merged['timestamps'], ['2026-05-29T10:00:00+08:00'])
+        self.assertEqual(merged['detail']['text'], 'canonical result')
+        self.assertEqual(merged['mirrorDetails'], [records[0]])
+        self.assertEqual([(e['role'], e['text']) for e in events if e['itemId'] == 'user-a'], [('user', 'fallback time')])
+        self.assertNotIn('outside', {e['itemId'] for e in events})
+        self.assertEqual(data['meta']['sources']['codex']['readStatus'], 'success')
+        self.assertFalse(data['meta']['sources']['codex']['coverage']['complete'])
+
+    def test_canonical_tools_mirror_sql_without_merging_distinct_outputs_or_errors(self):
+        command = {'type': 'CommandExecution', 'id': 'cmd', 'command': ['echo', 'ok'], 'cwd': str(self.repo),
+                   'parsed_cmd': [], 'source': 'agent', 'status': 'completed', 'aggregated_output': 'ok', 'exit_code': 0}
+        dynamic = {'type': 'DynamicToolCall', 'id': 'dyn', 'tool': 'lookup', 'arguments': {'q': 'test'},
+                   'status': 'completed', 'content_items': [{'type': 'inputText', 'text': 'found'}], 'success': True}
+        mcp = {'type': 'McpToolCall', 'id': 'mcp', 'server': 'fixture', 'tool': 'lookup', 'arguments': {},
+               'status': 'completed', 'result': {'content': [{'type': 'text', 'text': 'mcp found'}], 'isError': False}, 'error': None}
+        output = {'type': 'FunctionCallOutput', 'id': 'out', 'name': 'lookup', 'output': 'call result'}
+        records = [self.completed(item) for item in (command, dynamic, mcp, output)]
+        records += [self.completed({**command, 'aggregated_output': 'different'}),
+                    self.completed({**command, 'exit_code': 1}),
+                    self.completed({**mcp, 'error': {'message': 'different error'}}),
+                    self.completed({**command, 'id': 'cmd-other'}),
+                    self.completed(command, turn='turn-other')]
+        self.rollout(messages=records)
+        sql_items = [dict(type='commandExecution', id='cmd', command='echo ok', status='completed', aggregatedOutput='ok', exitCode=0),
+                     dict(type='dynamicToolCall', id='dyn', tool='lookup', arguments={'q': 'test'}, status='completed', contentItems=dynamic['content_items'], success=True),
+                     {**mcp, 'type': 'mcpToolCall'}, {**output, 'type': 'functionCallOutput'}]
+        for item in sql_items:
+            self.item(None, iid=item['id'], **item)
+        data = self.collect()
+        events = data['repos'][0]['sessionEvidence']
+        self.assertEqual(len(events), 9)
+        for iid in ('cmd', 'dyn', 'mcp', 'out'):
+            merged = [e for e in events if e['itemId'] == iid and len(e['provenance']) == 2]
+            self.assertEqual(len(merged), 1, iid)
+            self.assertEqual({p['adapter'] for p in merged[0]['provenance']}, {'history', 'exact-jsonl'})
+            self.assertEqual(merged[0]['role'], 'tool')
+            self.assertEqual(merged[0]['mirrorDetails'], [records[('cmd', 'dyn', 'mcp', 'out').index(iid)]])
+        self.assertEqual({e['eventType'] for e in events}, {'commandExecution', 'dynamicToolCall', 'mcpToolCall', 'functionCallOutput'})
+        self.assertEqual(data['meta']['sources']['codex']['readStatus'], 'success')
+
+    def test_canonical_non_command_tools_ignore_object_key_order_not_content_or_identity(self):
+        change = {'type': 'FileChange', 'id': 'file-a', 'changes': [], 'status': 'completed'}
+        search = {'type': 'WebSearch', 'id': 'web-a', 'query': 'synthetic query',
+                  'action': {'type': 'search', 'queries': ['synthetic query']}}
+        records = [self.completed(change), self.completed(search),
+                   self.completed({**change, 'id': 'file-b'}),
+                   self.completed(change, turn='other-turn'),
+                   self.completed({**change, 'changes': [{'path': 'synthetic.txt', 'kind': {'type': 'add'}, 'diff': '+new'}]}),
+                   self.completed({**change, 'status': 'failed'}),
+                   self.completed({**search, 'action': {'type': 'search', 'queries': ['different query']}})]
+        self.rollout(messages=records)
+        sql_change = {'id': 'file-a', 'type': 'fileChange', 'changes': [], 'status': 'completed'}
+        sql_search = {'action': {'queries': ['synthetic query'], 'type': 'search'},
+                      'query': 'synthetic query', 'id': 'web-a', 'type': 'webSearch'}
+        for iid, raw in [('file-a', sql_change), ('web-a', sql_search)]:
+            self.item(None, iid=iid)
+            self.history.execute('update thread_items set item_json=?,item_type=? where item_id=?',
+                                 (json.dumps(raw), raw['type'], iid))
+        self.history.commit()
+        data = self.collect()
+        events = data['repos'][0]['sessionEvidence']
+        self.assertEqual(len(events), 7)
+        self.assertEqual(sum({p['adapter'] for p in e['provenance']} == {'history', 'exact-jsonl'} for e in events), 2)
+        for iid, raw, record in [('file-a', sql_change, records[0]), ('web-a', sql_search, records[1])]:
+            mirror = next(e for e in events if e['itemId'] == iid and any(p['adapter'] == 'history' for p in e['provenance']))
+            self.assertEqual(mirror['detail'], raw)
+            self.assertEqual(mirror['mirrorDetails'], [record])
+        self.assertEqual(sum(e['itemId'] == 'file-a' for e in events), 4)
+        self.assertEqual(sum(e['itemId'] == 'file-b' for e in events), 1)
+        self.assertEqual(sum(e['turnId'] == 'other-turn' for e in events), 1)
+        self.assertEqual(sum(e['tool']['status'] == 'failed' for e in events), 1)
+        self.assertEqual(data['meta']['sources']['codex']['readStatus'], 'success')
+
+    def test_canonical_empty_tool_output_keeps_mirror_and_different_error_separate(self):
+        command = {'type': 'CommandExecution', 'id': 'empty-command', 'command': ['true'], 'cwd': str(self.repo),
+                   'parsed_cmd': [], 'source': 'agent', 'status': 'completed', 'aggregated_output': None, 'exit_code': 0}
+        failed = dict(command, status='failed', exit_code=1)
+        self.rollout(messages=[self.completed(command), self.completed(failed)])
+        self.item(None, iid='empty-command', type='commandExecution', id='empty-command', command='true',
+                  commandActions=[], status='completed', aggregatedOutput=None, exitCode=0)
+        data = self.collect()
+        events = data['repos'][0]['sessionEvidence']
+        self.assertEqual(len(events), 2)
+        success = next(e for e in events if e['tool']['exitCode'] == 0)
+        self.assertEqual({p['adapter'] for p in success['provenance']}, {'history', 'exact-jsonl'})
+        self.assertEqual(next(e for e in events if e['tool']['exitCode'] == 1)['tool']['status'], 'failed')
+
+    def test_canonical_tool_and_identity_bad_types_do_not_stop_later_items_or_candidates(self):
+        command = {'type': 'CommandExecution', 'id': 'cmd', 'command': ['echo', 'ok'], 'cwd': str(self.repo),
+                   'parsed_cmd': [], 'source': 'agent', 'status': 'completed', 'aggregated_output': 'ok', 'exit_code': 0}
+        records = [self.completed({**command, 'status': ['private invalid state']}),
+                   self.completed({**command, 'id': ['private invalid identity']}),
+                   self.completed(command, turn=['private invalid turn']),
+                   self.completed(command), self.event('valid same candidate')]
+        self.rollout(messages=records)
+        self.item(None, iid='bad-tool', type='commandExecution', id='bad-tool', status=['private'], aggregatedOutput='bad')
+        self.item('valid SQL after malformed tool', iid='good')
+        self.rollout(sid='later', messages=[self.event('valid later candidate')])
+        data = self.collect()
+        source = data['meta']['sources']['codex']
+        events = data['repos'][0]['sessionEvidence']
+        self.assertEqual(len(events), 4)
+        self.assertEqual({e['text'] for e in events if e['role'] != 'tool'},
+                         {'valid same candidate', 'valid SQL after malformed tool', 'valid later candidate'})
+        self.assertEqual(source['adapters']['history']['rejectedItems'], 1)
+        session = next(s for s in source['adapters']['exact']['sessions'] if s['sessionId'] == 'old')
+        self.assertEqual(session['semanticGaps'], 3)
+        self.assertFalse(session['projectionComplete'])
+        self.assertEqual(source['readStatus'], 'partial')
+        self.assertNotIn('private', json.dumps(source))
+
+    def test_bad_exact_items_and_candidate_do_not_hide_later_valid_evidence_or_eof_gap(self):
+        good = {'type': 'AgentMessage', 'id': 'good', 'content': [{'type': 'Text', 'text': 'after broken items'}]}
+        records = [self.completed({'type': 'privateUnknown', 'id': 'unknown'}),
+                   self.completed({'type': 'AgentMessage', 'id': 'bad', 'content': 'private malformed'}),
+                   self.completed(good, started='private-time'), self.completed(good)]
+        self.rollout(sid='broken-path')
+        self.state.execute("update threads set rollout_path=null where id='broken-path'")
+        self.state.commit()
+        self.rollout(messages=records)
+        self.rollout(sid='later', messages=[self.event('later candidate')])
+        data = self.collect()
+        source = data['meta']['sources']['codex']
+        self.assertEqual({e['text'] for e in data['repos'][0]['sessionEvidence']}, {'after broken items', 'later candidate'})
+        self.assertEqual(source['readStatus'], 'partial')
+        entry = next(s for s in source['adapters']['exact']['sessions'] if s['sessionId'] == 'old')
+        self.assertEqual(entry['status'], 'partial')
+        self.assertFalse(entry['projectionComplete'])
+        self.assertEqual(entry['semanticGaps'], 3)
+        self.assertNotIn('private', json.dumps(source))
+
+    def test_unusable_optional_lineage_metadata_does_not_block_other_candidates(self):
+        path = self.rollout(messages=[self.event('valid despite optional metadata')])
+        records = path.read_text(encoding='utf-8').splitlines()
+        meta = json.loads(records[0])
+        meta['payload']['source'] = {'subagent': ['private unsupported metadata']}
+        records[0] = json.dumps(meta)
+        path.write_text('\n'.join(records), encoding='utf-8')
+        self.state.execute('update threads set source=?', (json.dumps(meta['payload']['source']),))
+        self.state.commit()
+        self.item('valid SQL despite metadata')
+        self.rollout(sid='later', messages=[self.event('later valid candidate')])
+        data = self.collect()
+        self.assertEqual({e['text'] for e in data['repos'][0]['sessionEvidence']},
+                         {'valid despite optional metadata', 'valid SQL despite metadata', 'later valid candidate'})
+        self.assertTrue(all(e['parentSessionId'] is None for e in data['repos'][0]['sessionEvidence']))
+        self.assertEqual(data['meta']['sources']['codex']['readStatus'], 'success')
+
+    def test_invalid_message_content_and_missing_time_are_isolated_not_eof_success(self):
+        self.rollout(messages=[self.event({'private': 'not text'}),
+                               self.event('private bad identity', turn_id=[]),
+                               self.completed({'type': 'AgentMessage', 'id': 'bad-text', 'content': [{'type': 'Text', 'text': 17}]}),
+                               self.event('private missing time', time=None), self.event('valid after malformed')])
+        self.item(None, iid='bad', content='private malformed content')
+        self.item('valid SQL after malformed', iid='later')
+        data = self.collect()
+        source = data['meta']['sources']['codex']
+        self.assertEqual({e['text'] for e in data['repos'][0]['sessionEvidence']}, {'valid after malformed', 'valid SQL after malformed'})
+        self.assertEqual(source['adapters']['history']['status'], 'partial')
+        self.assertEqual(source['adapters']['history']['rejectedItems'], 1)
+        self.assertFalse(source['adapters']['exact']['sessions'][0]['projectionComplete'])
+        self.assertEqual(source['adapters']['exact']['sessions'][0]['semanticGaps'], 4)
+        self.assertEqual(source['readStatus'], 'partial')
+        self.assertNotIn('private', json.dumps(source))
+
+    def test_valid_empty_messages_are_not_compatibility_gaps(self):
+        self.rollout(messages=[self.completed({'type': 'AgentMessage', 'id': 'empty', 'content': []})])
+        self.item('', iid='empty', id='empty')
+        data = self.collect()
+        source = data['meta']['sources']['codex']
+        self.assertEqual(source['readStatus'], 'empty')
+        self.assertEqual(source['adapters']['history']['status'], 'success')
+        self.assertNotIn('compatibilityIssues', source)
+        self.assertEqual(data['repos'], [])
+
     def test_json_pipe_ignores_non_utf8_locale_and_io_override_for_unicode_root_and_text(self):
         self.state.close()
         self.history.close()
@@ -426,6 +743,22 @@ class CodexCollection(unittest.TestCase):
         self.assertEqual(source['readStatus'], 'partial')
         self.assertEqual(source['adapters']['history']['status'], 'partial')
 
+    def test_observed_metadata_time_gap_keeps_evidence_and_offers_sanitized_local_draft(self):
+        self.rollout(messages=[self.event('valid exact with unknown metadata')])
+        self.state.execute('update threads set created_at=null,updated_at=null')
+        self.state.commit()
+        data = self.collect()
+        source = data['meta']['sources']['codex']
+        self.assertEqual(source['readStatus'], 'partial')
+        self.assertEqual(source['adapters']['state']['status'], 'partial')
+        self.assertEqual([e['text'] for e in data['repos'][0]['sessionEvidence']], ['valid exact with unknown metadata'])
+        self.assertEqual(len(source.get('compatibilityIssues', [])), 1)
+        draft = source['compatibilityIssues'][0]
+        self.assertEqual(draft['destination'], 'https://github.com/Sevenflanks/skills/issues')
+        self.assertIn('time-capability', draft['title'])
+        self.assertIn('unknown-metadata-time', draft['body'])
+        self.assertNotIn(str(self.home), draft['body'])
+
     def test_not_null_seconds_keep_indexed_archive_candidates_without_date_fallback(self):
         self.state.execute('drop table threads')
         self.state.execute('create table threads(id text primary key, rollout_path text, cwd text, created_at integer not null, updated_at integer not null, created_at_ms integer, updated_at_ms integer, archived integer, cli_version text, source text)')
@@ -586,8 +919,11 @@ class CodexCollection(unittest.TestCase):
             with self.subTest(damage=damage):
                 self.history.execute('delete from thread_items')
                 self.history.commit()
-                self.state.execute('update threads set cli_version=?,rollout_path=?', ('9.9.9' if damage == 'compatibility' else '0.164.0-alpha.11.1', str(self.root / 'escape.jsonl') if damage == 'unsafe' else str(path)))
+                self.state.execute('update threads set rollout_path=?', (str(self.root / 'escape.jsonl') if damage == 'unsafe' else str(path),))
                 self.state.commit()
+                if damage == 'compatibility':
+                    self.history.execute('drop index idx_items_thread')
+                    self.history.commit()
                 if damage in ('malformed', 'unknown'):
                     self.item('not dated evidence', time=17 if damage == 'unknown' else 1780020000000)
                     if damage == 'malformed':
@@ -596,6 +932,9 @@ class CodexCollection(unittest.TestCase):
                 data = self.collect('-CodexTotalBytes', '1')
                 self.assertEqual(data['meta']['sources']['codex']['readStatus'], 'failed')
                 self.assertEqual(data['meta']['collectionStatus'], 'read-failed')
+                if damage == 'compatibility':
+                    self.history.execute('create index idx_items_thread on thread_items(thread_id,rollout_ordinal,item_id)')
+                    self.history.commit()
 
     def test_oversized_exact_line_discards_bounded_bytes_then_keeps_later_evidence(self):
         path = self.rollout(messages=[self.event('前段需求'), self.event('z' * 200000), self.event('後段修正')])
@@ -672,13 +1011,13 @@ class CodexCollection(unittest.TestCase):
         (self.home / 'thread_history_1.sqlite').unlink()
         for damage in ('malformed', 'unknown', 'lineage', 'compatibility', 'missing-exact'):
             with self.subTest(damage=damage):
-                self.state.execute('update threads set cli_version=?', ('9.9.9' if damage == 'compatibility' else '0.164.0-alpha.11.1',))
-                self.state.commit()
                 content = meta.replace('"id": "old"', '"id": "wrong"') if damage == 'lineage' else meta
                 if damage == 'malformed':
                     content += '\nnot-json'
                 elif damage == 'unknown':
                     content += '\n' + json.dumps(self.event('undated', time=17))
+                elif damage == 'compatibility':
+                    content += '\n' + json.dumps(self.completed({'type': 'UnknownFixture', 'id': 'unknown'}))
                 path.write_text(content, encoding='utf-8')
                 if damage == 'missing-exact':
                     path.unlink()
@@ -700,11 +1039,23 @@ class CodexCollection(unittest.TestCase):
         self.state.commit()
         data = self.collect()
         source = data['meta']['sources']['codex']
+        self.assertEqual(source['adapters']['history']['status'], 'missing')
+        self.assertNotIn('compatibilityIssues', source)
+        db = sqlite3.connect(history_path)
+        try:
+            db.execute('create table thread_items(private_schema text)')
+            db.commit()
+        finally:
+            db.close()
+        data = self.collect()
+        source = data['meta']['sources']['codex']
         self.assertEqual(source['adapters']['history']['status'], 'compatibility-error')
         draft = source['compatibilityIssues'][0]
         self.assertTrue(draft['requiresExplicitConsent'])
         self.assertFalse(draft['published'])
-        self.assertEqual(draft['destination'], 'https://github.com/openai/codex/issues')
+        self.assertEqual(draft['destination'], 'https://github.com/Sevenflanks/skills/issues')
+        self.assertIn('schema-capability', draft['title'])
+        self.assertIn('required-thread_items-columns-missing', draft['body'])
         self.assertNotIn('internal.example', draft['body'])
         self.assertNotIn(str(self.home), draft['body'])
         self.assertNotIn('exact有證據', draft['body'])
@@ -713,6 +1064,31 @@ class CodexCollection(unittest.TestCase):
         data = self.collect()
         self.assertEqual(data['meta']['sources']['codex']['adapters']['state']['status'], 'valid-empty')
         self.assertEqual(data['meta']['collectionStatus'], 'no-activity')
+
+    def test_compatibility_drafts_classify_observed_query_time_and_content_gaps(self):
+        self.rollout(messages=[self.event('private original')])
+        self.item('private original')
+        for gap, expected in [('query', 'query-capability'), ('time', 'time-capability'), ('content', 'content-capability')]:
+            with self.subTest(gap=gap):
+                if gap == 'query':
+                    self.history.execute('drop index idx_items_thread')
+                elif gap == 'time':
+                    self.history.execute('create index idx_items_thread on thread_items(thread_id)')
+                    self.history.execute("update thread_items set created_at_ms='private-time'")
+                else:
+                    self.history.execute("update thread_items set created_at_ms=1780020000000,item_json=?", (json.dumps({'type': 'privateUnknown'}),))
+                self.history.commit()
+                data = self.collect()
+                drafts = data['meta']['sources']['codex']['compatibilityIssues']
+                self.assertEqual(len(drafts), 1)
+                draft = drafts[0]
+                self.assertIn(expected, draft['title'])
+                self.assertEqual(draft['destination'], 'https://github.com/Sevenflanks/skills/issues')
+                self.assertTrue(draft['requiresExplicitConsent'])
+                self.assertFalse(draft['published'])
+                self.assertIn('合成重現', draft['body'])
+                self.assertNotIn('private', json.dumps(draft))
+                self.assertNotIn(str(self.home), draft['body'])
 
     def test_unknown_sql_item_contract_is_not_reported_as_successful_tool(self):
         self.rollout(messages=[self.event('可用exact材料')])

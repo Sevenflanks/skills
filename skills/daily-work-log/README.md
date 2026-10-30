@@ -1,6 +1,6 @@
 # daily-work-log
 
-`daily-work-log` 整理 OpenCode／Codex 活動、Git 跨 branch commits 與相關 GitHub PR／issue 證據。先以同一 collector 輕量 probe，由 agent 預告來源與略過原因，再正式蒐集並輸出適合貼上的主題分組日誌。Codex 使用 metadata 候選、SQLite history 精選及 exact JSONL 補證；僅支援已核對的 runtime contract，並如實揭露有限涵蓋。
+`daily-work-log` 整理 OpenCode／Codex 活動、Git 跨 branch commits 與相關 GitHub PR／issue 證據。先以同一 collector 輕量 probe，由 agent 預告來源與略過原因，再正式蒐集並輸出適合貼上的主題分組日誌。Codex 使用 metadata 候選、SQLite history 精選及 exact JSONL 補證；`0.164.0-alpha.11.1` 是已核對的 reference contract，不是 runtime version gate。必要資料能力與 query safety 決定 adapter 可否讀取，所有涵蓋缺口均如實揭露。
 
 ## 解決的問題
 
@@ -50,7 +50,7 @@
 
 例如 synthetic home-started parent 可保留 `pathSource=bash-workdir`、`tool=bash`、`timestamp` 歸到 `C:\synthetic\repo`；相同 session／path 只列一次。已刪 worktree 不猜 canonical repo，只揭露 aggregate warning。DB 成功空結果、失敗 fallback 順序與 probe 契約維持。
 
-Codex 從 `-CodexRoot`（否則 `CODEX_HOME`，再否則 `~/.codex`）唯讀 state／history SQLite，以 state lifespan overlap 找候選、history item 的實際時間與 turn/item 關聯精選，再對候選 exact JSONL 補證。metadata 日期只代表候選，不代表實際工作日期；封存候選可納入。Metadata 先核對既有日期 index，所有日期分支通過 `EXPLAIN` 的 indexed `SEARCH` gate 後才讀候選；缺 index／不安全 plan 明示 compatibility gap 並走有界日期 fallback，不建立 index。`LIMIT` 不是禁止全歷史 scan 的保證，詳細 gate 見 SKILL.md。SQL projection 到 EOF 不代表來源互通完整。僅核對 `0.164.0-alpha.11.1` contract；Python 3.11+ 必要，child JSON pipe 固定 UTF-8。缺 Python 或相容性差異依狀況使用有界 legacy 日期分區 fallback；state 合法空結果亦走日期補證，保留 valid-empty 且不產相容性草稿。缺檔、權限、合法空結果與不相容狀態分開報告。SQL 證據僅以 lineage 相符的同 turn exact context 校正 repo，保留來源與 `repoContext` 定位；不同 thread／turn 不互用。舊檔名或 mtime 不取代事件時間；未選日期的續行仍可漏收。跨來源同 repo／工作主題由 agent 合併，不自造 NLP。
+Codex 從 `-CodexRoot`（否則 `CODEX_HOME`，再否則 `~/.codex`）唯讀 state／history SQLite，以 state lifespan overlap 找候選、history item 的實際時間與 turn/item 關聯精選，再對候選 exact JSONL 補證。metadata 日期只代表候選，不代表實際工作日期；封存候選可納入。必要 schema、時間、內容與 indexed query capability 才是 SQL gate；實際 plan 必須為 indexed `SEARCH`，拒絕 `SCAN`，不建立 index 或進行全表查詢。版本不同、unknown 或 missing 只作診斷，不單獨 reject／降級／產草稿。Python 3.11+ 必要，child JSON pipe 固定 UTF-8。單筆壞 item 隔離，不取消其他有效 evidence；canonical `item_completed` 與 SQL mirror 依實際 item identity 合併並保留 provenance。能力缺口走既有有界 fallback 並可能產生本機 adapter capability 草稿；missing、permission、valid-empty 不產草稿。Exact EOF 不代表來源完整。完整欄位、fallback 與安全 contract 見 [`references/evidence-views.md`](references/evidence-views.md#adapter-contract-與-diagnostics)。
 
 History DB 缺檔時，若所有已選 exact 候選的 session identity 相符、無損讀至 EOF，且沒有未知時間、SQL 限額或相容性／權限缺口，無範圍內活動可回報 `empty/no-activity`；仍保留 history `missing` 診斷與 `coverage.complete=false`。缺檔本身不授予成功，損壞或無法確認 lineage 仍依失敗／部分讀取契約處理。
 
@@ -117,9 +117,9 @@ pwsh -NoProfile -File "<skill>\scripts\collect-daily-work-log.ps1" -From "<probe
 
 `-OpenCodeLogRoot`、`-OpenCodeStorageRoot`、`-CodexRoot` 可覆寫紀錄入口；collector／formatter stdout 均為純 JSON。formatter 保留新增 metadata 與全部 `sessionEvidence`，只對 shown commits 做上限 compaction。
 
-### ERP 精簡結構視圖與私有落檔
+### 證據視圖與私有落檔
 
-大型原始 JSON 直接落入當次私有暫存，依 [`references/evidence-views.md`](references/evidence-views.md) 的完整流程，用 formatter `-InputPath '<private-task-file>' -View erp` 產生結構視圖並按需查閱。預設 summary 將正常 Codex routine tool 改為 status／exit／source IDs 與可追溯的 `detailRef`，避免 text／detail 重複全文；critical 證據仍完整展開，規則見 SKILL.md。ERP 視圖保留全部 commits／refs／branchHints、PR head／Draft／closing issues／交付狀態、來源／續行、meta／coverage／warnings／errors，只移除 repo path 與排版空白，不任意截斷。證據檔仍是私有資料，完成後清理。
+大型原始 JSON 直接落入當次私有暫存，依 [`references/evidence-views.md`](references/evidence-views.md) 的完整流程，用 formatter `-InputPath $rawPath -View index` 讀 bounded status／counts／limits／raw pointers，再按需讀取 ERP `$evidence` 的 repo／session。Index 的 count 或 pointer 不是完整 evidence，也不是 draft delivery。若有 compatibility draft，另以 `-View compatibility` 讀取完整脫敏 title／body／destination，先在對話展示全文、目的地並註明未發布；render 不代表交付，完成實際交付後才清理。ERP 視圖保留全部 commits／refs／branchHints、PR head／Draft／closing issues／交付狀態、來源／續行、meta／coverage／warnings／errors，只移除 repo path 與排版空白，不任意截斷。證據檔仍是私有資料。
 
 Windows PowerShell 5.1 的預設 redirect 會產生 UTF-16LE；上述 recipe 在 pwsh 7 child 內明確 capture UTF-8，支援 PS5.1 → pwsh 7 與 pwsh 7 直接呼叫。JSON 參數及多行 Python 存在當次暫存檔，跨 process 只傳路徑；先看缺口／repo 索引，再選 repo／session，不將大型 raw 或無效 recall 灌入上下文。無效 recall 停止搜尋且不作成果證據。沿用 probe → 公告 → collect、停止條件與任務結束清理。
 
@@ -174,6 +174,8 @@ npm run validate
 冷是同一測試 process 在 fixture 增量後首次呼叫，暖是重跑；不控制 OS filesystem cache。Collection 計時包含 collector 的 probe、合成 Git／gh 邊界呼叫與 JSON 序列化，排除 fixture 建立及外部測試啟動。Memory 為整個測試 process 累積 `PeakWorkingSet64`，包含 fixture 建立與 reference，不代表 collector-only、child processes 或每次配置量。Entries 是 application-level MoveNext，bytes 是 FileStream.Read 回傳量，排除 OS metadata／prefetch。Reference 不執行 Git／gh 或完整 collector，耗時不能當作同等流程的速度提升比例；其 output size 不適用。日期候選陣列隨要求日期範圍成長；4 KiB／64 KiB 只限 reader buffers，不是事件清單或整個 process 的 hard memory cap。64／8 MiB 是已確認預設，不是最佳門檻或性能 SLA；本回歸未確認真實 workload。
 
 ## 版本變更
+
+`0.8.0` 新增 formatter bounded index／compatibility views、source discovery 計帳索引與 canonical Codex evidence contract。版本白名單不再作 runtime gate；必要能力仍受 indexed query、安全時間／內容與有界 fallback 約束。新增先交付草稿再清理的 consumer flow。
 
 `0.7.1` 修正 NOT NULL 欄位的不可達日期分支及 covering index 誤拒，補上脫敏 query-plan 診斷；保留真實 SCAN／排序拒絕、唯讀 DB 與既有 fallback 額度。補強 Windows 呼叫端的 UTF-8 capture、參數檔及大型證據按需選讀範例。
 

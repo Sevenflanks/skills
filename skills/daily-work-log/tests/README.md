@@ -19,6 +19,10 @@ python -B -m unittest discover -s skills/daily-work-log/tests -p test_codex_coll
 4. **covering index**：全投影欄位均在既有日期 index 時，合法 SEARCH 必須保留 SQL／archived exact 證據。
 5. **不安全計畫與診斷**：fixture 對日期欄位使用不匹配的 collation index，迫使真實 SQLite 產生 SCAN。必須在 SQL row 回傳前拒絕，保留有界日期 fallback；缺 index 與計畫拒絕分別提供固定 reason／branch。診斷不得包含工作原文、路徑或自訂 index 名稱。
 
+## Codex canonical evidence 與隔離
+
+新增公開 collector CLI 案例覆蓋 runtime version 僅供診斷、canonical `item_completed`／SQL mirror identity、必要 query capability 與單筆錯誤隔離。可讀取時，unknown／missing／不同版本不阻擋候選；unknown time、無效內容、型別或 item 只形成明確 gap，不被報為成功 EOF，也不隱藏後續有效 item／候選。缺必要 schema／index 或實際 query plan 不安全時，保留已成功證據並沿既有有界 fallback；版本差異本身不產 compatibility draft。具體案例見 `test_codex_collection.py` 中 `test_version_is_diagnostic_only_including_absent_column_and_mixed_candidates`、`test_bad_history_item_is_isolated_and_later_items_and_candidates_survive`、`test_canonical_messages_use_materializer_time_and_item_identity`、`test_canonical_tools_mirror_sql_without_merging_distinct_outputs_or_errors`、`test_compatibility_drafts_classify_observed_query_time_and_content_gaps` 與 `test_history_without_thread_index_never_scans_unrelated_items_and_keeps_exact`。
+
 目前 state SELECT 沒有排序子句；上述公開 seam 的正常 table fixture 不會自然產生 temp-sort。程式仍拒絕 `USE TEMP B-TREE`，但此分支不宣稱已由這組 CLI 回歸直接觸發。
 
 ## 測試判定依據

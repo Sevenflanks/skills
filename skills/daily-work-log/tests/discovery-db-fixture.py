@@ -22,6 +22,19 @@ if request["mode"] == "relative":
                 for i, p in enumerate(["Users/synthetic", "C:repo", "\\repo", "/repo"])]
 elif request["mode"] == "empty":
     sessions = []
+elif request["mode"] == "diagnostics-metadata":
+    sessions = [(key, directory, path, "synthetic", 1791388800000, 1791475199999)
+                for key, directory, path in [
+                    ("meta", root + "/repo/../repo", root + "/repo"),
+                    ("aggregate", root + "/home", root + "/home"),
+                    ("missing", root + "/missing", root + "/missing"),
+                    ("relative", "relative/repo", "C:repo"),
+                    ("invalid", root + "/\0bad", None),
+                    ("empty", None, " "),
+                ]]
+elif request["mode"] == "unsafe-home-expansion":
+    sessions = [("home", request["home"], None, "synthetic", 1791388800000, 1791475199999),
+                ("meta", root + "/repo", None, "synthetic", 1791388800000, 1791475199999)]
 db.executemany("insert into session values(?,?,?,?,?,?)", sessions)
 
 def part(key, path, time=1791388800000, session="parent", tool="bash"):
@@ -43,5 +56,21 @@ parts = [part("01", root + "/repo"), part("02", root + "/repo", 1791475199999),
 if request["mode"] == "cap":
     parts = [part(f"{i:05}", root + "/repo", 1791388800000 + i) for i in range(2049)]
     parts[-1] = part("02048", root + "/other-repo", 1791388802048)
+elif request["mode"] in ("diagnostics-metadata", "unsafe-home-expansion"):
+    parts = []
+elif request["mode"] in ("supplement-singleton", "supplement-array"):
+    parts = [part("01", root + "/repo")]
+elif request["mode"] == "supplement-empty":
+    parts = []
+elif request["mode"] == "diagnostics-workdir":
+    parts = [part("01", root + "/repo"), part("02", root + "/repo/../repo"),
+             part("03", root + "/repo", session="metadata"),
+             part("04", root + "/missing"), part("05", root + "/missing"),
+             part("06", root + "/home"), part("07", "relative/repo"),
+             part("08", "C:repo"), part("09", root + "/another-missing"), part("10", " ")]
 db.executemany("insert into part values(?,?,?,?)", parts)
-print(json.dumps([dict(row) for row in db.execute(request["sql"])], ensure_ascii=False))
+rows = [dict(row) for row in db.execute(request["sql"])]
+if request["mode"] == "supplement-singleton" and "join session" in request["sql"]:
+    print(json.dumps(rows[0], ensure_ascii=False))
+else:
+    print(json.dumps(rows, ensure_ascii=False))

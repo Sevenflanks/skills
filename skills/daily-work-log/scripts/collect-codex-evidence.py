@@ -13,6 +13,7 @@ import time
 
 UTC = dt.timezone.utc
 SUPPORTED = '0.164.0-alpha.11.1'
+ITEM_TYPES = {'userMessage', 'agentMessage', 'hookPrompt', 'functionCallOutput', 'plan', 'reasoning', 'commandExecution', 'fileChange', 'mcpToolCall', 'dynamicToolCall', 'collabAgentToolCall', 'subAgentActivity', 'webSearch', 'imageView', 'imageGeneration', 'sleep', 'enteredReviewMode', 'exitedReviewMode', 'contextCompaction', 'error'}
 
 
 class Gap(Exception):
@@ -26,6 +27,13 @@ def encoded(value):
 
 def iso(value):
     return dt.datetime.fromtimestamp(value, UTC).isoformat()
+
+
+def spawn_parent(source):
+    subagent = source.get('subagent') if isinstance(source, dict) else None
+    spawn = subagent.get('thread_spawn') if isinstance(subagent, dict) else None
+    parent = spawn.get('parent_thread_id') if isinstance(spawn, dict) else None
+    return parent if isinstance(parent, str) else None
 
 
 def timestamp(value, unit=None):
@@ -144,30 +152,56 @@ class Collector:
             self.sql['limitHits'].append(gap.reason)
             self.sql['unread'].append({'adapter': adapter, 'scope': scope, 'from': self.r['from'], 'to': self.r['to']})
         if gap.status == 'compatibility-error':
-            # 草稿只使用固定原因代碼及核對過的版本字串，絕不插入 exception、路徑或原文。
+            # 能力缺口先交本機 adapter 維護者判讀；schema 差異本身不是 upstream bug 證據。
+            # 草稿只用程式產生的 reason/必要欄位，絕不插入 exception、未知 type 或原文。
+            if gap.reason.startswith('required-'):
+                category, reproduce = 'schema-capability', '建立缺少列出必要欄位的合成 threads／thread_items table。'
+            elif 'index' in gap.reason or 'query' in gap.reason:
+                category, reproduce = 'query-capability', '建立完整合成 table，但移除列出的 leading-column index；確認 collector 拒絕非 SEARCH 計畫。'
+            elif 'time' in gap.reason:
+                category, reproduce = 'time-capability', '在已選合成 item 的時間欄位填入 17、null 或非數值字串，並附上一筆有效時間的 item。'
+            elif 'item' in gap.reason or 'message' in gap.reason:
+                category, reproduce = 'content-capability', '在已選合成 thread 放入未知 type 或無效 item JSON，並在其後放一筆有效訊息。'
+            elif gap.reason.startswith('python-'):
+                category, reproduce = 'runtime-capability', '在低於 Python 3.11 的隔離環境執行合成 collector request。'
+            else:
+                category, reproduce = 'database-capability', '以不可解碼的合成 SQLite 檔案執行 collector；不使用本機資料副本。'
             difference = gap.reason + '; missing required columns: ' + ','.join(self.adapters[adapter].get('missingRequiredColumns', []))
             if self.adapters[adapter].get('missingRequiredIndexes'):
                 difference += '; missing required index: ' + ','.join(self.adapters[adapter]['missingRequiredIndexes'])
-            self.drafts.append({'destination': 'https://github.com/openai/codex/issues', 'requiresExplicitConsent': True, 'published': False, 'title': 'Codex 本機 history 相容性缺口', 'body': '已核對 runtime 契約：' + SUPPORTED + '\n觀察版本：' + self.adapters['state'].get('runtime', 'unverified') + '\n必要 schema／時間差異：' + difference + '\n影響：有界工作證據可能不完整；改用 exact rollout／日期分區補證或停止該來源，缺口見 coverage。\n合成重現：在 state_5.sqlite／thread_history_1.sqlite 建立上述缺少必要欄位、時間或 item type 差異，再執行指定日期的 collector。未包含私人原文、路徑、URL、auth 或 config。\n此為草稿；僅於使用者本次明確同意後，才可向上述目的地發布。'})
+            draft = {'destination': 'https://github.com/Sevenflanks/skills/issues', 'requiresExplicitConsent': True, 'published': False,
+                     'title': 'Codex 本機 adapter ' + category + ' 缺口',
+                     'body': '待確認：本機 adapter 是否需支援此資料形狀。尚無證據判定為 Codex upstream bug。\n觀察 adapter：' + adapter + '\n實際原因：' + difference + '\n影響：已成功證據保留；未讀範圍與限制見 coverage。\n合成重現：' + reproduce + ' 執行指定日期的 collector，核對 readStatus、adapter reason 與保留證據。\n資料限制：不附私人原文、路徑、URL、auth 或 config。\n此為草稿；取得本次明確同意後才可發布。'}
+            if draft not in self.drafts:
+                self.drafts.append(draft)
 
-    def add(self, sid, cwd, parent, event_time, typ, role, text, raw, provenance, turn=None, item=None):
+    def add(self, sid, cwd, parent, event_time, typ, role, text, raw, provenance, turn=None, item=None, normalized=None):
         if event_time is None:
             self.unknown += 1
             return
         self.valid_events += 1
-        if not self.start <= event_time <= self.end or not text or not sid or not cwd or not Path(cwd).is_absolute():
+        if not self.start <= event_time <= self.end or not text or not isinstance(sid, str) or not sid or not isinstance(cwd, str) or not Path(cwd).is_absolute():
             return
         self.range_events += 1
         # 只合併相同來源識別／種類／角色／全文的鏡像；不同 task 的同名工具不能併成一筆。
-        payload = raw.get('payload', raw)
+        payload = normalized if normalized is not None else raw.get('payload', raw)
+        canonical = normalized is not None or (provenance['adapter'] == 'history' and payload.get('id') is not None)
         source_id = payload.get('call_id') or payload.get('callId') or item or provenance.get('callId') or str(provenance.get('line', provenance.get('ordinal')))
         # 訊息的 SQL item ID 可能是 projection 自造值；同 thread／turn／實際時間／全文才視為鏡像。
         # Tool 另保留 call/item identity，避免同時同名的不同呼叫被合併。
         key = (sid, turn, event_time, role, text) if role in ('user', 'assistant') else (sid, turn, source_id, typ, role, text)
-        output = payload.get('aggregatedOutput', payload.get('output', payload.get('result')))
-        if role == 'tool' and source_id and output is not None and typ in ('commandExecution', 'mcpToolCall', 'dynamicToolCall', 'function_call_output', 'custom_tool_call_output'):
+        if role in ('user', 'assistant') and canonical:
+            # Canonical item ID 是真實 identity；legacy 投影自造 ID 才沿用時間／全文去重。
+            key = (sid, turn, item, event_time, role, text)
+        elif role == 'tool' and canonical:
+            # JSON object 欄位順序不是內容差異；只正規化已識別的 canonical payload，不改 legacy 原文。
+            key = (sid, turn, item, source_id, event_time, typ, role, json.dumps(payload, ensure_ascii=False, sort_keys=True))
+        output = payload.get('aggregatedOutput', payload.get('output', payload.get('result', payload.get('contentItems'))))
+        if role == 'tool' and source_id and (output is not None or canonical) and typ in ('commandExecution', 'mcpToolCall', 'dynamicToolCall', 'functionCallOutput', 'function_call_output', 'custom_tool_call_output'):
             # SQL 與 rollout 的 wrapper 不同；只有同 thread/turn/call 的相同完整 output 才合併。
             key = (sid, turn, source_id, 'tool-output', json.dumps(output, ensure_ascii=False, sort_keys=True))
+            if canonical:
+                key += (typ, payload.get('status'), payload.get('exitCode'), json.dumps(payload.get('error'), ensure_ascii=False, sort_keys=True), payload.get('success'))
             existing = self.seen.get(key)
             exit_code = payload.get('exit_code', payload.get('exitCode'))
             if existing and exit_code is not None and existing.get('tool', {}).get('exitCode') not in (None, exit_code):
@@ -195,20 +229,54 @@ class Collector:
         if not isinstance(raw, dict):
             raise Gap('compatibility-error', 'invalid-history-item-shape')
         typ = raw.get('type', row['item_type'])
-        if typ not in {'userMessage', 'agentMessage', 'plan', 'reasoning', 'commandExecution', 'fileChange', 'mcpToolCall', 'dynamicToolCall', 'collabAgentToolCall', 'webSearch', 'imageView', 'imageGeneration', 'enteredReviewMode', 'exitedReviewMode', 'contextCompaction', 'error'}:
+        if typ not in ITEM_TYPES:
             raise Gap('compatibility-error', 'unknown-history-item-type')
         role = 'user' if typ == 'userMessage' else 'assistant' if typ == 'agentMessage' else 'tool'
-        text = raw.get('text') or raw.get('message')
-        if not text and role in ('user', 'assistant') and isinstance(raw.get('content'), list):
-            text = '\n'.join(p.get('text', '') for p in raw['content'] if isinstance(p, dict))
+        text = raw.get('text')
+        if text is None:
+            text = raw.get('message')
+        if role in ('user', 'assistant'):
+            if text is None and 'content' in raw:
+                content = raw['content']
+                if not isinstance(content, list) or any(not isinstance(p, dict) or ('text' in p and not isinstance(p['text'], str)) for p in content):
+                    raise Gap('compatibility-error', 'invalid-history-message-content')
+                text = '\n'.join(p.get('text', '') for p in content)
+            if not isinstance(text, str):
+                raise Gap('compatibility-error', 'invalid-history-message-content')
         if not isinstance(text, str):
             text = encoded(raw)
         value = row['created_at_ms']
         try:
             when = timestamp(value, 'ms')
         except Gap:
-            when = None
+            self.unknown += 1
+            raise
+        if when is None:
+            self.unknown += 1
+            raise Gap('compatibility-error', 'unknown-history-item-time')
         self.add(candidate['id'], candidate['cwd'], candidate.get('parent'), when, typ, role, text, raw, {'adapter': 'history', 'threadId': row['thread_id'], 'turnId': row['turn_id'], 'itemId': row['item_id'], 'ordinal': row['rollout_ordinal']}, row['turn_id'], row['item_id'])
+
+    def canonical_item(self, payload):
+        raw = payload.get('item')
+        if not isinstance(raw, dict) or not isinstance(raw.get('id'), str) or not raw['id']:
+            raise Gap('compatibility-error', 'invalid-canonical-item-shape')
+        typ = raw.get('type')
+        projected_type = typ[0].lower() + typ[1:] if isinstance(typ, str) and typ else None
+        if projected_type not in ITEM_TYPES or typ == 'Error':
+            raise Gap('compatibility-error', 'unknown-canonical-item-type')
+        # 只正規化對照用欄位，原始 canonical event 仍完整保留於 detail/mirrorDetails。
+        normalized = {re.sub(r'_([a-z])', lambda m: m[1].upper(), k): v for k, v in raw.items()}
+        normalized['type'] = projected_type
+        if typ not in ('UserMessage', 'AgentMessage'):
+            return projected_type, 'tool', encoded(normalized), normalized
+        content = raw.get('content')
+        if not isinstance(content, list) or any(not isinstance(p, dict) or ('text' in p and not isinstance(p['text'], str)) or (typ == 'AgentMessage' and (p.get('type') != 'Text' or not isinstance(p.get('text'), str))) for p in content):
+            raise Gap('compatibility-error', 'invalid-canonical-message-content')
+        # AgentMessage 在官方 ThreadItem::from 收斂為 collect::<String>()，不插入換行。
+        text = ('' if typ == 'AgentMessage' else '\n').join(p['text'] for p in content if isinstance(p.get('text'), str))
+        return ('userMessage' if typ == 'UserMessage' else 'agentMessage',
+                'user' if typ == 'UserMessage' else 'assistant', text,
+                {'id': raw['id'], 'text': text})
 
     def lines(self, stream, budget, accounting):
         # 單次 Read 仍最多 4 KiB；只對 exact 候選保留較大的有界行，不改 legacy 64 KiB reader。
@@ -268,9 +336,12 @@ class Collector:
         # rollout 可能已被另一 thread 取代；自己的 session_meta 才能授予 repo／parent 歸屬。
         sid, cwd, parent, turn = None, None, None, None
         turn_contexts = {}
-        path = Path(candidate['rollout_path'])
+        path = None
         try:
             self.check()
+            if not isinstance(candidate['rollout_path'], str) or not candidate['rollout_path']:
+                raise Gap('failed', 'invalid-rollout-path')
+            path = Path(candidate['rollout_path'])
             if path.suffix.lower() != '.jsonl':
                 raise Gap('failed', 'unsafe-rollout-path')
             self.safe_path(path)
@@ -307,8 +378,7 @@ class Collector:
                         cwd = payload.get('cwd')
                         turn, turn_contexts = None, {}
                         source = payload.get('source')
-                        spawn = ((source.get('subagent') or {}).get('thread_spawn') or {}) if isinstance(source, dict) else {}
-                        parent = payload.get('forked_from_id') or payload.get('parent_session_id') or payload.get('previous_session_id') or spawn.get('parent_thread_id')
+                        parent = payload.get('forked_from_id') or payload.get('parent_session_id') or payload.get('previous_session_id') or spawn_parent(source)
                         continue
                     if typ == 'turn_context':
                         turn = payload.get('turn_id', payload.get('id', turn))
@@ -317,31 +387,53 @@ class Collector:
                         if isinstance(context_turn, str) and context_turn and isinstance(context_cwd, str) and Path(context_cwd).is_absolute():
                             turn_contexts[context_turn] = {'path': context_cwd, 'sessionId': sid, 'turnId': context_turn, 'file': str(path), 'line': line_no, 'byteOffset': offset}
                         continue
-                    pt = payload.get('type', typ)
-                    if pt in ('task_started', 'turn_started'):
-                        turn = payload.get('turn_id', turn)
-                    if 'interop' in encoded(event).lower():
-                        entry['interopDetected'] = True
-                    role, text = None, None
-                    if pt in ('user_message', 'agent_message'):
-                        role = 'user' if pt == 'user_message' else 'assistant'
-                        text = payload.get('message')
-                    elif pt == 'message' and payload.get('role') in ('user', 'assistant'):
-                        role = payload['role']
-                        text = '\n'.join(p.get('text', '') for p in payload.get('content', []) if isinstance(p, dict))
-                    elif typ == 'response_item' or 'interop' in str(pt).lower() or pt in ('error', 'warning', 'turn_aborted', 'task_complete'):
-                        role = 'tool'
-                        text = encoded(payload)
-                    if role:
-                        try:
-                            when = timestamp(event.get('timestamp'))
-                        except Gap:
+                    # Legacy 與 canonical 的解析、驗證和去重都屬於單筆 item；壞內容不能中止後續取材。
+                    try:
+                        pt = payload.get('type', typ)
+                        if pt in ('task_started', 'turn_started'):
+                            turn = payload.get('turn_id', turn)
+                        if 'interop' in encoded(event).lower():
+                            entry['interopDetected'] = True
+                        role, text = None, None
+                        normalized = None
+                        if pt == 'item_completed':
+                            pt, role, text, normalized = self.canonical_item(payload)
+                            if not isinstance(payload.get('turn_id'), str) or not payload['turn_id'] or payload.get('thread_id') != sid:
+                                raise Gap('compatibility-error', 'invalid-canonical-item-identity')
+                        elif pt in ('user_message', 'agent_message'):
+                            role = 'user' if pt == 'user_message' else 'assistant'
+                            text = payload.get('message')
+                        elif pt == 'message' and payload.get('role') in ('user', 'assistant'):
+                            role = payload['role']
+                            content = payload.get('content', [])
+                            if not isinstance(content, list) or any(not isinstance(p, dict) or not isinstance(p.get('text', ''), str) for p in content):
+                                raise Gap('compatibility-error', 'invalid-event-message-content')
+                            text = '\n'.join(p.get('text', '') for p in content)
+                        elif typ == 'response_item' or 'interop' in str(pt).lower() or pt in ('error', 'warning', 'turn_aborted', 'task_complete'):
+                            role = 'tool'
+                            text = encoded(payload)
+                        if role:
+                            event_turn = payload.get('turn_id', turn)
+                            if event_turn is not None and not isinstance(event_turn, str):
+                                raise Gap('compatibility-error', 'invalid-event-item-identity')
+                            if not isinstance(text, str):
+                                raise Gap('compatibility-error', 'invalid-event-message-content')
+                            # 官方 materializer：started_at_ms 有值時不採 envelope timestamp。
+                            when = timestamp(payload['started_at_ms'], 'ms') if normalized is not None and payload.get('started_at_ms') is not None else timestamp(event.get('timestamp'))
+                            if when is None:
+                                raise Gap('compatibility-error', 'unknown-event-time')
+                            event_cwd = turn_contexts.get(event_turn, {}).get('path', cwd)
+                            identity = hashlib.sha256(json.dumps(event, ensure_ascii=False, sort_keys=True).encode('utf-8')).hexdigest()
+                            self.add(sid, event_cwd, parent, when, pt, role, text, event, {'adapter': 'exact-jsonl', 'file': str(path), 'line': line_no, 'byteOffset': offset, 'metadataThreadId': candidate['id'], 'callId': payload.get('call_id'), 'eventIdentity': identity}, event_turn, normalized['id'] if normalized is not None else payload.get('id'), normalized)
+                    except (Gap, TypeError, ValueError) as error:
+                        if isinstance(error, Gap) and error.status != 'compatibility-error':
+                            raise
+                        error = error if isinstance(error, Gap) else Gap('compatibility-error', 'invalid-event-item')
+                        if 'time' in error.reason:
                             self.unknown += 1
-                            continue
-                        event_turn = payload.get('turn_id', turn)
-                        event_cwd = turn_contexts.get(event_turn, {}).get('path', cwd)
-                        identity = hashlib.sha256(json.dumps(event, ensure_ascii=False, sort_keys=True).encode('utf-8')).hexdigest()
-                        self.add(sid, event_cwd, parent, when, pt, role, text, event, {'adapter': 'exact-jsonl', 'file': str(path), 'line': line_no, 'byteOffset': offset, 'metadataThreadId': candidate['id'], 'callId': payload.get('call_id'), 'eventIdentity': identity}, event_turn, payload.get('id'))
+                        entry['semanticGaps'] = entry.get('semanticGaps', 0) + 1
+                        entry['reason'] = error.reason
+                        self.gap('exact', error, 'event-item')
                 used = accounting['bytes']
                 eof = eof or stream.tell() == os.fstat(stream.fileno()).st_size
                 if not eof and entry['status'] != 'limited':
@@ -352,7 +444,7 @@ class Collector:
                 if cov['readBytes'] >= self.r['totalBytes']:
                     cov['limitHits'].append('totalBytes')
                 if entry['status'] != 'limited':
-                    entry['status'] = 'partial' if entry.get('invalidLines') or entry['lineageMatch'] is not True else 'success'
+                    entry['status'] = 'partial' if entry.get('invalidLines') or entry.get('semanticGaps') or entry['lineageMatch'] is not True else 'success'
                 entry['projectionComplete'] = eof and entry['status'] == 'success'
                 if entry['lineageMatch'] is True:
                     entry['parentSessionId'] = parent
@@ -437,14 +529,20 @@ class Collector:
     def run(self):
         candidates, state, history = [], None, None
         try:
-            state, columns = self.connect('state_5.sqlite', 'threads', {'id', 'rollout_path', 'cwd', 'created_at', 'updated_at', 'cli_version'})
-            created = 'coalesce(created_at_ms,created_at*1000)' if 'created_at_ms' in columns else 'created_at*1000'
-            updated = 'coalesce(updated_at_ms,updated_at*1000)' if 'updated_at_ms' in columns else 'updated_at*1000'
+            state, columns = self.connect('state_5.sqlite', 'threads', {'id', 'rollout_path', 'cwd'})
+            missing_times = [base + ' or ' + base + '_ms' for base in ('created_at', 'updated_at') if base not in columns and base + '_ms' not in columns]
+            if missing_times:
+                self.adapters['state']['missingRequiredColumns'] = missing_times
+                raise Gap('compatibility-error', 'required-threads-time-columns-missing')
+            created = 'coalesce(created_at_ms,created_at*1000)' if {'created_at_ms', 'created_at'} <= columns.keys() else 'created_at_ms' if 'created_at_ms' in columns else 'created_at*1000'
+            updated = 'coalesce(updated_at_ms,updated_at*1000)' if {'updated_at_ms', 'updated_at'} <= columns.keys() else 'updated_at_ms' if 'updated_at_ms' in columns else 'updated_at*1000'
             # 候選只用 lifespan overlap，不限制建立日或 archived；不先列全歷史再篩選。
             source = 'source' if 'source' in columns else 'null'
             valid_created = f"typeof({created}) in ('integer','real') and {created} between 946684800000 and 4102444800000"
             valid_updated = f"typeof({updated}) in ('integer','real') and {updated} between 946684800000 and 4102444800000"
-            fields = {'id': 'id', 'rollout_path': 'rollout_path', 'cwd': 'cwd', 'cli_version': 'cli_version', 'source': source}
+            # 建立 thread 的版本不是共用 DB 的 schema；只作診斷，不可作讀取 gate。
+            version = 'case when typeof(cli_version)=\'text\' and length(cast(cli_version as blob))<=64 then cli_version else null end' if 'cli_version' in columns else 'null'
+            fields = {'id': 'id', 'rollout_path': 'rollout_path', 'cwd': 'cwd', 'cli_version': version, 'source': source}
             remaining = self.r['payloadBytes'] - self.sql['payloadBytes']
             lengths = '+'.join(f'coalesce(length(cast({field} as blob)),0)' for field in fields.values())
             projection = ','.join(f'case when ({lengths})<={remaining} then {field} else null end as {name}' for name, field in fields.items())
@@ -465,7 +563,7 @@ class Collector:
                 ms = base + '_ms'
                 has_ms = ms in columns
                 # 只省略 schema 保證不可能的 NULL；nullable 的未知時間仍須進 exact 補證。
-                fallback = [(base, 1, ms + ' is null' if has_ms else '1')] if not has_ms or not columns[ms] else []
+                fallback = [(base, 1, ms + ' is null' if has_ms else '1')] if base in columns and (not has_ms or not columns[ms]) else []
                 for field, scale, guard in ([(ms, 1000, '1')] if has_ms else []) + fallback:
                     if field not in indexes:
                         self.adapters['state']['missingRequiredIndexes'] = [f'threads({field}, ...)']
@@ -473,7 +571,7 @@ class Collector:
                         raise Gap('compatibility-error', 'date-index-required')
                     lo, hi = 946684800 * scale, 4102444800 * scale
                     conditions = [('below-known-unit', f'{field}<?', (lo,)), ('above-known-unit', f'{field}>?', (hi,))]
-                    if field == base and not columns[field]:
+                    if not columns[field] and (field == base or base not in columns):
                         conditions.append(('unknown-null', f'{field} is null', ()))
                     if base == 'updated_at':
                         conditions.append(('overlap-updated', f'{field} between ? and ?', (self.start * scale, hi)))
@@ -502,11 +600,13 @@ class Collector:
                         self.adapters['state']['unknownMetadataTimes'] = self.adapters['state'].get('unknownMetadataTimes', 0) + 1
                 try:
                     source = json.loads(row['source']) if isinstance(row['source'], str) else row['source']
-                    row['parent'] = (((source.get('subagent') or {}).get('thread_spawn') or {}).get('parent_thread_id')) if isinstance(source, dict) else None
+                    row['parent'] = spawn_parent(source)
                 except ValueError:
                     row['parent'] = None
                 candidates.append(row)
             versions = sorted({c['cli_version'] for c in candidates if isinstance(c['cli_version'], str) and re.fullmatch(r'\d{1,3}\.\d{1,3}\.\d{1,3}(?:-alpha\.\d{1,4}\.\d{1,4})?', c['cli_version'])})[:8]
+            if self.adapters['state'].get('unknownMetadataTimes'):
+                self.gap('state', Gap('compatibility-error', 'unknown-metadata-time'))
             self.adapters['state'].update(status='partial' if self.adapters['state'].get('unknownMetadataTimes') else 'success' if candidates else 'valid-empty', candidates=len(candidates), runtime=','.join(versions) if versions else 'unverified')
         except (Gap, sqlite3.Error) as error:
             self.gap('state', error if isinstance(error, Gap) else self.sqlite_gap(error))
@@ -517,14 +617,14 @@ class Collector:
             # 有效空投影沒有 exact ID 可定位；仍需以原有日期／byte 限額補證 JSONL。
             return self.result(fallback=self.adapters['state']['status'] in ('valid-empty', 'missing', 'permission', 'compatibility-error'))
         try:
-            if any(c['cli_version'] != SUPPORTED for c in candidates):
-                raise Gap('compatibility-error', 'unsupported-runtime')
             history, _ = self.connect('thread_history_1.sqlite', 'thread_items', {'thread_id', 'turn_id', 'item_id', 'rollout_ordinal', 'created_at_ms', 'item_json', 'item_type'})
             # LIMIT 不能保護 history 全表 scan。先驗證實際計畫以 thread_id SEARCH 既有 index/PK；
             # 單一 thread 內的 ordinal 排序可以保留，不以固定 index 名稱限制支援的 schema。
             for candidate in candidates:
-                query = "select thread_id,turn_id,item_id,rollout_ordinal,created_at_ms,item_type,case when length(cast(item_json as blob))<=? then item_json else null end as item_json from thread_items where thread_id=? and (created_at_ms between ? and ? or created_at_ms is null or typeof(created_at_ms) not in ('integer','real') or created_at_ms not between 946684800000 and 4102444800000) order by rollout_ordinal,item_id limit ?"
-                params = (self.r['payloadBytes'] - self.sql['payloadBytes'], candidate['id'], self.start * 1000, self.end * 1000)
+                # 真實 NULL 是單筆壞資料；不可與 CASE 為限額隱去的大 payload 混為一談。
+                query = "select thread_id,turn_id,item_id,rollout_ordinal,created_at_ms,item_type,length(cast(item_json as blob))>? as _payload_limited,case when length(cast(item_json as blob))<=? then item_json else null end as item_json from thread_items where thread_id=? and (created_at_ms between ? and ? or created_at_ms is null or typeof(created_at_ms) not in ('integer','real') or created_at_ms not between 946684800000 and 4102444800000) order by rollout_ordinal,item_id limit ?"
+                remaining = self.r['payloadBytes'] - self.sql['payloadBytes']
+                params = (remaining, remaining, candidate['id'], self.start * 1000, self.end * 1000)
                 plan = [r[3] for r in history.execute('EXPLAIN QUERY PLAN ' + query, (*params, self.r['rows'] - self.sql['rows'] + 1))]
                 if (not any(re.match(r'^SEARCH thread_items USING (?:(?:COVERING )?INDEX |PRIMARY KEY )', p) and 'thread_id=?' in p for p in plan)
                         or any('SCAN ' in p for p in plan)):
@@ -532,11 +632,20 @@ class Collector:
                     raise Gap('compatibility-error', 'thread-items-thread_id-index-required')
                 self.adapters['history']['queryPlan'] = {'gate': 'indexed-thread-search', 'scope': 'candidate-thread'}
                 for row in self.rows(history, query, params, candidate['id']):
-                    if row['item_json'] is None:
-                        raise Gap('limited', 'payloadBytes')
                     self.adapters['history']['returnedItems'] = self.adapters['history'].get('returnedItems', 0) + 1
-                    self.item(row, candidate)
-            self.adapters['history']['status'] = 'partial' if self.unknown else 'success' if self.adapters['history'].get('returnedItems') else 'valid-empty'
+                    # 單筆壞內容不代表共用 DB 不能讀；延續同一 row/payload/deadline 預算。
+                    try:
+                        self.item(row, candidate)
+                    except (Gap, ValueError, TypeError) as error:
+                        if isinstance(error, Gap) and error.status != 'compatibility-error':
+                            raise
+                        self.adapters['history']['rejectedItems'] = self.adapters['history'].get('rejectedItems', 0) + 1
+                        self.gap('history', error if isinstance(error, Gap) else Gap('compatibility-error', 'invalid-history-item'), 'history-item')
+            if self.adapters['history']['status'] == 'compatibility-error':
+                if any(p['adapter'] == 'history' for e in self.evidence for p in e['provenance']):
+                    self.adapters['history']['status'] = 'partial'
+            else:
+                self.adapters['history']['status'] = 'partial' if self.unknown else 'success' if self.adapters['history'].get('returnedItems') else 'valid-empty'
         except (Gap, sqlite3.Error, ValueError, TypeError) as error:
             self.gap('history', error if isinstance(error, Gap) else self.sqlite_gap(error) if isinstance(error, sqlite3.Error) else Gap('compatibility-error', 'invalid-history-item'), 'remaining-exact-candidates')
         finally:

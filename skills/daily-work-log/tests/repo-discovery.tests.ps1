@@ -45,6 +45,7 @@ function Resolve-GitRepoRoot {
 function Get-SessionDirectoriesFromDirectoryReadme { throw 'Unexpected fallback' }
 function Get-SessionDirectoriesFromLogs { throw 'Unexpected fallback' }
 function Discover {
+  $script:OpenCodeDiscovery = New-OpenCodeDiscovery
   $script:GitRepoRootCache = @{}; $script:OpenCodeReadSucceeded = $false
   $script:OpenCodeReadFailures = 0; $script:OpenCodeActivityCount = 0
   $script:Warnings = [Collections.Generic.List[string]]::new(); $script:Queries.Clear()
@@ -120,6 +121,7 @@ try {
     foreach ($cwd in @('home','repo','other-repo')) {
       [Environment]::CurrentDirectory = "$root\$cwd"
       $script:GitRepoRootCache = @{}; $script:Warnings = [Collections.Generic.List[string]]::new()
+      $script:OpenCodeDiscovery = New-OpenCodeDiscovery
       $found = @(Get-SessionDirectories -FromRange ([datetimeoffset]::FromUnixTimeMilliseconds(1791388800000)) -ToRange ([datetimeoffset]::FromUnixTimeMilliseconds(1791475199999)) -TimezoneId 'Asia/Taipei' -OverrideStorageRoot "$root\storage" -OverrideLogRoot "$root\logs" -Warnings $script:Warnings)
       $expected = if ($fallback -eq 'directory-readme') { "$root\repo" } else { "$root\other-repo" }
       Assert ($found.Count -eq 1 -and $found[0].path -eq $expected) "$fallback changed absolute contract or guessed CWD"
