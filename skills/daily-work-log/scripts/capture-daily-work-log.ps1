@@ -82,7 +82,10 @@ try {
   $content = $lines -join [Environment]::NewLine
   [IO.File]::WriteAllText($OutputPath, $content, [Text.UTF8Encoding]::new($false))
   if ([string]::IsNullOrWhiteSpace($content)) { throw 'Script produced no JSON; stop without retry.' }
-  $null = $content | ConvertFrom-Json -Depth 100
+  $validationOptions = [System.Text.Json.JsonDocumentOptions]::new()
+  $validationOptions.MaxDepth = 100
+  $validationDocument = [System.Text.Json.JsonDocument]::Parse($content, $validationOptions)
+  $validationDocument.Dispose()
   exit 0
 }
 catch {

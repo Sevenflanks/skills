@@ -63,6 +63,26 @@ exit $LASTEXITCODE
     Assert ($selected.value -ceq $note -and $selected.detailRef.inputPath -ceq $raw) "$label raw selection changed capture provenance or text."
   }
   $pwsh = (Get-Command pwsh).Source
+  $synthetic = "$root/case-sensitive.json"
+  $syntheticText = '{"Name":"upper","name":"lower","generatedAt":1730000000,"nullable":null}'
+  [IO.File]::WriteAllText($synthetic, $syntheticText, $utf8)
+  Write-Json "$root/case-sensitive-view.json" @{InputPath=$synthetic;View='raw';JsonPointer=''}
+  $expectedLines = @(& $pwsh -NoProfile -NonInteractive -File $formatter -InputPath $synthetic -View raw -JsonPointer '')
+  Assert ($LASTEXITCODE -eq 0) 'Formatter must accept the synthetic raw JSON document.'
+  $expectedBytes = [Text.UTF8Encoding]::new($false).GetBytes(($expectedLines -join [Environment]::NewLine))
+  $rawOutput = "$root/case-sensitive-output.json"
+  $null = & $pwsh -NoProfile -NonInteractive -File $helper -Mode format -ScriptPath $formatter -ParametersPath "$root/case-sensitive-view.json" -OutputPath $rawOutput 2>&1
+  Assert ($LASTEXITCODE -eq 0) 'Capture must accept formatter raw output with case-sensitive duplicate keys.'
+  $actualBytes = [IO.File]::ReadAllBytes($rawOutput)
+  Assert ([Convert]::ToBase64String($actualBytes) -ceq [Convert]::ToBase64String($expectedBytes)) 'Capture changed formatter output bytes.'
+  $captured = [System.Text.Json.JsonDocument]::Parse([IO.File]::ReadAllText($rawOutput))
+  try {
+    $value = $captured.RootElement.GetProperty('value')
+    Assert ($value.GetProperty('Name').GetString() -ceq 'upper' -and $value.GetProperty('name').GetString() -ceq 'lower') 'Capture collapsed case-sensitive JSON keys.'
+    Assert ($value.GetProperty('generatedAt').ValueKind.ToString() -eq 'Number' -and $value.GetProperty('generatedAt').GetInt64() -eq 1730000000) 'Capture changed the numeric timestamp.'
+    Assert ($value.GetProperty('nullable').ValueKind.ToString() -eq 'Null') 'Capture changed explicit JSON null.'
+  }
+  finally { $captured.Dispose() }
   $before = [IO.File]::ReadAllText("$root/calls.txt")
   foreach ($fault in @('missing-probe','different-day','unavailable','not-probe','overwrite-input')) {
     $args = @('-NoProfile','-File',$helper,'-Mode','collect','-ScriptPath',"$root/collector.ps1",'-ParametersPath',"$root/params.json",'-OutputPath',"$root/$fault.json")
