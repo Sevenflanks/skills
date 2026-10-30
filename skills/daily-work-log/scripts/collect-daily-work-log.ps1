@@ -2115,7 +2115,7 @@ function Get-SessionPrNumbers {
   foreach ($evidence in $SessionEvidence) {
     $inRange = $false
     $timestamps = @()
-    foreach ($name in @('timeCreated', 'timeUpdated', 'updatedAt', 'timestamps')) {
+    foreach ($name in @('timeCreated', 'timeUpdated', 'updatedAt', 'timestamps', 'timestamp')) {
       $timestamps += @(Get-ObjectPropertyValue $evidence $name)
     }
     foreach ($value in $timestamps) {

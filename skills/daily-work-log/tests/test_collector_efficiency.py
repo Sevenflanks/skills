@@ -30,7 +30,7 @@ class CollectorEfficiency(unittest.TestCase):
         self.env.update(DWL57_ROOT=str(self.root), PATH=os.pathsep.join(
             [str(self.root / 'bin'), str(Path(PWSH).parent), str(Path(shutil.which('python')).parent)]))
         self.codex_root = self.root / 'missing-codex'
-        self.fixture = dict(rows=[self.row('s1', 'repo-a')], commits=[self.commit()], prs=[], exact={}, associated=[])
+        self.fixture = dict(rows=[self.row('s1', 'repo-a')], workdirs=[], commits=[self.commit()], prs=[], exact={}, associated=[])
         self.write('bin/opencode.ps1', r'''
 param([Parameter(ValueFromRemainingArguments=$true)][string[]]$Arguments)
 $f = Get-Content "$env:DWL57_ROOT/fixture.json" -Raw | ConvertFrom-Json
@@ -40,7 +40,7 @@ if ($f.PSObject.Properties['flood']) {
 }
 if ($f.PSObject.Properties['dbFail']) { [Console]::Error.Write('synthetic-db-error'); exit 7 }
 if ($f.PSObject.Properties['dbMalformed']) { '{invalid'; exit 0 }
-if ($Arguments[-1] -match 'join session') { '[]' } else { ConvertTo-Json -InputObject @($f.rows) -Depth 20 -Compress }
+if ($Arguments[-1] -match 'join session') { ConvertTo-Json -InputObject @($f.workdirs) -Depth 20 -Compress } else { ConvertTo-Json -InputObject @($f.rows) -Depth 20 -Compress }
 exit 0
 ''')
         self.write('bin/git.ps1', r'''
@@ -121,6 +121,7 @@ param([Parameter(ValueFromRemainingArguments=$true)][string[]]$Arguments)
             evidence.mkdir(parents=True, exist_ok=True)
             summary = dict(test=self.id(), command='python -B -m unittest discover -s skills/daily-work-log/tests -p test_collector_efficiency.py -v',
                            diagnostics=data['meta']['diagnostics'], collectionStatus=data['meta'].get('collectionStatus'),
+                           sessionEvidence=[r['sessionEvidence'] for r in data['repos']],
                            prs=[[p['number'] for p in r['prs']] for r in data['repos']],
                            ghCalls=self.calls(), rgCalls=len(self.calls('rg')), exitCode=result.returncode)
             (evidence / (self.id().split('.')[-1] + '.json')).write_text(json.dumps(summary, indent=2), encoding='utf-8')
@@ -263,6 +264,34 @@ param([Parameter(ValueFromRemainingArguments=$true)][string[]]$Arguments)
         data = self.collect()
         self.assertEqual([p['number'] for p in data['repos'][0]['prs']], [17])
         self.assertEqual([c[2] for c in self.calls() if c[:2] == ['pr', 'view']], ['17'])
+
+    def test_session_only_uses_in_range_workdir_timestamp_for_cross_day_reference(self):
+        self.fixture['commits'] = []
+        workdir = self.root / 'repo-a' / 'nested'
+        workdir.mkdir()
+        self.fixture['rows'] = [
+            self.row('cross-day', 'repo-a', 'https://github.com/synthetic/project/pull/17'),
+            self.row('no-in-range-part', 'repo-a', 'https://github.com/synthetic/project/pull/19'),
+            self.row('foreign', 'repo-a', 'https://github.com/foreign/project/pull/18'),
+        ]
+        self.fixture['rows'][0].update(time_created=1791302400000, time_updated=1791561600000)
+        self.fixture['rows'][1].update(time_created=1791302400000, time_updated=1791561600000)
+        self.fixture['exact'] = {str(n): self.pr(n) for n in (17, 18, 19)}
+        self.fixture['workdirs'] = [
+            dict(id='cross-day', title='https://github.com/synthetic/project/pull/17', tool='bash',
+                 workdir=str(workdir), timestamp=1791424800000),
+            dict(id='foreign', title='https://github.com/foreign/project/pull/18', tool='bash',
+                 workdir=str(workdir), timestamp=1791424800000),
+        ]
+
+        data = self.collect()
+
+        workdir = data['meta']['sources']['opencode']['discovery']['workdir']
+        self.assertEqual((workdir['status'], workdir['returnedRows'], workdir['processedRows']), ('success', 2, 2))
+        self.assertEqual([p['number'] for p in data['repos'][0]['prs']], [17])
+        self.assertEqual(data['repos'][0]['prs'][0]['reportEvidence'], 'session-reference')
+        self.assertEqual([c[:3] for c in self.calls()], [['api', 'user'], ['pr', 'view', '17']],
+                         'in-range workdir evidence must enable exact lookup without listing or commit APIs')
 
     def test_exact_lookup_parse_and_exit_errors_remain_warnings(self):
         self.fixture['commits'] = []
