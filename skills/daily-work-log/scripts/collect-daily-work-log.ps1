@@ -35,11 +35,75 @@ $script:MaxGitMarkerDepth = 6
 $script:MaxGitMarkers = 5000
 # 僅存本次 collection 的遠端查詢，不快取 worktree 關聯或跨任務歷史。
 $script:GhQueryCache = @{}
+$script:ExpansionCache = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+$script:CollectionClock = [System.Diagnostics.Stopwatch]::StartNew()
+
+function Start-CollectionStage {
+  param([string]$Name)
+  if (-not (Get-Variable CollectionDiagnostics -Scope Script -ErrorAction SilentlyContinue)) {
+    $script:CollectionDiagnostics = [ordered]@{ schemaVersion = 1; totalDurationMs = $null; stages = [ordered]@{} }
+    foreach ($stage in @('sourceAdapter', 'json', 'repoDiscovery', 'git', 'github', 'output')) {
+      $script:CollectionDiagnostics.stages[$stage] = [ordered]@{ durationMs = $null; calls = $null; cacheHits = $null }
+    }
+    $script:CollectionStageDepth = @{}
+  }
+  $entry = $script:CollectionDiagnostics.stages[$Name]
+  if ($null -eq $entry.calls) { $entry.calls = 0; $entry.cacheHits = 0; $entry.durationMs = 0.0 }
+  $entry.calls++
+  if (-not $script:CollectionStageDepth.ContainsKey($Name)) { $script:CollectionStageDepth[$Name] = 0 }
+  $script:CollectionStageDepth[$Name]++
+  return [System.Diagnostics.Stopwatch]::StartNew()
+}
+
+function Complete-CollectionStage {
+  param([string]$Name, [System.Diagnostics.Stopwatch]$Clock)
+  $Clock.Stop()
+  $script:CollectionStageDepth[$Name]--
+  # 同一 stage 的巢狀 helper 不重複加時間；跨 stage 可重疊，總時間由獨立 clock 提供。
+  if ($script:CollectionStageDepth[$Name] -eq 0) {
+    $script:CollectionDiagnostics.stages[$Name].durationMs += $Clock.Elapsed.TotalMilliseconds
+  }
+}
+
+function Measure-CollectionStage {
+  param([string]$Name, [scriptblock]$Work)
+  $clock = Start-CollectionStage $Name
+  try { & $Work } finally { Complete-CollectionStage $Name $clock }
+}
+
+function ConvertFrom-CollectionJson {
+  param([Parameter(ValueFromPipeline)]$InputObject, [switch]$NoEnumerate, [int]$Depth = 1024)
+  process {
+    $clock = Start-CollectionStage 'json'
+    try { ConvertFrom-Json -InputObject $InputObject -NoEnumerate:$NoEnumerate -Depth $Depth }
+    finally { Complete-CollectionStage 'json' $clock }
+  }
+}
+
+function Write-CollectionPayload {
+  param([Parameter(ValueFromPipeline)]$Payload)
+  process {
+    $clock = Start-CollectionStage 'output'
+    # 只序列化大型 evidence 一次；output 計時到主 JSON 完成，不包含最後的診斷編碼／stdout 傳輸。
+    $token = '__dwl_diagnostics_' + [guid]::NewGuid().ToString('N')
+    $Payload.meta['diagnostics'] = $token
+    try { $json = ConvertTo-Json -InputObject $Payload -Depth 100 }
+    finally { Complete-CollectionStage 'output' $clock }
+    $script:CollectionDiagnostics.totalDurationMs = $script:CollectionClock.Elapsed.TotalMilliseconds
+    $diagnostics = ConvertTo-Json -InputObject $script:CollectionDiagnostics -Depth 5 -Compress
+    $json.Replace(('"' + $token + '"'), $diagnostics)
+  }
+}
 
 function Invoke-GhCollectionQuery {
   param([string]$Key, [string[]]$Arguments, [string]$WorkingDirectory)
   if (-not $script:GhQueryCache.ContainsKey($Key)) {
     $script:GhQueryCache[$Key] = Invoke-Native -FilePath 'gh' -Arguments $Arguments -WorkingDirectory $WorkingDirectory
+  }
+  else {
+    $clock = Start-CollectionStage 'github'
+    $script:CollectionDiagnostics.stages.github.cacheHits++
+    Complete-CollectionStage 'github' $clock
   }
   return $script:GhQueryCache[$Key]
 }
@@ -165,7 +229,7 @@ function Write-CollectionState {
       ghAvailable = $false; ghViewer = $null
     }
     repos = @(); warnings = @($warnings); errors = @($errors)
-  } | ConvertTo-Json -Depth 100
+  } | Write-CollectionPayload
 }
 
 function Get-CodexFilesBounded {
@@ -380,7 +444,7 @@ function Invoke-CodexSqliteAdapter {
     $process.StandardInput.Close()
     if (-not $process.WaitForExit([int](($CodexQuerySeconds + 5) * 1000))) { throw 'Codex adapter deadline exceeded.' }
     if ($process.ExitCode -ne 0) { throw 'Codex adapter failed.' }
-    return ($stdout.GetAwaiter().GetResult() | ConvertFrom-Json -Depth 100)
+    return ($stdout.GetAwaiter().GetResult() | ConvertFrom-CollectionJson -Depth 100)
   }
   catch {
     # 子程序可能已花掉 JSONL 額度；沒有可靠計帳時停下，不另開一份 legacy 預算。
@@ -428,7 +492,7 @@ function Get-CodexSessionDirectories {
           $line = $_
           if ([string]::IsNullOrWhiteSpace($line)) { return }
           try {
-            $event = $line | ConvertFrom-Json
+            $event = $line | ConvertFrom-CollectionJson
             if ($null -eq $event -or -not (Get-ObjectPropertyValue $event 'type')) { throw 'Invalid event' }
           }
           catch { $fileFailed = $true; return }
@@ -741,7 +805,7 @@ function Get-OpenCodeWorkdirRowsFromDb {
     $sql = New-OpenCodeWorkdirSql -FromRange $FromRange -ToRange $ToRange
     $result = Invoke-Native -FilePath 'opencode' -Arguments @('db', '--format', 'json', $sql)
     if ($result.ExitCode -ne 0) { throw 'Workdir query failed' }
-    $rows = $result.StdOut | ConvertFrom-Json -NoEnumerate
+    $rows = $result.StdOut | ConvertFrom-CollectionJson -NoEnumerate
     # [pscustomobject] 型別常值是 PSObject；比較真正的 runtime type 才能接受 singleton 並拒絕 scalar wrapper。
     if ($null -eq $rows -or ($rows -isnot [array] -and $rows.GetType() -ne [System.Management.Automation.PSCustomObject])) { throw 'Expected workdir rows' }
     $rows = @($rows)
@@ -851,25 +915,29 @@ function Read-SharedTextFile {
 
 function Resolve-GitRepoRootFromPath {
   param([string]$Path)
-
-  if ([string]::IsNullOrWhiteSpace($Path)) {
-    return $null
-  }
-
+  $clock = Start-CollectionStage 'repoDiscovery'
   try {
-    $cacheKey = [System.IO.Path]::GetFullPath($Path)
-  }
-  catch {
-    return $null
-  }
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+      return $null
+    }
 
-  if ($script:GitRepoRootCache.ContainsKey($cacheKey)) {
-    return $script:GitRepoRootCache[$cacheKey]
-  }
+    try {
+      $cacheKey = [IO.Path]::TrimEndingDirectorySeparator([System.IO.Path]::GetFullPath($Path))
+    }
+    catch {
+      return $null
+    }
 
-  $repoRoot = Resolve-GitRepoRoot -Path $cacheKey
-  $script:GitRepoRootCache[$cacheKey] = $repoRoot
-  return $repoRoot
+    if ($script:GitRepoRootCache.ContainsKey($cacheKey)) {
+      $script:CollectionDiagnostics.stages.repoDiscovery.cacheHits++
+      return $script:GitRepoRootCache[$cacheKey]
+    }
+
+    $repoRoot = Resolve-GitRepoRoot -Path $cacheKey
+    $script:GitRepoRootCache[$cacheKey] = $repoRoot
+    return $repoRoot
+  }
+  finally { Complete-CollectionStage 'repoDiscovery' $clock }
 }
 
 function TryParse-LogLineTimestamp {
@@ -958,7 +1026,7 @@ function Get-OpenCodeSessionRowsFromDb {
   }
 
   try {
-    $rows = $result.StdOut | ConvertFrom-Json -NoEnumerate
+    $rows = $result.StdOut | ConvertFrom-CollectionJson -NoEnumerate
     # 保留既有 single-row JSON 相容性；成功 [] 仍是權威空結果。
     if ($rows -isnot [array] -and $rows -isnot [pscustomobject]) { throw 'Expected session rows' }
     $rows = @($rows)
@@ -1157,7 +1225,7 @@ function Get-SessionDirectoriesFromDirectoryReadme {
 
   foreach ($file in $files) {
     try {
-      $session = (Read-SharedTextFile -Path $file.FullName) | ConvertFrom-Json
+      $session = (Read-SharedTextFile -Path $file.FullName) | ConvertFrom-CollectionJson
     }
     catch {
       $hadParseFailure = $true
@@ -1453,16 +1521,24 @@ exit `$LASTEXITCODE
   $psi.CreateNoWindow = $true
 
   $process = [System.Diagnostics.Process]::new()
-  $process.StartInfo = $psi
-  $null = $process.Start()
-  $stdout = $process.StandardOutput.ReadToEnd()
-  $stderr = $process.StandardError.ReadToEnd()
-  $process.WaitForExit()
-
-  return [ordered]@{
-    ExitCode = $process.ExitCode
-    StdOut = $stdout.Trim()
-    StdErr = $stderr.Trim()
+  $stage = switch ([IO.Path]::GetFileNameWithoutExtension($FilePath)) { 'git' { 'git' }; 'gh' { 'github' }; default { $null } }
+  $clock = if ($stage) { Start-CollectionStage $stage } else { $null }
+  try {
+    $process.StartInfo = $psi
+    $null = $process.Start()
+    # 兩條 pipe 必須先同時排空，否則 child 填滿 stderr 時可能永遠等不到 stdout EOF。
+    $stdout = $process.StandardOutput.ReadToEndAsync()
+    $stderr = $process.StandardError.ReadToEndAsync()
+    $process.WaitForExit()
+    return [ordered]@{
+      ExitCode = $process.ExitCode
+      StdOut = $stdout.GetAwaiter().GetResult().Trim()
+      StdErr = $stderr.GetAwaiter().GetResult().Trim()
+    }
+  }
+  finally {
+    $process.Dispose()
+    if ($stage) { Complete-CollectionStage $stage $clock }
   }
 }
 
@@ -1672,6 +1748,28 @@ function Find-GitMarkersFast {
 }
 
 function Get-NestedGitRepositories {
+  param([string]$Root, [System.Collections.Generic.List[string]]$Warnings)
+  $clock = Start-CollectionStage 'repoDiscovery'
+  try {
+    $normalized = [IO.Path]::TrimEndingDirectorySeparator([IO.Path]::GetFullPath($Root))
+    if (-not (Get-Variable ExpansionCache -Scope Script -ErrorAction SilentlyContinue)) {
+      $script:ExpansionCache = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    }
+    if (-not $script:ExpansionCache.ContainsKey($normalized)) {
+      $localWarnings = [System.Collections.Generic.List[string]]::new()
+      $repos = @(Get-NestedGitRepositoriesUncached -Root $normalized -Warnings $localWarnings)
+      $script:ExpansionCache[$normalized] = @{ repos = $repos; warnings = @($localWarnings) }
+    }
+    else { $script:CollectionDiagnostics.stages.repoDiscovery.cacheHits++ }
+    # 空結果與 fallback warnings 也是同輪事實；每個 session 仍自行記錄 coverage/evidence。
+    $cached = $script:ExpansionCache[$normalized]
+    foreach ($warning in $cached.warnings) { Add-WarningMessage -List $Warnings -Message $warning }
+    return $cached.repos
+  }
+  finally { Complete-CollectionStage 'repoDiscovery' $clock }
+}
+
+function Get-NestedGitRepositoriesUncached {
   param(
     [string]$Root,
     [System.Collections.Generic.List[string]]$Warnings
@@ -1951,7 +2049,7 @@ function Get-PrDetails {
 
   $args = @(
     'pr', 'view', $PrNumber.ToString(), '--repo', $GithubRepo,
-    '--json', 'number,commits'
+    '--json', 'number,title,url,updatedAt,mergedAt,closedAt,state,isDraft,headRefName,baseRefName,closingIssuesReferences,author,commits'
   )
   $result = Invoke-GhCollectionQuery -Key ("detail:{0}:{1}" -f $GithubRepo, $PrNumber) -Arguments $args -WorkingDirectory $RepositoryPath
   if ($result.ExitCode -ne 0 -or [string]::IsNullOrWhiteSpace($result.StdOut)) {
@@ -1960,7 +2058,7 @@ function Get-PrDetails {
   }
 
   try {
-    return ($result.StdOut | ConvertFrom-Json)
+    return ($result.StdOut | ConvertFrom-CollectionJson)
   }
   catch {
     Add-WarningMessage -List $Warnings -Message ("gh pr view output was not valid JSON for {0}#{1}" -f $GithubRepo, $PrNumber)
@@ -1998,7 +2096,8 @@ function Test-PrMatchesCommits {
     return $true
   }
 
-  foreach ($prCommit in @($PrDetails.commits)) {
+  foreach ($prCommit in @(Get-ObjectPropertyValue -Object $PrDetails -Name 'commits')) {
+    if ($null -eq $prCommit) { continue }
     $oid = $prCommit.oid
     if ($oid -and $commitHashes.Contains([string]$oid)) {
       return $true
@@ -2009,6 +2108,46 @@ function Test-PrMatchesCommits {
   return $false
 }
 
+function Get-SessionPrNumbers {
+  param([object[]]$SessionEvidence, [string]$RepositoryPath, [string]$GithubRepo,
+        [datetimeoffset]$FromRange, [datetimeoffset]$ToRange)
+  $numbers = [System.Collections.Generic.HashSet[int]]::new()
+  foreach ($evidence in $SessionEvidence) {
+    $inRange = $false
+    $timestamps = @()
+    foreach ($name in @('timeCreated', 'timeUpdated', 'updatedAt', 'timestamps')) {
+      $timestamps += @(Get-ObjectPropertyValue $evidence $name)
+    }
+    foreach ($value in $timestamps) {
+      if ($null -eq $value) { continue }
+      try {
+        $time = if ($value -is [ValueType] -and $value -isnot [datetimeoffset] -and $value -isnot [datetime]) {
+          [datetimeoffset]::FromUnixTimeMilliseconds([long]$value)
+        } else { [datetimeoffset]::Parse([string]$value) }
+        if ($time -ge $FromRange -and $time -le $ToRange) { $inRange = $true; break }
+      } catch {}
+    }
+    if (-not $inRange) { continue }
+    # Codex 的 title 只是預覽；精確引用應讀既有完整 text，避免第 240 字後的 PR 被漏掉。
+    $referenceText = [string](Get-ObjectPropertyValue $evidence 'text')
+    if ([string]::IsNullOrWhiteSpace($referenceText)) { $referenceText = [string](Get-ObjectPropertyValue $evidence 'title') }
+    foreach ($match in [regex]::Matches($referenceText, ('https://github\.com/{0}/pull/(\d+)(?!\d)' -f [regex]::Escape($GithubRepo)), 'IgnoreCase')) {
+      $number = 0
+      if ([int]::TryParse($match.Groups[1].Value, [ref]$number) -and $number -gt 0) { $null = $numbers.Add($number) }
+      if ($numbers.Count -ge 100) { return @($numbers | Sort-Object) }
+    }
+    # Aggregate 擴出的子 repo 不能繼承含糊的 PR #N；完整 URL 才能跨來源精確映射。
+    $path = [string](Get-ObjectPropertyValue $evidence 'path')
+    if ([string]::IsNullOrWhiteSpace($path) -or (Resolve-GitRepoRootFromPath $path) -ine $RepositoryPath) { continue }
+    foreach ($match in [regex]::Matches($referenceText, '\b(?:PR|pull request)\s+#(\d+)\b', 'IgnoreCase')) {
+      $number = 0
+      if ([int]::TryParse($match.Groups[1].Value, [ref]$number) -and $number -gt 0) { $null = $numbers.Add($number) }
+      if ($numbers.Count -ge 100) { return @($numbers | Sort-Object) }
+    }
+  }
+  return @($numbers | Sort-Object)
+}
+
 function Get-GhContext {
   param(
     [string]$RepositoryPath,
@@ -2016,54 +2155,101 @@ function Get-GhContext {
     [datetimeoffset]$FromRange,
     [datetimeoffset]$ToRange,
     [object[]]$Commits,
+    [object[]]$SessionEvidence = @(),
     [System.Collections.Generic.List[string]]$Warnings
   )
 
+  # PowerShell 空 pipeline 會傳入 $null，而 @($null).Count 是 1；不能把 session-only 當成有 commit。
+  $Commits = @($Commits | Where-Object { $null -ne $_ })
   $prs = [System.Collections.Generic.List[object]]::new()
   if ([string]::IsNullOrWhiteSpace($GithubRepo)) {
     return $prs
   }
 
-  $search = 'updated:>={0} involves:@me' -f $FromRange.ToString('yyyy-MM-dd')
-  $args = @(
-    'pr', 'list', '--repo', $GithubRepo,
-    '--state', 'all', '--limit', '100',
-    '--search', $search,
-    '--json', 'number,title,url,updatedAt,mergedAt,closedAt,state,isDraft,headRefName,baseRefName,closingIssuesReferences,author'
-  )
-  $result = Invoke-GhCollectionQuery -Key ("list:{0}:{1}" -f $GithubRepo, $search) -Arguments $args -WorkingDirectory $RepositoryPath
-  if ($result.ExitCode -ne 0) {
-    Add-WarningMessage -List $Warnings -Message ("gh pr list failed for {0}: {1}" -f $GithubRepo, $result.StdErr)
-    return $prs
+  $exact = [ordered]@{}
+  foreach ($number in @(Get-SessionPrNumbers -SessionEvidence $SessionEvidence -RepositoryPath $RepositoryPath -GithubRepo $GithubRepo -FromRange $FromRange -ToRange $ToRange)) {
+    $exact[([string]$number)] = 'session-reference'
   }
-
-  if ([string]::IsNullOrWhiteSpace($result.StdOut)) {
-    return $prs
+  foreach ($commit in $Commits) {
+    foreach ($match in [regex]::Matches($commit.subject, '(?:Merge pull request #(\d+)\b|\(#(\d+)\))')) {
+      $number = 0
+      $text = if ($match.Groups[1].Success) { $match.Groups[1].Value } else { $match.Groups[2].Value }
+      if ([int]::TryParse($text, [ref]$number) -and $number -gt 0 -and $exact.Count -lt 100) { $exact[([string]$number)] = 'commit-reference' }
+    }
   }
-
-  try {
-    $rawPrs = $result.StdOut | ConvertFrom-Json
-  }
-  catch {
-    Add-WarningMessage -List $Warnings -Message ("gh output was not valid JSON for {0}" -f $GithubRepo)
-    return $prs
+  $selected = [ordered]@{}
+  $rawPrs = @()
+  if (@($Commits).Count -gt 0) {
+    $search = 'updated:>={0} involves:@me' -f $FromRange.ToString('yyyy-MM-dd')
+    $args = @(
+      'pr', 'list', '--repo', $GithubRepo,
+      '--state', 'all', '--limit', '100',
+      '--search', $search,
+      '--json', 'number,title,url,updatedAt,mergedAt,closedAt,state,isDraft,headRefName,baseRefName,closingIssuesReferences,author'
+    )
+    $result = Invoke-GhCollectionQuery -Key ("list:{0}:{1}" -f $GithubRepo, $search) -Arguments $args -WorkingDirectory $RepositoryPath
+    if ($result.ExitCode -ne 0) {
+      Add-WarningMessage -List $Warnings -Message ("gh pr list failed for {0}: {1}" -f $GithubRepo, $result.StdErr)
+    }
+    elseif (-not [string]::IsNullOrWhiteSpace($result.StdOut)) {
+      try { $rawPrs = $result.StdOut | ConvertFrom-CollectionJson }
+      catch { Add-WarningMessage -List $Warnings -Message ("gh output was not valid JSON for {0}" -f $GithubRepo) }
+    }
   }
 
   foreach ($pr in @($rawPrs)) {
+    if ($null -eq $pr) { continue }
+    $cheapMatch = Test-PrMatchesCommits -Commits $Commits -Pr $pr -PrDetails $null
+    $explicitMatch = $exact.Contains([string]$pr.number)
     $updatedAt = $null
     try { $updatedAt = [datetimeoffset]::Parse($pr.updatedAt) } catch {}
-    if ($updatedAt -and ($updatedAt -lt $FromRange -or $updatedAt -gt $ToRange)) {
+    if (-not $cheapMatch -and -not $explicitMatch -and $updatedAt -and ($updatedAt -lt $FromRange -or $updatedAt -gt $ToRange)) {
       continue
     }
 
-    $prDetails = Get-PrDetails -RepositoryPath $RepositoryPath -GithubRepo $GithubRepo -PrNumber ([int]$pr.number) -Warnings $Warnings
-    if (-not $prDetails) {
-      continue
+    if (-not $cheapMatch -and -not $explicitMatch) {
+      $prDetails = Get-PrDetails -RepositoryPath $RepositoryPath -GithubRepo $GithubRepo -PrNumber ([int]$pr.number) -Warnings $Warnings
+      if (-not $prDetails -or -not (Test-PrMatchesCommits -Commits $Commits -Pr $pr -PrDetails $prDetails)) {
+        continue
+      }
     }
+    $selected[([string]$pr.number)] = @{ pr = $pr; basis = if ($explicitMatch) { $exact[([string]$pr.number)] } else { 'commit-match' } }
+  }
 
-    if (-not (Test-PrMatchesCommits -Commits $Commits -Pr $pr -PrDetails $prDetails)) {
+  # 近期 list 只是候選；精確補證以報告範圍內的 hash／明確引用為界，不追掃近期歷史。
+  $hashes = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+  foreach ($commit in $Commits) {
+    if ($hashes.Count -ge 100) { Add-WarningMessage -List $Warnings -Message 'Exact commit PR supplement reached the 100-commit limit; PR coverage may be incomplete.'; break }
+    if (-not $commit.hash -or -not $hashes.Add([string]$commit.hash)) { continue }
+    $alreadyRelated = $false
+    foreach ($entry in $selected.Values) {
+      if (Test-PrMatchesCommits -Commits @($commit) -Pr $entry.pr -PrDetails $null) { $alreadyRelated = $true; break }
+    }
+    if ($alreadyRelated -or $commit.subject -match '(?:Merge pull request #\d+\b|\(#\d+\))') { continue }
+    $endpoint = 'repos/{0}/commits/{1}/pulls' -f $GithubRepo, $commit.hash
+    $associated = Invoke-GhCollectionQuery -Key ('commit:{0}:{1}' -f $GithubRepo, $commit.hash) -Arguments @('api', $endpoint, '--method', 'GET', '-f', 'per_page=100') -WorkingDirectory $RepositoryPath
+    if ($associated.ExitCode -ne 0) {
+      Add-WarningMessage -List $Warnings -Message ('gh commit PR lookup failed for {0}: {1}' -f $GithubRepo, $associated.StdErr)
       continue
     }
+    try {
+      $related = @($associated.StdOut | ConvertFrom-CollectionJson)
+      if ($related.Count -ge 100) { Add-WarningMessage -List $Warnings -Message 'Exact commit PR lookup reached the 100-result limit; PR coverage may be incomplete.' }
+      foreach ($pr in $related) {
+        if ($null -ne $pr -and [int]$pr.number -gt 0 -and $exact.Count -lt 100) { $exact[([string]$pr.number)] = 'commit-hash' }
+      }
+    }
+    catch { Add-WarningMessage -List $Warnings -Message ('gh commit PR lookup output was not valid JSON for {0}' -f $GithubRepo) }
+  }
+  if ($exact.Count -ge 100) { Add-WarningMessage -List $Warnings -Message 'Exact PR supplement reached the 100-PR limit; PR coverage may be incomplete.' }
+  foreach ($number in $exact.Keys) {
+    if ($selected.Contains([string]$number)) { continue }
+    $details = Get-PrDetails -RepositoryPath $RepositoryPath -GithubRepo $GithubRepo -PrNumber ([int]$number) -Warnings $Warnings
+    if ($details) { $selected[([string]$number)] = @{ pr = $details; basis = $exact[$number] } }
+  }
+
+  foreach ($entry in $selected.Values) {
+    $pr = $entry.pr
 
     $issuesClosed = [System.Collections.Generic.List[int]]::new()
     foreach ($issue in @($pr.closingIssuesReferences)) {
@@ -2086,6 +2272,8 @@ function Get-GhContext {
       author = if ($pr.author) { $pr.author.login } else { $null }
       closingIssuesReferences = @($pr.closingIssuesReferences)
       issuesClosed = $issuesClosed
+      reportEvidence = $entry.basis
+      stateObservedAt = [datetimeoffset]::Now.ToString('o')
     })
   }
 
@@ -2102,7 +2290,7 @@ try {
   $resolvedFrom = $range.From
   $resolvedTo = $range.To
 
-  $sources = Get-SourceProbe
+  $sources = Measure-CollectionStage 'sourceAdapter' { Get-SourceProbe }
   if ($ProbeOnly) {
     [ordered]@{
       meta = [ordered]@{
@@ -2112,7 +2300,7 @@ try {
         sources = $sources; canGenerateLog = $false
       }
       repos = @(); warnings = @(); errors = @()
-    } | ConvertTo-Json -Depth 10
+    } | Write-CollectionPayload
     return
   }
 
@@ -2132,7 +2320,7 @@ try {
     $script:OpenCodeReadFailures = 0
     $script:OpenCodeActivityCount = 0
     try {
-      foreach ($candidate in @(Get-SessionDirectories -FromRange $resolvedFrom -ToRange $resolvedTo -TimezoneId $Timezone -OverrideLogRoot $OpenCodeLogRoot -OverrideStorageRoot $OpenCodeStorageRoot -Warnings $warnings)) {
+      foreach ($candidate in @(Measure-CollectionStage 'sourceAdapter' { Get-SessionDirectories -FromRange $resolvedFrom -ToRange $resolvedTo -TimezoneId $Timezone -OverrideLogRoot $OpenCodeLogRoot -OverrideStorageRoot $OpenCodeStorageRoot -Warnings $warnings })) {
         $sessionCandidates.Add($candidate)
       }
       # 空入口／空 log 只證明讀完，不能救回其他紀錄全失敗；DB 成功 [] 仍由成功旗標保留權威。
@@ -2148,7 +2336,7 @@ try {
   if ($sources.codex.available) {
     # 各來源自行承擔讀取失敗，避免一個 reader 的例外阻斷另一個可用來源。
     try {
-      foreach ($candidate in @(Get-CodexSessionDirectories -Source $sources.codex -FromRange $resolvedFrom -ToRange $resolvedTo -Warnings $warnings)) {
+      foreach ($candidate in @(Measure-CollectionStage 'sourceAdapter' { Get-CodexSessionDirectories -Source $sources.codex -FromRange $resolvedFrom -ToRange $resolvedTo -Warnings $warnings })) {
         $sessionCandidates.Add($candidate)
       }
     }
@@ -2185,7 +2373,7 @@ try {
       $agent = if ($sessionCandidate.evidence.agent -eq 'codex') { 'codex' } else { 'opencode' }
       if ($agent -eq 'opencode') { $expansion.candidates++ }
       $path = [string]$sessionCandidate.path
-      $resolvedItems = @(Resolve-SessionCandidatePaths -Path $path -Warnings $warnings)
+      $resolvedItems = @(Measure-CollectionStage 'repoDiscovery' { Resolve-SessionCandidatePaths -Path $path -Warnings $warnings })
       if (@($resolvedItems).Count -eq 0) {
         $unresolvedSessionPathsByAgent[$agent]++
         if ($agent -eq 'opencode') { $expansion.notResolvedCandidates++ }
@@ -2207,7 +2395,7 @@ try {
   }
 
   if ($SourceMode -in @('scan', 'mixed') -and @($ScanRoots).Count -gt 0) {
-    foreach ($path in Get-ScanRepositories -Roots $ScanRoots -Warnings $warnings) {
+    foreach ($path in @(Measure-CollectionStage 'repoDiscovery' { Get-ScanRepositories -Roots $ScanRoots -Warnings $warnings })) {
       Add-PathItem -Map $repoMap -Path $path -Source 'scan'
     }
   }
@@ -2224,7 +2412,7 @@ try {
     $viewerResult = Invoke-Native -FilePath 'gh' -Arguments @('api', 'user') -WorkingDirectory $PWD.Path
     if ($viewerResult.ExitCode -eq 0 -and -not [string]::IsNullOrWhiteSpace($viewerResult.StdOut)) {
       try {
-        $viewer = $viewerResult.StdOut | ConvertFrom-Json
+        $viewer = $viewerResult.StdOut | ConvertFrom-CollectionJson
         $ghViewer = Get-ObjectPropertyValue -Object $viewer -Name 'login'
         $ghAvailable = -not [string]::IsNullOrWhiteSpace($ghViewer)
       }
@@ -2292,23 +2480,10 @@ try {
       else {
         Add-WarningMessage -List $repoWarnings -Message 'No commits found in the selected range.'
       }
-
-      $repos.Add([ordered]@{
-        name = $repoName
-        path = $repoPath
-        source = $repoSources
-        isGitRepo = $true
-        githubRepo = $githubRepo
-        commits = @($commits)
-        prs = @($prs)
-        sessionEvidence = @($item.sessionEvidence)
-        warnings = $repoWarnings
-      })
-      continue
     }
 
     if ($ghAvailable) {
-      $prs = Get-GhContext -RepositoryPath $repoPath -GithubRepo $githubRepo -FromRange $resolvedFrom -ToRange $resolvedTo -Commits $commits -Warnings $repoWarnings
+      $prs = Get-GhContext -RepositoryPath $repoPath -GithubRepo $githubRepo -FromRange $resolvedFrom -ToRange $resolvedTo -Commits $commits -SessionEvidence @($item.sessionEvidence) -Warnings $repoWarnings
     }
 
     $repos.Add([ordered]@{
@@ -2351,7 +2526,7 @@ try {
     errors = $errors
   }
 
-  $payload | ConvertTo-Json -Depth 100
+  $payload | Write-CollectionPayload
 }
 catch {
   $errors.Add($_.Exception.Message)
@@ -2380,5 +2555,5 @@ catch {
     repos = @()
     warnings = $warnings
     errors = $errors
-  } | ConvertTo-Json -Depth 8
+  } | Write-CollectionPayload
 }

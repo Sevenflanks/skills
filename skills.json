@@ -24,7 +24,7 @@
       "name": "daily-work-log",
       "path": "skills/daily-work-log",
       "summary": "先探測並合併 OpenCode／Codex 與 Git／GitHub 證據；Codex 必要資料能力 gate、canonical item 補證及 bounded evidence views，依 canonical repo 查 issue 狀態並揭露缺口。",
-      "version": "0.8.0",
+      "version": "0.9.0",
       "license": "MIT",
       "author": "sevenflankse",
       "tags": [
