@@ -3,6 +3,8 @@ import json
 import sqlite3
 import sys
 
+sys.stdout.reconfigure(encoding="utf-8")
+
 request = json.load(sys.stdin)
 root = request["root"]
 db = sqlite3.connect(":memory:")
