@@ -1,5 +1,5 @@
 [CmdletBinding()]
-param([ValidateSet('cwd', 'all')][string]$Case = 'all', [string]$EvidenceRoot)
+param([ValidateSet('cwd', 'encoding', 'all')][string]$Case = 'all', [string]$EvidenceRoot)
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $collector = Join-Path $PSScriptRoot '..\scripts\collect-daily-work-log.ps1'
@@ -16,6 +16,32 @@ $script:Mode = 'relative'; $script:Supplement = 'normal'; $script:Queries = [Col
 $script:Python = (Get-Command python -ErrorAction Stop).Source
 function opencode {}
 function Assert($Condition, [string]$Message) { if (-not $Condition) { throw $Message } }
+function Test-FixtureUtf8Output {
+  $fixture = Join-Path $PSScriptRoot 'discovery-db-fixture.py'
+  $code = @'
+import json, os, subprocess, sys
+fixture, root = sys.argv[1:]
+request = json.dumps({"root": root, "mode": "normal", "sql": "select id, title from session where id in ('parent','metadata') order by id"}).encode("utf-8")
+env = os.environ.copy()
+env["PYTHONIOENCODING"] = "cp1252"
+completed = subprocess.run([sys.executable, fixture], input=request, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
+if completed.returncode != 0:
+    raise SystemExit("fixture process failed: " + completed.stderr.decode("utf-8", errors="replace"))
+rows = json.loads(completed.stdout.decode("utf-8"))
+expected = [{"id": "metadata", "title": "合成 metadata"}, {"id": "parent", "title": "合成 parent"}]
+if rows != expected:
+    raise SystemExit("unexpected fixture SQL rows: " + repr(rows))
+print("fixture-utf8-ok")
+'@
+  $harness = Join-Path $root ('fixture-encoding-' + [guid]::NewGuid().ToString('N') + '.py')
+  try {
+    [IO.File]::WriteAllText($harness, $code, [Text.UTF8Encoding]::new($false))
+    $result = & $script:Python $harness $fixture $root.Replace('\', '/')
+    Assert ($LASTEXITCODE -eq 0 -and ($result -join '') -eq 'fixture-utf8-ok') 'Fixture stdout was not valid UTF-8 JSON with preserved Unicode SQL values'
+  } finally {
+    if ([IO.File]::Exists($harness)) { [IO.File]::Delete($harness) }
+  }
+}
 function Invoke-Native {
   param([string]$FilePath, [string[]]$Arguments)
   Assert ($FilePath -eq 'opencode') 'Unexpected native call'
@@ -45,6 +71,7 @@ function Resolve-GitRepoRoot {
 function Get-SessionDirectoriesFromDirectoryReadme { throw 'Unexpected fallback' }
 function Get-SessionDirectoriesFromLogs { throw 'Unexpected fallback' }
 function Discover {
+  $script:OpenCodeDiscovery = New-OpenCodeDiscovery
   $script:GitRepoRootCache = @{}; $script:OpenCodeReadSucceeded = $false
   $script:OpenCodeReadFailures = 0; $script:OpenCodeActivityCount = 0
   $script:Warnings = [Collections.Generic.List[string]]::new(); $script:Queries.Clear()
@@ -53,6 +80,14 @@ function Discover {
 $passes = [Collections.Generic.List[string]]::new()
 try {
   foreach ($dir in @('home','repo','other-repo')) { $null = [IO.Directory]::CreateDirectory("$root\$dir") }
+  if ($Case -in @('encoding', 'all')) {
+    Test-FixtureUtf8Output
+    $passes.Add('fixture-utf8-chinese-json')
+    if ($Case -eq 'encoding') {
+      @{passes=@($passes)} | ConvertTo-Json
+      return
+    }
+  }
   $sets = @()
   foreach ($cwd in @('home','repo','other-repo')) {
     [Environment]::CurrentDirectory = "$root\$cwd"
@@ -120,6 +155,7 @@ try {
     foreach ($cwd in @('home','repo','other-repo')) {
       [Environment]::CurrentDirectory = "$root\$cwd"
       $script:GitRepoRootCache = @{}; $script:Warnings = [Collections.Generic.List[string]]::new()
+      $script:OpenCodeDiscovery = New-OpenCodeDiscovery
       $found = @(Get-SessionDirectories -FromRange ([datetimeoffset]::FromUnixTimeMilliseconds(1791388800000)) -ToRange ([datetimeoffset]::FromUnixTimeMilliseconds(1791475199999)) -TimezoneId 'Asia/Taipei' -OverrideStorageRoot "$root\storage" -OverrideLogRoot "$root\logs" -Warnings $script:Warnings)
       $expected = if ($fallback -eq 'directory-readme') { "$root\repo" } else { "$root\other-repo" }
       Assert ($found.Count -eq 1 -and $found[0].path -eq $expected) "$fallback changed absolute contract or guessed CWD"

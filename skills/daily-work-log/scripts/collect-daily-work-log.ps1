@@ -669,16 +669,43 @@ function New-OpenCodeSessionSql {
   return ('select id, directory, path, title, time_created, time_updated from session where time_created <= {1} and time_updated >= {0} order by time_updated' -f $fromMilliseconds, $toMilliseconds)
 }
 
+function New-OpenCodeDiscovery {
+  # null 表示尚未讀到這個母體；成功空查詢才可填 0。固定 aggregate 不保留 path 或 exception。
+  return [ordered]@{
+    metadata = [ordered]@{
+      status = 'not-read'; rows = $null; nonemptyInputs = $null
+      skippedInputs = [ordered]@{ notFullyQualified = $null; normalizationError = $null }
+      normalizedUniqueCandidates = $null; duplicateInputs = $null
+      results = [ordered]@{ repo = $null; aggregateDirectory = $null; notResolved = $null }
+    }
+    workdir = [ordered]@{
+      status = 'not-read'; reason = $null; limit = 2048; truncated = $null
+      returnedRows = $null; processedRows = $null; invalidRows = $null; emptyInputs = $null; nonemptyInputs = $null
+      skippedInputs = [ordered]@{ notFullyQualified = $null; normalizationError = $null }
+      normalizedUniqueCandidates = $null; repeatedCandidateRows = $null
+      results = [ordered]@{ repoRows = $null; alreadyAttributedRows = $null; notResolvedRows = $null }
+    }
+    expansion = [ordered]@{ status = 'not-read'; candidates = $null; resolvedCandidates = $null; notResolvedCandidates = $null }
+  }
+}
+
 function ConvertTo-AbsoluteSessionPath {
-  param($Value)
+  param($Value, [ref]$FailureReason)
 
   # 未有來源 base 契約的相對值不可交給 GetFullPath，否則會依 collector CWD 誤歸 repo。
+  if ($FailureReason) { $FailureReason.Value = $null }
   if ($Value -isnot [string] -or [string]::IsNullOrWhiteSpace($Value)) { return $null }
   try {
-    if (-not [IO.Path]::IsPathFullyQualified($Value)) { return $null }
+    if (-not [IO.Path]::IsPathFullyQualified($Value)) {
+      if ($FailureReason) { $FailureReason.Value = 'notFullyQualified' }
+      return $null
+    }
     return [IO.Path]::GetFullPath($Value)
   }
-  catch { return $null }
+  catch {
+    if ($FailureReason) { $FailureReason.Value = 'normalizationError' }
+    return $null
+  }
 }
 
 function New-OpenCodeWorkdirSql {
@@ -715,13 +742,23 @@ function Get-OpenCodeWorkdirRowsFromDb {
     $result = Invoke-Native -FilePath 'opencode' -Arguments @('db', '--format', 'json', $sql)
     if ($result.ExitCode -ne 0) { throw 'Workdir query failed' }
     $rows = $result.StdOut | ConvertFrom-Json -NoEnumerate
-    if ($rows -isnot [array] -and $rows -isnot [pscustomobject]) { throw 'Expected workdir rows' }
+    # [pscustomobject] 型別常值是 PSObject；比較真正的 runtime type 才能接受 singleton 並拒絕 scalar wrapper。
+    if ($null -eq $rows -or ($rows -isnot [array] -and $rows.GetType() -ne [System.Management.Automation.PSCustomObject])) { throw 'Expected workdir rows' }
     $rows = @($rows)
+    $diagnostics = $script:OpenCodeDiscovery.workdir
+    $diagnostics.status = 'success'
+    $diagnostics.returnedRows = $rows.Count
+    $diagnostics.processedRows = 0
+    $diagnostics.truncated = $rows.Count -gt 2048
+    foreach ($key in @('invalidRows', 'emptyInputs', 'nonemptyInputs', 'normalizedUniqueCandidates', 'repeatedCandidateRows')) { $diagnostics[$key] = 0 }
+    foreach ($key in @($diagnostics.skippedInputs.Keys)) { $diagnostics.skippedInputs[$key] = 0 }
+    foreach ($key in @($diagnostics.results.Keys)) { $diagnostics.results[$key] = 0 }
     if ($rows.Count -gt 2048) {
       $script:OpenCodeReadFailures++
       Add-WarningMessage -List $Warnings -Message 'OpenCode structured workdir discovery exceeded 2048 candidates; coverage is incomplete.'
     }
     for ($i = 0; $i -lt [Math]::Min(2048, $rows.Count); $i++) {
+      $diagnostics.processedRows++
       $row = $rows[$i]
       $id = Get-ObjectPropertyValue -Object $row -Name 'id'
       $tool = Get-ObjectPropertyValue -Object $row -Name 'tool'
@@ -731,6 +768,7 @@ function Get-OpenCodeWorkdirRowsFromDb {
           $workdir -isnot [string] -or $workdir.Length -gt 4096 -or
           ($timestamp -isnot [long] -and $timestamp -isnot [int]) -or
           $timestamp -lt (ConvertTo-EpochMilliseconds $FromRange) -or $timestamp -gt (ConvertTo-EpochMilliseconds $ToRange)) {
+        $diagnostics.invalidRows++
         $script:OpenCodeReadFailures++
         Add-WarningMessage -List $Warnings -Message 'OpenCode structured workdir discovery returned invalid row shape; coverage is incomplete.'
         continue
@@ -740,6 +778,8 @@ function Get-OpenCodeWorkdirRowsFromDb {
   }
   catch {
     # 補證失敗不撤銷 metadata 成功，也不能改走 fallback 拼出另一個母體。
+    $script:OpenCodeDiscovery.workdir.status = 'failed'
+    $script:OpenCodeDiscovery.workdir.reason = 'supplement-failed'
     $script:OpenCodeReadFailures++
     Add-WarningMessage -List $Warnings -Message 'OpenCode structured workdir discovery failed or returned invalid JSON/shape; metadata evidence was retained; coverage is incomplete.'
   }
@@ -908,12 +948,12 @@ function Get-OpenCodeSessionRowsFromDb {
     $result = Invoke-Native -FilePath 'opencode' -Arguments @('db', '--format', 'json', $sql)
   }
   catch {
-    Add-WarningMessage -List $Warnings -Message ("OpenCode DB session discovery failed: {0}" -f $_.Exception.Message)
+    Add-WarningMessage -List $Warnings -Message 'OpenCode DB session discovery failed; metadata was not read.'
     return @()
   }
 
   if ($result.ExitCode -ne 0) {
-    Add-WarningMessage -List $Warnings -Message ("OpenCode DB session discovery failed: {0}" -f $result.StdErr)
+    Add-WarningMessage -List $Warnings -Message 'OpenCode DB session discovery failed; metadata was not read.'
     return @()
   }
 
@@ -946,8 +986,18 @@ function Get-SessionDirectoriesFromDb {
   $Succeeded.Value = $dbSucceeded
 
   if (-not $dbSucceeded) {
+    $script:OpenCodeDiscovery.metadata.status = 'failed'
     return @()
   }
+
+  $metadata = $script:OpenCodeDiscovery.metadata
+  $metadata.status = 'success'
+  $metadata.rows = @($rows).Count
+  $metadata.nonemptyInputs = 0
+  $metadata.normalizedUniqueCandidates = 0
+  $metadata.duplicateInputs = 0
+  foreach ($key in @($metadata.skippedInputs.Keys)) { $metadata.skippedInputs[$key] = 0 }
+  foreach ($key in @($metadata.results.Keys)) { $metadata.results[$key] = 0 }
 
   $paths = [System.Collections.Generic.List[object]]::new()
   $seenCandidates = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
@@ -965,26 +1015,37 @@ function Get-SessionDirectoriesFromDb {
         continue
       }
 
-      $candidatePath = ConvertTo-AbsoluteSessionPath -Value $property.Value
+      $hasInput = $null -ne $property.Value -and -not [string]::IsNullOrWhiteSpace([string]$property.Value)
+      if ($hasInput) { $metadata.nonemptyInputs++ }
+      $failureReason = $null
+      $candidatePath = ConvertTo-AbsoluteSessionPath -Value $property.Value -FailureReason ([ref]$failureReason)
       if (-not $candidatePath) {
-        if ($null -eq $property.Value -or [string]::IsNullOrWhiteSpace([string]$property.Value)) { continue }
+        if (-not $hasInput) { continue }
+        # 非 string 也無法正規化；不從 resolver 空值或 Test-Path 推論已刪除／權限不足。
+        if (-not $failureReason) { $failureReason = 'normalizationError' }
+        $metadata.skippedInputs[$failureReason]++
         $unresolvedCount += 1
         continue
       }
 
       if (-not $seenCandidates.Add($sessionId + "`n" + $candidatePath)) {
+        $metadata.duplicateInputs++
         continue
       }
+      $metadata.normalizedUniqueCandidates++
 
       $repoRoot = Resolve-GitRepoRootFromPath -Path $candidatePath
       if ($repoRoot) {
+        $metadata.results.repo++
         $paths.Add((New-SessionCandidate -Path $repoRoot -Evidence (New-SessionEvidence -Source 'session' -Path $candidatePath -Session $row)))
       }
       elseif (-not $repoRoot) {
         if (Test-Path -LiteralPath $candidatePath -PathType Container) {
+          $metadata.results.aggregateDirectory++
           $paths.Add((New-SessionCandidate -Path $candidatePath -Evidence (New-SessionEvidence -Source 'session' -Path $candidatePath -Session $row)))
         }
         else {
+          $metadata.results.notResolved++
           $unresolvedCount += 1
         }
       }
@@ -997,14 +1058,23 @@ function Get-SessionDirectoriesFromDb {
 
   if (@($rows).Count -gt 0) {
     $unresolvedWorkdirs = 0
+    $workdir = $script:OpenCodeDiscovery.workdir
+    # 這個集合只計帳，不替代 resolver 後的 shared seen；失敗重複列仍各自列入 notResolvedRows。
+    $workdirCandidates = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
     foreach ($row in @(Get-OpenCodeWorkdirRowsFromDb -FromRange $FromRange -ToRange $ToRange -Warnings $Warnings)) {
-      $candidatePath = ConvertTo-AbsoluteSessionPath -Value $row.workdir
-      if (-not $candidatePath) { continue }
+      if ([string]::IsNullOrWhiteSpace($row.workdir)) { $workdir.emptyInputs++; continue }
+      $workdir.nonemptyInputs++
+      $failureReason = $null
+      $candidatePath = ConvertTo-AbsoluteSessionPath -Value $row.workdir -FailureReason ([ref]$failureReason)
+      if (-not $candidatePath) { $workdir.skippedInputs[$failureReason]++; continue }
+      $candidateKey = [string]$row.id + "`n" + $candidatePath
+      if ($workdirCandidates.Add($candidateKey)) { $workdir.normalizedUniqueCandidates++ } else { $workdir.repeatedCandidateRows++ }
       # 已刪 worktree 不可由 resolver 的 upward-search 誤歸到碰巧存在的 Git 父目錄。
-      if (-not (Test-Path -LiteralPath $candidatePath -PathType Container)) { $unresolvedWorkdirs++; continue }
+      if (-not (Test-Path -LiteralPath $candidatePath -PathType Container)) { $unresolvedWorkdirs++; $workdir.results.notResolvedRows++; continue }
       $repoRoot = Resolve-GitRepoRootFromPath -Path $candidatePath
-      if (-not $repoRoot) { $unresolvedWorkdirs++; continue }
-      if (-not $seenCandidates.Add([string]$row.id + "`n" + $candidatePath)) { continue }
+      if (-not $repoRoot) { $unresolvedWorkdirs++; $workdir.results.notResolvedRows++; continue }
+      if (-not $seenCandidates.Add($candidateKey)) { $workdir.results.alreadyAttributedRows++; continue }
+      $workdir.results.repoRows++
       $evidence = New-SessionEvidence -Source 'session' -Path $candidatePath -Session $row
       $evidence | Add-Member -NotePropertyName pathSource -NotePropertyValue 'bash-workdir'
       $evidence | Add-Member -NotePropertyName tool -NotePropertyValue 'bash'
@@ -1652,7 +1722,7 @@ function Resolve-SessionCandidatePaths {
       }
     }
     else {
-      Add-WarningMessage -List $Warnings -Message ("Skipped unsafe session expansion root: {0}" -f $Path)
+      Add-WarningMessage -List $Warnings -Message 'Skipped unsafe session expansion root.'
     }
   }
 
@@ -2046,6 +2116,9 @@ try {
     return
   }
 
+  $script:OpenCodeDiscovery = New-OpenCodeDiscovery
+  $sources.opencode | Add-Member -NotePropertyName discovery -NotePropertyValue $script:OpenCodeDiscovery
+
   if (-not $sources.opencode.available -and -not $sources.codex.available) {
     Add-WarningMessage -List $warnings -Message 'No usable agent sources; collection stopped before Git / GitHub discovery.'
     Write-CollectionState -Status 'no-sources' -Sources $sources
@@ -2102,22 +2175,34 @@ try {
     return
   }
   if ($SourceMode -in @('session', 'mixed')) {
-    $unresolvedSessionPathCount = 0
+    $unresolvedSessionPathsByAgent = @{ opencode = 0; codex = 0 }
+    $expansion = $script:OpenCodeDiscovery.expansion
+    if ($sources.opencode.readStatus -in @('success', 'partial', 'empty')) {
+      $expansion.status = 'success'
+      $expansion.candidates = 0; $expansion.resolvedCandidates = 0; $expansion.notResolvedCandidates = 0
+    }
     foreach ($sessionCandidate in $sessionCandidates) {
+      $agent = if ($sessionCandidate.evidence.agent -eq 'codex') { 'codex' } else { 'opencode' }
+      if ($agent -eq 'opencode') { $expansion.candidates++ }
       $path = [string]$sessionCandidate.path
       $resolvedItems = @(Resolve-SessionCandidatePaths -Path $path -Warnings $warnings)
       if (@($resolvedItems).Count -eq 0) {
-        $unresolvedSessionPathCount++
+        $unresolvedSessionPathsByAgent[$agent]++
+        if ($agent -eq 'opencode') { $expansion.notResolvedCandidates++ }
         continue
       }
+      if ($agent -eq 'opencode') { $expansion.resolvedCandidates++ }
 
       foreach ($item in $resolvedItems) {
         $repoSource = if ($sessionCandidate.evidence.agent -eq 'codex') { 'codex' } else { $item.source }
         Add-PathItem -Map $repoMap -Path $item.path -Source $repoSource -SessionEvidence (Copy-SessionEvidenceForSource -Evidence $sessionCandidate.evidence -Source $repoSource)
       }
     }
-    if ($unresolvedSessionPathCount -gt 0) {
-      Add-WarningMessage -List $warnings -Message 'Some OpenCode session paths could not be resolved to git repositories.'
+    foreach ($agent in @('opencode', 'codex')) {
+      if ($unresolvedSessionPathsByAgent[$agent] -gt 0) {
+        $label = if ($agent -eq 'codex') { 'Codex' } else { 'OpenCode' }
+        Add-WarningMessage -List $warnings -Message ("Some {0} session paths could not be resolved to git repositories." -f $label)
+      }
     }
   }
 

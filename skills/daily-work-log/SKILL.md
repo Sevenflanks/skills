@@ -4,7 +4,7 @@ description: 整理每日工作日誌或跨 repo 今日工作時使用。先探�
 license: MIT
 metadata:
   author: sevenflankse
-  version: 0.7.1
+  version: 0.8.0
 ---
 
 # Daily Work Log
@@ -66,7 +66,7 @@ Do not use this skill when:
    - 呼叫正式 collect 時，工具支援等待 timeout 設定就設為 **600000 ms**；這是工具設定，不是 script 參數，也不是效能 SLA。若工具不支援，揭露實際等待限制，不以重跑補足。
    - 逾時或未取得有效 JSON 時停止並回報，不自動重跑；工具 timeout 不改變既有來源 guard 或停止條件。
    - 工具等待 timeout 與資料讀取額度分開；Codex 的預設總額度／單檔額度仍依「Codex 有界涵蓋」辦理。
-    - Codex adapter 需要 Python 3.11+；只對本機 Codex state／history 做唯讀 SQL。已核對 runtime contract、精選順序、exact supplement、fallback 與分開計帳規則見「Codex 有界涵蓋」。
+    - Codex adapter 需要 Python 3.11+；只對本機 Codex state／history 做唯讀 SQL。完整 runtime、capability 與 fallback 契約見 [`references/evidence-views.md`](references/evidence-views.md#codex-能力與-canonical-evidence)。
    - collector 合併 event／response 鏡像、同 session ID 續行及父子 session 的精確重播，保留 `sessionIds`／`files`／`timestamps`；不推測自然語意主題。
     - OpenCode DB 成功且非空時，依下方「OpenCode repo discovery」補充 structured bash workdir；fallback logs 才使用 `permission=external_directory`／`read`／`read-only` touched path。
    - In `session` mode, if a session path is a safe aggregate directory rather than a git repo, the collector expands nested git repos / worktrees using fast `.git` marker discovery.
@@ -78,7 +78,7 @@ Do not use this skill when:
 5. **Inspect collection gaps before writing the summary**
    - 先檢查 `errors`、`meta.canGenerateLog`、`meta.collectionStatus` 與各 `readStatus`。`no-sources`／`read-failed` 停止；`no-activity` 說明來源可讀但沒有當日證據，不能稱為讀取失敗或產生空白工作日誌。
    - `readStatus` 分別為 `unavailable`、`not-read`（probe）、`empty`、`success`、`partial`、`failed`。`partial`／`failed` 或略過來源要指出缺口；有其他成功來源可繼續，不宣稱資料完整。
-    - 檢查 Codex `coverage.complete=false`、日期／停止欄位、`limitHits`／`skipped` 及「Codex 有界涵蓋」診斷；即使 `success`、`empty` 或沒有未訪問日期，也只代表已選資料。有界空結果不能稱為「完整查過今天沒有工作」。
+    - 檢查 Codex `coverage.complete=false`、日期／停止欄位、`limitHits`／`skipped` 及「Codex 有界涵蓋」診斷；即使 `success`、`empty` 或沒有未訪問日期，也只代表已選資料。有界空結果不能稱為「完整查過今天沒有工作」。若有 compatibility draft，依 Evidence views 先讀取並交付完整脫敏草稿，再進行任務結束清理。
    - `canGenerateLog=false` 時只說明狀態與原因，不能憑記憶或額外掃描補成日誌。
    - Check `meta.ghAvailable` and `meta.ghViewer`.
    - If GitHub CLI is unavailable or not authenticated, stop before writing the daily log. Tell the user to install `gh` or run `gh auth login`, then rerun collection.
@@ -154,7 +154,7 @@ Treat collector JSON as source of truth:
 - Session `directory`／`path` 與 fallback injected／log path 只接受明確 fully-qualified absolute 值；沒有來源 base 契約的 relative、drive-relative、root-relative 值略過並以既有 aggregate warning 揭露。不可依 collector CWD 或 session title 猜 repo。合法 drive／UNC absolute 沿用既有 resolver／安全 aggregate expansion 契約。
 - DB metadata 成功且非空時，只追加一次 `part JOIN session` query：沿用 session interval overlap，part `time_created` 另以 inclusive From／To 篩選。以 `json_valid` 保護個別壞 data，只投影 session ID／title／既有 session 時間、tool／workdir／part timestamp；不返回完整 `data`、commands、output 或對話。
 - 只確定 `type=tool`、`tool=bash` 的 `state.input.workdir` 語意：值須 text、長度最多 4,096、明確 fully-qualified absolute。其他 tool 欄位與文字不猜。依 part time／id 固定排序，最多處理 **2,048 候選 rows**，SQL `LIMIT 2049` 的額外一列只作截斷 sentinel。Cap 限制候選回傳／處理列數，不是 SQLite 掃描量、DB I/O、query latency 或整個 process 記憶體 SLA；不新增 cache、index 或 schema。
-- Structured workdir 必須仍存在且可解析 Git repo／worktree；已刪／missing worktree 只回 aggregate unresolved warning，不靠不存在路徑的 Git 父目錄或名稱推 canonical mapping。Home-started parent 可由其自己的範圍內 bash workdir 歸 repo。相同 session／正規化 path 去重，保留 `discoverySource=session`、`pathSource=bash-workdir`、`tool`、`timestamp`；formatter 完整保留。
+- Structured workdir 必須仍存在且可解析 Git repo／worktree；已刪／missing worktree 只回 aggregate unresolved warning，不靠不存在路徑的 Git 父目錄或名稱推 canonical mapping。Home-started parent 可由其自己的範圍內 bash workdir 歸 repo。相同 session／正規化 path 去重，保留 `discoverySource=session`、`pathSource=bash-workdir`、`tool`、`timestamp`；formatter 完整保留。固定大小 discovery 計帳與母體見 [`references/evidence-views.md`](references/evidence-views.md#opencode-discovery-aggregate)。
 - DB 成功 `[]` 不補查 parts、也不 fallback。Metadata query 失敗維持 DB → directory-readme → logs。Supplement query failed／非 JSON／row shape 錯誤／cap／unresolved workdir 保留已成功 metadata／有效 rows，以 OpenCode `readStatus=partial`、overall `collectionStatus=partial` 與 warning 揭露缺口，不重試或擴大來源。Relative 值的略過 warning 本身不算 metadata 讀取失敗。
 - Probe 維持純 JSON、零 DB query、零 data 讀取。`success` 只代表已選來源讀取成功，不保證所有 repo 都有 structured 證據。
 
@@ -162,10 +162,10 @@ Treat collector JSON as source of truth:
 
 **允許漏收，但所有首次、重跑與錯誤路徑都禁止全歷史列舉／讀取／解析，包括先全列再 filter。** 不快取候選；metadata 日期分支先通過既有 index／query plan gate，再逐 exact rollout 補證；SQL 無法使用時，只對有界日期分區 fallback。錯誤只回報缺口，不擴大搜尋或另開預算。
 
-- Python adapter 僅支援 Python 3.11+；正式回報實際 Python／SQLite runtime 與已核對 Codex contract `0.164.0-alpha.11.1`。JSON pipe 雙向固定 UTF-8，僅在 child process 設定 IO encoding，不改全域環境。缺 Python、missing／permission、valid-empty 與 compatibility error 分開呈現；缺 Python、metadata 缺失／無權限／不相容或 valid-empty 無 exact ID 時，使用既有有界日期分區 fallback。保留 valid-empty 診斷，不產相容性草稿；補證後仍無活動才報 empty／no-activity。query 耗額或 adapter/process 失敗不以新預算重啟日期讀取。
+- Python adapter 僅支援 Python 3.11+；正式回報實際 Python／SQLite runtime 與已核對的 Codex reference contract `0.164.0-alpha.11.1`，但不同、未知或缺少的 CLI version 都只是診斷，不單獨 reject、降級或產草稿。JSON pipe 雙向固定 UTF-8，僅在 child process 設定 IO encoding，不改全域環境。必要 schema／時間／內容／indexed query capability、精選、exact supplement、隔離與 fallback 見 [`references/evidence-views.md`](references/evidence-views.md#codex-能力與-canonical-evidence)。缺 Python、missing／permission、valid-empty 與 capability error 分開呈現；missing／permission／valid-empty 不產相容性草稿。query 耗額或 adapter/process 失敗不以新預算重啟日期讀取。
 - Metadata 只對已知 `threads` 做必要唯讀 schema／index 核對。依欄位 NULLability 省略不可能的 NULL／秒 fallback 分支；其餘 created／updated 秒／毫秒查詢欄位須有 leading-column、非 partial 的既有 index。每個必要 updated range 與 unknown/null 分支的 `EXPLAIN QUERY PLAN` 都須是 indexed `SEARCH`（含 covering index），沒有 `SCAN`／temporary sort，才開始候選讀取。毫秒優先，缺值才用秒；nullable 的未知時間候選保留，unknown 不推定。缺 index 或不安全 plan 明示 compatibility gap 與固定分支／正規化計畫診斷，改走有界日期 fallback；不建 index。`LIMIT` 與 deadline 另限回傳／執行資源，不能取代此 gate。
 - SQL 資源預設 **10,000 rows、16 MiB serialized UTF-8 returned-row payload**；`-CodexQuerySeconds` 預設 15 秒，是涵蓋 SQLite 與 exact JSONL 讀取／解析的共用 adapter deadline。row cap 透過額外 sentinel row 偵測；payload 同時限制必要投影與 SQLite 單列長度。耗額時記錄 adapter、範圍及未讀區間。payload 是回傳列序列化大小，不是 SQLite 實體 I/O、token 數、延遲 SLA 或整個 process 記憶體上限。
-- State metadata 只用 lifespan overlap 篩候選，不以建立日篩除早建 session；history SQL 先以實際 `EXPLAIN QUERY PLAN` 確認既有 index／PK 對 `thread_id` 作 `SEARCH`，拒絕任何 `SCAN`，不限制 index 名稱；可保留單一候選 thread 內的 ordinal 排序。缺安全計畫時產生缺必要 index 的 compatibility 草稿，跳過該 SQL 並繼續有界 exact 補證。Item 依實際 `created_at_ms`、type 與 turn/item 關聯取材，unknown/null 時間不推定。封存候選不因封存而排除。保留可辨識的 user／assistant 內容、tool evidence／output 及其 turn/call lineage；對每個候選仍讀取 exact JSONL 補證，projection EOF 不宣稱 interop 完整。
+- State metadata 只用 lifespan overlap 篩候選，不以建立日篩除早建 session；history SQL 先以實際 `EXPLAIN QUERY PLAN` 確認既有 index／PK 對 `thread_id` 作 `SEARCH`，拒絕任何 `SCAN`，不限制 index 名稱；可保留單一候選 thread 內的 ordinal 排序。單筆壞 item 隔離並繼續同一有界 query；adapter capability 不支援不取消其他來源。必要 query capability 不符時跳過該 SQL 並繼續有界 exact 補證。Canonical `item_completed` 與 SQL mirror 依精確 item identity 合併並保留雙方 provenance；unknown/null 時間不推定。封存候選不因封存而排除。保留可辨識的 user／assistant 內容、tool evidence／output 及其 turn/call lineage；projection EOF 不宣稱 interop 完整。
 - SQL 的 repo cwd 是候選值；exact JSONL 的 session lineage 相符且同 turn 有明確絕對 cwd 時，校正該 turn 的鏡像及 SQL-only 證據歸屬，並以 `repoContext` 保留 thread／turn／file／line／byteOffset 來源。原始 detail／mirrorDetails／provenance 保留；不同 thread／turn 的 context 不互用，不同 call 的工具證據仍分開。
 - SQL 精選本身不適用原 JSONL byte cap；exact rollout 及 legacy 日期分區的實讀 bytes 共用既有 `-CodexTotalBytes`／`-CodexFileBytes`，預設 **64／8 MiB**。Exact JSONL 單行上限 `-CodexExactLineBytes` 預設 **1 MiB**、可設 **64 KiB–8 MiB**；超長行丟棄至 newline 再續讀，buffered prefix、丟棄資料及後續讀取均只按實讀 bytes 計入原額度。Legacy 日期分區仍使用 **64 KiB** 行界限。
 
@@ -177,7 +177,7 @@ Treat collector JSON as source of truth:
 - `meta.sources.codex.coverage` 保留 `limits`、`daysConsidered`、`selectedDays`、`visitedEntries`、`candidateFiles`、`openedFiles`、`readBytes`、`enumerationFailures`、`limitHits`、`skipped`；新增 `candidateDays`（完整有序日期候選）、`visitedDays`（開始 path 檢查，與 `selectedDays` 相同，含不存在／被拒絕路徑）、`unvisitedDays`（達全域 cap 尚未開始檢查的候選）、`oversizedLines`（已讀到超過單行上限的行數）。Visited 不表示全日列舉完畢；未訪問集合為空也不表示完整。
 - Legacy 日期 fallback 的 `stopReason` 只描述全域 traversal 終點：同時達限依 `totalBytes` → `entries` → `files` 優先，再為尚有未訪問候選的 `days`，否則 `candidate-days-exhausted`。局部 `fileBytes`／`lineBytes`／`pathComponents` 只在 `limitHits`；缺失目錄／列舉失敗看 `visitedDays`／`enumerationFailures`。Fallback 使用 `complete=false`／`strategy=date-partitions-no-cache`／`archive=skipped`；SQLite adapter 使用 `complete=false`／`strategy=state-history-exact-no-cache`／`archive=exact-candidates`。Counters 是 application-level MoveNext 與實際 FileStream.Read bytes，不代表 OS metadata／prefetch I/O。
 - `probeWork` 分開記已知入口檢查數與成功 MoveNext 數；最多檢查兩入口、各消耗一 entry，`openedFiles=0`／`readBytes=0`。probe 沒有 collection coverage，不能推論當日活動。
-- SQL adapter 的 `adapters`、`sqliteResources`、`runtime`、`unknownTimeEvents` 與 `compatibilityIssues` 是 additive 診斷，不擴張既有 `readStatus`／`collectionStatus` enum。Compatibility issue 只產生脫敏草稿，列出核對版本、schema/time 差異、影響、合成重現方式與目的地；只顯示草稿和目的地，不自動發布。只有使用者當次明確同意，才可發布。Missing、permission、valid-empty 不當作相容性問題，也不產草稿。
+- SQL adapter 的 `adapters`、`sqliteResources`、`runtime`、`unknownTimeEvents` 與 `compatibilityIssues` 是 additive 診斷，不擴張既有 `readStatus`／`collectionStatus` enum。只有必要能力缺口產生脫敏草稿，版本差異本身不算缺口；missing、permission、valid-empty 不產草稿。以 `-View compatibility` 讀取完整草稿後，先在對話呈現草稿全文與正確目的地、明確標示未發布；render 不等於交付，實際交付完成後才清理。欄位及目的地規則見 [`references/evidence-views.md`](references/evidence-views.md#codex-能力與-canonical-evidence)。只有使用者當次明確同意才可發布。
 - 有事件且達限時為 `partial`；無事件且無損壞時保留 `empty`／`no-activity`，包含支援的 history DB missing 後 exact 純正常 byte cap；仍保留 missing adapter、limitHits 與 unread coverage。真正 permission／schema／runtime／unknown／已觀察到的損壞不因此改判 empty；選中事件全失敗保留 `failed`／`read-failed`。Legacy fallback 略過 archive 本身不算解析失敗；所有結果仍須說明不完整。
 
 ### Aggregate 診斷的計帳契約
@@ -198,7 +198,7 @@ Legacy 日期分區上限限制 filesystem 訪問與 transcript 讀取；日期�
 
 ## Evidence views 與私有原始證據
 
-大型 collection 與 ERP 整理先依 [`references/evidence-views.md`](references/evidence-views.md) 的可執行流程：PS5.1／7 呼叫端只傳檔案路徑，pwsh 7 child 明確以 UTF-8 capture，JSON 參數與多行 Python 走檔案。將原始 JSON 直接存入私有 task-local 暫存，再以 formatter `-InputPath` 及 repo／session 選讀必要欄位。不可先把整份原始 JSON 送入主上下文再壓縮。私有檔只供當次任務，完成後清理，不提交或公開。
+大型 collection 與 ERP 整理先依 [`references/evidence-views.md`](references/evidence-views.md) 的可執行流程：PS5.1／7 呼叫端只傳檔案路徑，pwsh 7 child 明確以 UTF-8 capture，JSON 參數與多行 Python 走檔案。將原始 JSON 直接存入私有 task-local 暫存，再用 formatter `-InputPath $rawPath -View index` 讀狀態、計數與 raw pointers；保留 ERP 視圖 `$evidence` 供按需 repo／session 選讀。若有草稿，另以 `-View compatibility` 讀完整內容，先在對話呈現脫敏草稿與目的地並註明未發布；完成實際交付後才清理。不可先把整份原始 JSON 送入主上下文再壓縮。
 
 - 預設 `summary`：`shownCommits` 最多 8、PR 文字引用、全部 `sessionEvidence`、`meta`／warnings／errors。Codex 已知正常的 routine tool 僅顯示 status／exit／source IDs，`detailRef` 的 JSON pointer 指回同次 raw collector JSON（`-InputPath` 時另附檔名）；按需讀取，不重 collect。失敗、驗證、交付／成功 readback、需求與 structuredContent／_meta 保守完整展開，依內容及同 source/session/turn 證據判斷，不按同名工具合併工作。適合一般日報，但不保證 ERP 歸屬證據保真。
 - ERP 使用 `-View erp`：不套 commit 上限；以無縮排 JSON 保留每個 repo 的 `githubRepo`、`source`、`isGitRepo`、完整 commits（refs／branchHints）、PR（head／Draft／state／closing issues）、全部 session／續行、warnings 及完整頂層 meta／sources／coverage／errors。省略 repo `path`，缺值維持缺值；這仍是私有證據，不是公開用的去識別輸出。

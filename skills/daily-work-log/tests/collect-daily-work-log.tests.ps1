@@ -642,12 +642,14 @@ Describe 'collect-daily-work-log session discovery' {
   It 'does not expand an unsafe broad session root' {
     $testRoot = New-TestRoot
     try {
-      $data = Invoke-CollectorJson -TestRoot $testRoot -DbMode 'success' -DbRepo ([System.IO.Path]::GetPathRoot($testRoot.Root))
+      $unsafeRoot = [System.IO.Path]::GetPathRoot($testRoot.Root)
+      $data = Invoke-CollectorJson -TestRoot $testRoot -DbMode 'success' -DbRepo $unsafeRoot
       $rgCalls = if (Test-Path -LiteralPath $testRoot.RgLogFile) { Get-Content -LiteralPath $testRoot.RgLogFile -Raw } else { '' }
 
       @($data.repos).Count | Should Be 0
       $rgCalls | Should Be ''
-      @(@($data.warnings) | Where-Object { $_ -like 'Skipped unsafe session expansion root:*' }).Count | Should Be 1
+      @(@($data.warnings) | Where-Object { $_ -eq 'Skipped unsafe session expansion root.' }).Count | Should Be 1
+      (($data.warnings -join "`n").Contains($unsafeRoot)) | Should Be $false
       (@($data.warnings) -contains 'Some OpenCode session paths could not be resolved to git repositories.') | Should Be $true
     }
     finally {

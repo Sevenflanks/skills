@@ -21,8 +21,8 @@
     {
       "name": "daily-work-log",
       "source": "skills/daily-work-log",
-      "description": "先探測並合併 OpenCode／Codex 與 Git／GitHub 證據；Codex metadata、SQLite history 與 exact JSONL 有界補證，依 canonical repo 查 issue 狀態並揭露缺口。",
-      "version": "0.7.1",
+      "description": "先探測並合併 OpenCode／Codex 與 Git／GitHub 證據；Codex 必要資料能力 gate、canonical item 補證及 bounded evidence views，依 canonical repo 查 issue 狀態並揭露缺口。",
+      "version": "0.8.0",
       "keywords": [
         "work-log",
         "daily-report",

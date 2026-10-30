@@ -179,6 +179,7 @@ exit 2
     Assert ($null -eq $compact.repos[0].PSObject.Properties['path']) 'unneeded repo path in ERP view'
     $default = ($raw | & $pwsh -NoProfile -File $formatter) | ConvertFrom-Json
     Assert (@($default.repos[0].shownCommits).Count -eq 8 -and $default.repos[0].prs[0] -is [string]) 'default formatter contract changed'
+    Assert (($default.meta | ConvertTo-Json -Depth 30 -Compress) -eq ($fixture.meta | ConvertTo-Json -Depth 30 -Compress)) 'default summary meta/source coverage changed'
     $bytes = [ordered]@{rawUtf8=[Text.Encoding]::UTF8.GetByteCount($raw);erpUtf8=[Text.Encoding]::UTF8.GetByteCount($compactRaw)}
     Assert ($bytes.erpUtf8 -lt $bytes.rawUtf8) 'ERP view did not reduce serialized bytes'
     if ($EvidenceRoot) {
