@@ -20,7 +20,7 @@
 ## 主要流程
 
 1. 蒐集前只針對指定日期、使用者點名的 repo 與會影響本次 collection 的偏好 recall；沒有有用結果就停止搜尋並使用預設流程。沿用同任務仍有效的參數與查詢結果；handoff 本身不使它們失效。
-2. 執行 collector `-ProbeOnly`；只檢查已知紀錄入口與 CLI 是否存在，不掃歷史、不執行 CLI、不讀 auth／config。根據 JSON 在對話預告本次來源與略過理由，再移除 `-ProbeOnly` 正式蒐集。兩來源皆可用就合併。
+2. 用 bundled capture `-Mode probe`；只檢查已知紀錄入口與 CLI 是否存在，不掃歷史、不執行 CLI、不讀 auth／config。根據 JSON 在對話預告來源與略過理由，再以 `-Mode collect -ProbePath` 正式蒐集。Helper 要求成功 probe 的 `meta.probeOnly`／`sources`、空 errors 與 `from`／`to`／`timezone`，自動固定日界線。兩來源皆可用就合併。
 3. 若使用者未提供明確時間範圍，helper 會以 configured timezone 計算「今天」，預設為 `Asia/Taipei`。這裡指的是缺少明確時間範圍，不是任何空白輸入都自動觸發。若使用者需要其他 timezone、日期範圍、或掃描根目錄，應明確覆寫。
 4. OpenCode 先查 `opencode db --format json`；若 DB 不可用、查詢失敗、或 JSON 無效，才依序 fallback 到 `storage/directory-readme` 與 OpenCode logs。沒有 CLI 但本機紀錄可讀仍可用。
 5. 若 DB 查詢成功且回傳空陣列 `[]`，代表沒有 session repo 證據，這個結果具權威性，不再 fallback 到檔案來源。
@@ -110,24 +110,26 @@ JSON `meta.sources` 分別回報 OpenCode／Codex 的可用性、CLI 存在、�
 Formatter 保留 PR state，`[OPEN]` 包含 Draft 可能性；未保留 `isDraft` 時只寫待合併，不猜 ready。Session 標題本身即使寫「驗收通過」也須結果補證，才能用成果用語。
 
 ```powershell
-pwsh -NoProfile -File "<skill>\scripts\collect-daily-work-log.ps1" -ProbeOnly
-# agent 在對話預告，再將 probe meta.from/to 固定傳入正式 collection。
-pwsh -NoProfile -File "<skill>\scripts\collect-daily-work-log.ps1" -From "<probe-from>" -To "<probe-to>"
+pwsh -NoProfile -File "<skill>\scripts\capture-daily-work-log.ps1" -Mode probe -ParametersPath "<parameters.json>" -OutputPath "<probe.json>"
+# agent 在對話預告；同次 probe 與參數檔供正式 collection 固定日界線。
+pwsh -NoProfile -File "<skill>\scripts\capture-daily-work-log.ps1" -Mode collect -ProbePath "<probe.json>" -ParametersPath "<parameters.json>" -OutputPath "<raw.json>"
 ```
 
 `-OpenCodeLogRoot`、`-OpenCodeStorageRoot`、`-CodexRoot` 可覆寫紀錄入口；collector／formatter stdout 均為純 JSON。formatter 保留新增 metadata 與全部 `sessionEvidence`，只對 shown commits 做上限 compaction。
 
 ### 證據視圖與私有落檔
 
-大型原始 JSON 直接落入當次私有暫存，依 [`references/evidence-views.md`](references/evidence-views.md) 的完整流程，用 formatter `-InputPath $rawPath -View index` 讀 bounded status／counts／limits／raw pointers，再按需讀取 ERP `$evidence` 的 repo／session。Index 的 count 或 pointer 不是完整 evidence，也不是 draft delivery。若有 compatibility draft，另以 `-View compatibility` 讀取完整脫敏 title／body／destination，先在對話展示全文、目的地並註明未發布；render 不代表交付，完成實際交付後才清理。ERP 視圖保留全部 commits／refs／branchHints、PR head／Draft／closing issues／交付狀態、來源／續行、meta／coverage／warnings／errors，只移除 repo path 與排版空白，不任意截斷。證據檔仍是私有資料。
+大型原始 JSON 直接落入當次私有暫存，依 [`references/evidence-views.md`](references/evidence-views.md) 的唯一 capture recipe，用 formatter `-InputPath $rawPath -View index` 讀 bounded status／counts／limits／raw pointers，再用 `-GithubRepo`／`-SessionId` 按需選全部 worktree／來源續行。`-View sessions` 只列 lineage 與 pointers，`-View raw -JsonPointer` 精確讀同次原始位置；篩選不重編 raw 陣列。Index 不是完整 evidence，也不是 draft delivery。若有 compatibility draft，另以 `-View compatibility` 讀完整脫敏 title／body／destination，先在對話展示全文、目的地並註明未發布；render 不代表交付，完成實際交付後才清理。ERP 視圖保留全部 commits／refs／branchHints、PR head／Draft／closing issues／交付狀態、來源／續行、meta／coverage／warnings／errors，只移除 repo path 與排版空白，不任意截斷。證據檔仍是私有資料。
 
-Windows PowerShell 5.1 的預設 redirect 會產生 UTF-16LE；上述 recipe 在 pwsh 7 child 內明確 capture UTF-8，支援 PS5.1 → pwsh 7 與 pwsh 7 直接呼叫。JSON 參數及多行 Python 存在當次暫存檔，跨 process 只傳路徑；先看缺口／repo 索引，再選 repo／session，不將大型 raw 或無效 recall 灌入上下文。無效 recall 停止搜尋且不作成果證據。沿用 probe → 公告 → collect、停止條件與任務結束清理。
+Windows PowerShell 5.1 的預設 redirect 會產生 UTF-16LE；bundled `capture-daily-work-log.ps1` 在 pwsh 7 child 內寫 BOM-less UTF-8，成功時不印 raw stdout，支援 PS5.1／7 呼叫端。JSON 參數存當次暫存檔，跨 process 只傳路徑；一般選讀不再撰寫臨時 capture／Python 程式。無效 recall 停止搜尋且不作成果證據。沿用 probe → 公告 → collect、停止條件與交付後清理。
 
-同次 collection 重用 viewer 與 canonical repo 的 PR 查詢，worktree 關聯仍獨立判斷。同作者的當日 PR commit 若無該 worktree hash／branch 關聯也不收；session-only 不自造完成成果。Resolver 原因未明的 HTTP 400 只回報解析失敗，不逐 branch 猜、不當作 missing mapping。
+同次 collection 重用 viewer／PR 查詢與正規化 exact aggregate path 展開（含空結果），各 worktree 關聯與各來源 session／warnings／coverage 保留。PR 先 cheap PR／branch match，適用的未匹配候選仍走 hash fallback。有界補報補證涵蓋隔日更新／合併及可靠 session-only 明確引用；`reportEvidence` 是報告日關聯依據，`stateObservedAt` 是目前狀態的觀察時間，不倒推報告日已完成。同作者／近期更新本身不構成關聯。Resolver 原因未明的 HTTP 400 只回報解析失敗，不逐 branch 猜、不當作 missing mapping。
+
+`meta.diagnostics` schemaVersion 1 有 `sourceAdapter`／`json`／`repoDiscovery`／`git`／`github`／`output` 六 stages（durationMs／calls／cacheHits）；未執行為 null、stage 重疊不可加總，totalDurationMs 是獨立 wall。Output 到主 JSON 完成，排除末尾 diagnostics encoding／stdout。完整界線見 [分段量測](references/evidence-views.md#collector-分段量測與補報狀態)。條件式並行／Git root batching 缺收益證據延後；五分鐘不作 CI gate 或 300 秒 timeout。
 
 ### 調整 Codex 讀取額度
 
-PowerShell 7+ 使用 `-CodexTotalBytes`／`-CodexFileBytes` 指定**正整數 bytes**，預設為 64／8 MiB。以下例子明確使用 128／16 MiB，probe 與 collection 共用範圍及額度：
+在 capture 參數 JSON 以 `CodexTotalBytes`／`CodexFileBytes` 指定**正整數 bytes**，預設為 64／8 MiB。以下設定 128／16 MiB，寫入 recipe 的 `$parametersPath` 後沿用同一 probe／collect 流程：
 
 ```powershell
 $parameters = @{
@@ -137,9 +139,7 @@ $parameters = @{
   CodexTotalBytes = 128MB  # PowerShell 的 MB 為 1,048,576 bytes，即 MiB。
   CodexFileBytes = 16MB
 }
-& '<skill>\scripts\collect-daily-work-log.ps1' @parameters -ProbeOnly
-# agent 依 probe JSON 預告來源後，正式蒐集同一範圍。
-& '<skill>\scripts\collect-daily-work-log.ps1' @parameters
+[IO.File]::WriteAllText($parametersPath, ($parameters | ConvertTo-Json), $utf8)
 ```
 
 有效範圍為 1 至 9,223,372,036,854,775,807 的整數 bytes；0、負數、小數、NaN、Infinity、`unlimited` 與超出範圍的值均拒絕。單檔實際讀取上限是單檔額度與全域剩餘額度的較小值，允許 file 設定大於 total。Legacy 64 KiB line cap 與其餘訪問上限不隨參數增加。達限只揭露缺口，不自動加碼或重跑；提高額度也不保證完整。
@@ -161,7 +161,7 @@ npm run validate
 
 ## 有界驗證與量測
 
-`windows-capture.tests.ps1` 在 PS5.1 → pwsh 7 與 pwsh 7 → pwsh 7 實際執行 evidence-view recipe；只替換 collector 為合成輸出，formatter 使用既有 CLI。驗證中文／多行／引號／大型 JSON 往返、參數檔、Python 選讀與跨 worktree 續行；`-Mutation utf16` 應在 UTF-8 斷言失敗。測試 child 的 execution policy 旗標只影響該 process；當次 runtime 暫存自動清理，指定 EvidenceRoot 才保留合成 JSON。
+`windows-capture.tests.ps1` 在 PS5.1 → pwsh 7、pwsh 7 → pwsh 7 與 ANSI-1252 source fallback 實際執行文件 recipe；只替換外部 collector，capture／formatter 使用公開 CLI。驗證中文／多行／引號／大型 JSON、固定 repo／session／raw pointer 選讀、完整 ERP／草稿及跨 worktree 續行；`-Mutation utf16` 應在 UTF-8 斷言失敗。測試 child 的 execution policy 旗標只影響該 process；當次 runtime 暫存自動清理，指定 EvidenceRoot 才保留合成 JSON。其他入口測試與指令見 [`tests/README.md`](tests/README.md#固定-capture選讀與文件-harness)。
 
 `evidence-view.tests.ps1` 以合成雙 worktree／OpenCode＋Codex 續行、git／gh 公開邊界替身驗證 canonical、查詢次數、worktree PR 隔離、錯誤缺口、ERP 欄位與 default 相容。`-Case reuse -BaselineRevision 9ff9580 -MeasureOnly -EvidenceRoot '<external-temp>'` 可對同一 fixture 量測基線，移除 baseline／MeasureOnly 即測目前版。保留 sanitized `collection.json`、`query-counts.json`；`-Case formatter` 保留合成 input／ERP view／UTF-8 bytes。界限與 mutation 對應見 [`tests/evidence/README.md`](tests/evidence/README.md)；沒有真實 GitHub、個人歷史或 latency 結論。
 
@@ -174,6 +174,8 @@ npm run validate
 冷是同一測試 process 在 fixture 增量後首次呼叫，暖是重跑；不控制 OS filesystem cache。Collection 計時包含 collector 的 probe、合成 Git／gh 邊界呼叫與 JSON 序列化，排除 fixture 建立及外部測試啟動。Memory 為整個測試 process 累積 `PeakWorkingSet64`，包含 fixture 建立與 reference，不代表 collector-only、child processes 或每次配置量。Entries 是 application-level MoveNext，bytes 是 FileStream.Read 回傳量，排除 OS metadata／prefetch。Reference 不執行 Git／gh 或完整 collector，耗時不能當作同等流程的速度提升比例；其 output size 不適用。日期候選陣列隨要求日期範圍成長；4 KiB／64 KiB 只限 reader buffers，不是事件清單或整個 process 的 hard memory cap。64／8 MiB 是已確認預設，不是最佳門檻或性能 SLA；本回歸未確認真實 workload。
 
 ## 版本變更
+
+`0.9.0` 新增向後相容的 bundled capture 與 repo／session／sessions／raw pointer 選讀，取代每輪臨時 capture／Python recipe。Collector 新增分段診斷、cheap PR match／hash fallback、同輪 exact-path 展開重用、有界補報 PR 補證與 native stdout／stderr 同步排空。保留完整證據、partial coverage、草稿交付與 ERP 安全契約；無真實端到端加速數據，不承諾固定倍率。
 
 `0.8.0` 新增 formatter bounded index／compatibility views、source discovery 計帳索引與 canonical Codex evidence contract。版本白名單不再作 runtime gate；必要能力仍受 indexed query、安全時間／內容與有界 fallback 約束。新增先交付草稿再清理的 consumer flow。
 
@@ -193,6 +195,7 @@ npm run validate
 
 - [`SKILL.md`](SKILL.md)：skill runtime 指令。
 - [`scripts/collect-daily-work-log.ps1`](scripts/collect-daily-work-log.ps1)：資料蒐集 helper，輸出純 JSON。
+- [`scripts/capture-daily-work-log.ps1`](scripts/capture-daily-work-log.ps1)：probe／collect／format 固定檔案入口。
 - [`evals/evals.json`](evals/evals.json)：評估案例。
 - [`tests/bounded-collection.tests.ps1`](tests/bounded-collection.tests.ps1)：搜尋／I/O 上限、舊歷史增量與 synthetic benchmark。
 - [`tests/multi-source.tests.ps1`](tests/multi-source.tests.ps1)：來源組合、停止條件、Codex 選中跨日／去重、archive 略過與 formatter 合成測試。

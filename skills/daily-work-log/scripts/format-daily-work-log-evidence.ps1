@@ -3,9 +3,12 @@ param(
   [Parameter(ValueFromPipeline = $true)]
   [string]$InputJson,
   [int]$MaxCommitsPerRepo = 8,
-  [ValidateSet('summary', 'erp', 'index', 'compatibility')]
+  [ValidateSet('summary', 'erp', 'index', 'compatibility', 'sessions', 'raw')]
   [string]$View = 'summary',
-  [string]$InputPath
+  [string]$InputPath,
+  [string]$GithubRepo,
+  [string]$SessionId,
+  [AllowEmptyString()][string]$JsonPointer
 )
 
 begin {
@@ -65,6 +68,43 @@ end {
   function ConvertTo-PointerToken {
     param([string]$Name)
     return $Name.Replace('~', '~0').Replace('/', '~1')
+  }
+
+  function Write-RawSelection {
+    param([string]$Json, [string]$Pointer)
+    if ($Pointer -ne '' -and -not $Pointer.StartsWith('/')) { throw 'JsonPointer must be empty (document root) or start with /.' }
+    # JSON DOM keeps null/empty arrays, exact case-sensitive keys, numbers and timestamp strings.
+    # Re-serializing a PowerShell object here can silently change those raw JSON values.
+    $options = [System.Text.Json.JsonDocumentOptions]::new()
+    $options.MaxDepth = 1024
+    $document = [System.Text.Json.JsonDocument]::Parse($Json, $options)
+    try {
+      $node = $document.RootElement
+      if ($Pointer -ne '') {
+        foreach ($encoded in $Pointer.Substring(1).Split('/')) {
+          if ($encoded -match '~(?![01])') { throw 'Invalid JSON pointer escape.' }
+          $token = $encoded.Replace('~1', '/').Replace('~0', '~')
+          switch ($node.ValueKind.ToString()) {
+            'Object' { $node = $node.GetProperty($token) }
+            'Array' {
+              $offset = 0
+              if ($token -cnotmatch '^(0|[1-9][0-9]*)$' -or -not [int]::TryParse($token, [ref]$offset) -or $offset -ge $node.GetArrayLength()) { throw 'JSON pointer array index does not exist.' }
+              $node = $node[$offset]
+            }
+            default { throw 'JSON pointer cannot descend into a scalar or null.' }
+          }
+        }
+      }
+      $reference = New-RawReference $Pointer | ConvertTo-Json -Depth 100 -Compress
+      '{"detailRef":' + $reference + ',"value":' + $node.GetRawText() + '}'
+    }
+    finally { $document.Dispose() }
+  }
+
+  function Test-SelectedSession {
+    param($Evidence)
+    return ((Get-PropertyValue $Evidence 'sessionId') -ceq $SessionId -or
+      $SessionId -cin @(ConvertTo-Array (Get-PropertyValue $Evidence 'sessionIds')))
   }
 
   function Get-KnownCount {
@@ -146,6 +186,22 @@ end {
   function Get-IndexMeta {
     param($Meta)
     $result = Select-IndexScalars $Meta @('generatedAt','timezone','from','to','sourceMode','probeOnly','collectionStatus','canGenerateLog','ghAvailable','ghViewer','authorScope')
+    # 新診斷 schema 尚未適配時仍可完整選讀，index 不展開未知 metadata。
+    $result.detailRef = New-RawReference $(if ($collector.PSObject.Properties['meta']) { '/meta' } else { '' })
+    if ($null -ne $Meta -and $Meta.PSObject.Properties['diagnostics']) {
+      $diagnostics = Get-PropertyValue $Meta 'diagnostics'
+      $result.diagnostics = Select-IndexScalars $diagnostics @('schemaVersion')
+      $result.diagnostics.detailRef = New-RawReference '/meta/diagnostics'
+      if ($result.diagnostics.schemaVersion -ceq 1) {
+        $result.diagnostics.totalDurationMs = (Select-IndexScalars $diagnostics @('totalDurationMs')).totalDurationMs
+        $result.diagnostics.stages = [ordered]@{}
+        $stages = Get-PropertyValue $diagnostics 'stages'
+        foreach ($stage in @('sourceAdapter','json','repoDiscovery','git','github','output')) {
+          $result.diagnostics.stages[$stage] = Select-IndexScalars (Get-PropertyValue $stages $stage) @('durationMs','calls','cacheHits')
+        }
+        # Stage durations may overlap; total is the producer's independent clock, never their sum.
+      }
+    }
     $result.sources = [ordered]@{}
     $sources = Get-PropertyValue $Meta 'sources'
     if ($null -eq $sources) { $result.sources = $null; return $result }
@@ -314,6 +370,17 @@ end {
       throw 'MaxCommitsPerRepo must be greater than zero.'
     }
 
+    if ($View -eq 'raw') {
+      if (-not $PSBoundParameters.ContainsKey('JsonPointer')) { throw 'View raw requires JsonPointer; use an empty string for the document root.' }
+      if ($PSBoundParameters.ContainsKey('GithubRepo') -or $PSBoundParameters.ContainsKey('SessionId')) { throw 'Raw pointers address the original document; do not combine them with repo/session filters.' }
+      Write-RawSelection $rawInput $JsonPointer
+      return
+    }
+    if ($PSBoundParameters.ContainsKey('JsonPointer')) { throw 'JsonPointer requires View raw.' }
+    foreach ($filter in @('GithubRepo','SessionId')) {
+      if ($PSBoundParameters.ContainsKey($filter) -and [string]::IsNullOrWhiteSpace($PSBoundParameters[$filter])) { throw "$filter must not be empty." }
+    }
+    if ($View -eq 'compatibility' -and ($GithubRepo -or $SessionId)) { throw 'Compatibility drafts are source-wide; repo/session filters are not supported.' }
     $collector = $rawInput | ConvertFrom-Json
     foreach ($warning in (ConvertTo-Array -Value (Get-PropertyValue -Object $collector -Name 'warnings'))) {
       $warnings.Add([string]$warning)
@@ -330,11 +397,36 @@ end {
     $repoIndex = -1
     foreach ($repo in (ConvertTo-Array -Value (Get-PropertyValue -Object $collector -Name 'repos'))) {
       $repoIndex++
+      if ($GithubRepo -and (Get-PropertyValue $repo 'githubRepo') -ine $GithubRepo) { continue }
+      # Keep original array positions: filtering the raw arrays first would retarget detailRef.
+      # Unfiltered index only needs counts, not an extra traversal of every session.
+      $selectedOffsets = @()
+      if ($SessionId -or $View -ne 'index') {
+        $allEvidence = @(ConvertTo-Array (Get-PropertyValue $repo 'sessionEvidence'))
+        $selectedOffsets = @(for ($i = 0; $i -lt $allEvidence.Count; $i++) {
+          if (-not $SessionId -or (Test-SelectedSession $allEvidence[$i])) { $i }
+        })
+      }
+      if ($SessionId -and $selectedOffsets.Count -eq 0) { continue }
       if ($View -eq 'index') {
         $repos.Add([ordered]@{
           name = Get-PropertyValue $repo 'name'; githubRepo = Get-PropertyValue $repo 'githubRepo'
           source = Get-PropertyValue $repo 'source'; isGitRepo = Get-PropertyValue $repo 'isGitRepo'
-          commits = Get-KnownCount $repo 'commits'; prs = Get-KnownCount $repo 'prs'; sessions = Get-KnownCount $repo 'sessionEvidence'
+          commits = Get-KnownCount $repo 'commits'; prs = Get-KnownCount $repo 'prs'; sessions = if ($SessionId) { $selectedOffsets.Count } else { Get-KnownCount $repo 'sessionEvidence' }
+          warnings = @(ConvertTo-Array (Get-PropertyValue $repo 'warnings')); detailRef = New-RawReference "/repos/$repoIndex"
+        })
+        continue
+      }
+      if ($View -eq 'sessions') {
+        $sessionIndex = @(foreach ($i in $selectedOffsets) {
+          $entry = [ordered]@{}
+          foreach ($name in @('source','agent','sessionId','sessionIds','sourceId','turnId','itemId','role','eventType')) { $entry[$name] = Get-PropertyValue $allEvidence[$i] $name }
+          $entry.detailRef = New-RawReference "/repos/$repoIndex/sessionEvidence/$i"
+          $entry
+        })
+        $repos.Add([ordered]@{
+          name = Get-PropertyValue $repo 'name'; githubRepo = Get-PropertyValue $repo 'githubRepo'
+          source = Get-PropertyValue $repo 'source'; sessionEvidence = $sessionIndex
           warnings = @(ConvertTo-Array (Get-PropertyValue $repo 'warnings')); detailRef = New-RawReference "/repos/$repoIndex"
         })
         continue
@@ -348,7 +440,7 @@ end {
           isGitRepo = Get-PropertyValue -Object $repo -Name 'isGitRepo'
           commits = @(ConvertTo-Array -Value (Get-PropertyValue -Object $repo -Name 'commits'))
           prs = @(ConvertTo-Array -Value (Get-PropertyValue -Object $repo -Name 'prs'))
-          sessionEvidence = @(ConvertTo-Array -Value (Get-PropertyValue -Object $repo -Name 'sessionEvidence'))
+          sessionEvidence = @(foreach ($i in $selectedOffsets) { $allEvidence[$i] })
           warnings = @(ConvertTo-Array -Value (Get-PropertyValue -Object $repo -Name 'warnings'))
         })
         continue
@@ -390,8 +482,7 @@ end {
         }
       }
 
-      $allEvidence = @(ConvertTo-Array -Value (Get-PropertyValue -Object $repo -Name 'sessionEvidence'))
-      $summaryEvidence = @(for ($i = 0; $i -lt $allEvidence.Count; $i++) {
+      $summaryEvidence = @(foreach ($i in $selectedOffsets) {
         Format-SummaryEvidence -Evidence $allEvidence[$i] -RawPointer "/repos/$repoIndex/sessionEvidence/$i" -AllEvidence $allEvidence
       })
       $repos.Add([ordered]@{
@@ -408,11 +499,11 @@ end {
     }
 
     [ordered]@{
-      meta = if ($View -eq 'index') { Get-IndexMeta (Get-PropertyValue $collector 'meta') } else { Get-PropertyValue -Object $collector -Name 'meta' }
+      meta = if ($View -in @('index','sessions')) { Get-IndexMeta (Get-PropertyValue $collector 'meta') } else { Get-PropertyValue -Object $collector -Name 'meta' }
       warnings = @($warnings)
       errors = @($errors)
       repos = $repos
-    } | ConvertTo-Json -Depth 100 -Compress:($View -in @('erp','index'))
+    } | ConvertTo-Json -Depth 100 -Compress:($View -in @('erp','index','sessions'))
   }
   catch {
     $errors.Add($_.Exception.Message)

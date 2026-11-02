@@ -15,7 +15,6 @@ $skillRoot = Split-Path -Parent $PSScriptRoot
 $recipePath = Join-Path $skillRoot 'references/evidence-views.md'
 $pwsh = (Get-Command pwsh -ErrorAction Stop).Source
 $ps5 = (Get-Command powershell.exe -ErrorAction Stop).Source
-$null = Get-Command python -ErrorAction Stop
 $parent = [IO.Path]::GetTempPath()
 if (-not (Test-Path -LiteralPath $parent -PathType Container)) { throw 'Missing temporary parent.' }
 if ($EvidenceRoot -and -not (Test-Path -LiteralPath $EvidenceRoot -PathType Container)) { throw 'EvidenceRoot must already exist.' }
@@ -32,7 +31,7 @@ try {
     @{sessionId="synthetic-$i";path="C:\synthetic\$i";reason=('PRIVATE-META-SYNTHETIC 中文缺口' * 40);status='partial'}
   })
   $fixture = [ordered]@{
-    meta = @{from='2026-05-29T00:00:00+08:00';to='2026-05-29T23:59:59+08:00';note=$note;canGenerateLog=$true;collectionStatus='partial';sources=@{opencode=@{available=$true;readStatus='success'};codex=@{available=$true;readStatus='partial';coverage=@{complete=$false;limitHits=@('fileBytes')}}}}
+    meta = @{from='2026-05-29T00:00:00+08:00';to='2026-05-29T23:59:59+08:00';timezone='Asia/Taipei';note=$note;canGenerateLog=$true;collectionStatus='partial';sources=@{opencode=@{available=$true;readStatus='success'};codex=@{available=$true;readStatus='partial';coverage=@{complete=$false;limitHits=@('fileBytes')}}}}
     warnings=@('合成缺口');errors=@();repos=@(
       @{name='worktree-a';path='C:\synthetic\a';githubRepo='fixture/shared';source=@('session');isGitRepo=$true;commits=@();prs=@();warnings=@();sessionEvidence=@(
         @{agent='opencode';source='session';sessionId=$session;title=$note},
@@ -61,9 +60,14 @@ try {
 param([string]$From, [string]$To, [string]$Timezone, [string]$Note, [switch]$ProbeOnly)
 $ErrorActionPreference = 'Stop'
 $data = Get-Content -LiteralPath "$PSScriptRoot/fixture.json" -Raw -Encoding utf8 | ConvertFrom-Json
-if ($Note -cne $data.meta.note -or $From -ne $data.meta.from -or $To -ne $data.meta.to -or $Timezone -ne 'Asia/Taipei') { throw 'Parameter round-trip damaged.' }
+$data.meta.from = '2026-05-29T00:00:00+08:00'
+$data.meta.to = '2026-05-29T23:59:59+08:00'
+if ($Note -cne $data.meta.note -or $From -ne '2026-05-29T00:00:00+08:00' -or $To -ne '2026-05-29T23:59:59+08:00' -or $Timezone -ne 'Asia/Taipei') { throw 'Parameter round-trip damaged.' }
 [IO.File]::AppendAllText("$PSScriptRoot/calls.txt", $(if ($ProbeOnly) { "probe`n" } else { "collect`n" }))
-if ($ProbeOnly) { @{meta=$data.meta} | ConvertTo-Json -Depth 100 } else { Get-Content -LiteralPath "$PSScriptRoot/fixture.json" -Raw -Encoding utf8 }
+if ($ProbeOnly) {
+  $data.meta | Add-Member -NotePropertyName probeOnly -NotePropertyValue $true
+  @{meta=$data.meta;errors=@()} | ConvertTo-Json -Depth 100
+} else { Get-Content -LiteralPath "$PSScriptRoot/fixture.json" -Raw -Encoding utf8 }
 '@
   $scenario = @'
 param([string]$Root, [string]$RecipePath, [string]$SkillRoot, [string]$Mutation, [string]$RunLabel = $PSVersionTable.PSVersion.Major)
@@ -107,10 +111,14 @@ try {
   }
   $fixture = Get-Content -LiteralPath "$Root/fixture.json" -Raw -Encoding utf8 | ConvertFrom-Json
   $collectorPath = Join-Path $Root 'synthetic-collector.ps1'
-  $parameters = @{From=$fixture.meta.from;To=$fixture.meta.to;Timezone='Asia/Taipei';Note=$fixture.meta.note}
+  # Pin date strings across PS5 and PS7; ConvertFrom-Json may infer DateTime in PS7.
+  $parameters = @{From='2026-05-29T00:00:00+08:00';To='2026-05-29T23:59:59+08:00';Timezone='Asia/Taipei';Note=$fixture.meta.note}
   [IO.File]::WriteAllText($parametersPath, ($parameters | ConvertTo-Json -Depth 100), $utf8)
   if ($Mutation -eq 'utf16') {
-    $capture = $capture.Replace('Set-Content -LiteralPath $OutputPath -Encoding utf8NoBOM', 'Out-File -LiteralPath $OutputPath -Encoding unicode')
+    # Mutate an owned helper copy, never the shared implementation.
+    $capture = [IO.File]::ReadAllText($capturePath, [Text.Encoding]::UTF8)
+    $capture = $capture.Replace('[Text.UTF8Encoding]::new($false)', '[Text.Encoding]::Unicode')
+    $capturePath = Join-Path $taskRoot 'mutated-capture.ps1'
     [IO.File]::WriteAllText($capturePath, $capture, $utf8)
   }
   $probeOutput = @(. $recipes.probe)
@@ -195,20 +203,31 @@ try {
   $blocked = $false
   try { Invoke-ConsumerStep 'cleanup' } catch { if ($_.Exception.Message -ne 'synthetic delivery checkpoints required') { throw }; $blocked = $true }
   Assert ($blocked -and (Test-Path -LiteralPath $rawPath)) 'Controlled consumer cleaned before final-log checkpoint.'
+  $evidence = Get-Content -LiteralPath $erpPath -Raw -Encoding utf8 | ConvertFrom-Json
   Assert ($evidence.repos[0].sessionEvidence[1].title -ceq $fixture.repos[0].sessionEvidence[1].title) 'ERP formatter damaged large payload.'
   Assert ($evidence.repos[0].sessionEvidence[0].title -ceq $fixture.meta.note -and -not $evidence.meta.sources.codex.coverage.complete) 'ERP lost multilingual evidence or coverage gap.'
   $selection = @{githubRepo='fixture/shared';sessionId=$fixture.repos[0].sessionEvidence[0].sessionId}
   Assert (@(. $recipes.select).Count -eq 0) 'Selection leaked raw payload into tool stdout.'
   $selectedText = Get-Content -LiteralPath $selectedPath -Raw -Encoding utf8
   $selected = $selectedText | ConvertFrom-Json
-  Assert (@($selected).Count -eq 2 -and $selected[0].name -eq 'worktree-a' -and $selected[1].name -eq 'worktree-b') 'Selection lost worktree or included another canonical repo.'
-  Assert (@($selected[0].sessionEvidence).Count -eq 1 -and @($selected[1].sessionEvidence).Count -eq 1) 'Selection retained unrelated sessions or lost continuation.'
-  Assert ($selected[0].sessionEvidence[0].sessionId -ceq $selection.sessionId -and $selected[1].sessionEvidence[0].sessionIds[1] -ceq $selection.sessionId) 'Quoted/multiline selector or continuation changed.'
-  Assert ($selected[0].sessionEvidence[0].title -ceq $fixture.meta.note -and [Text.Encoding]::UTF8.GetByteCount($selectedText) -lt 16000 -and $selectedText -notmatch 'LARGE-PRIVATE-SYNTHETIC') 'Selected read damaged text or included large unselected content (UTF-8 bytes).'
+  Assert (@($selected.repos).Count -eq 2 -and $selected.repos[0].name -eq 'worktree-a' -and $selected.repos[1].name -eq 'worktree-b') 'Selection lost worktree or included another canonical repo.'
+  Assert (@($selected.repos[0].sessionEvidence).Count -eq 1 -and @($selected.repos[1].sessionEvidence).Count -eq 1) 'Selection retained unrelated sessions or lost continuation.'
+  Assert ($selected.repos[0].sessionEvidence[0].sessionId -ceq $selection.sessionId -and $selected.repos[1].sessionEvidence[0].sessionIds[1] -ceq $selection.sessionId) 'Quoted/multiline selector or continuation changed.'
+  Assert ($selected.repos[0].sessionEvidence[0].title -ceq $fixture.meta.note -and $selectedText -notmatch 'LARGE-PRIVATE-SYNTHETIC') 'Selected read damaged text or included large unselected session content.'
+  Assert (-not $selected.meta.sources.codex.coverage.complete -and $selected.meta.sources.codex.coverage.skipped.Count -eq 546 -and $selected.warnings[0] -ceq $fixture.warnings[0]) 'Selected ERP lost full metadata or partial coverage.'
+  $sessionText = Get-Content -LiteralPath $sessionsPath -Raw -Encoding utf8
+  $sessionView = $sessionText | ConvertFrom-Json
+  Assert ([Text.Encoding]::UTF8.GetByteCount($sessionText) -lt 16000 -and $sessionText -notmatch 'LARGE-PRIVATE-SYNTHETIC|PRIVATE-META-SYNTHETIC|完整草稿尾端') 'Sessions navigation expanded private payload.'
+  Assert (@($sessionView.repos).Count -eq 2 -and $sessionView.repos[0].sessionEvidence[0].detailRef.jsonPointer -eq '/repos/0/sessionEvidence/0' -and $sessionView.repos[1].sessionEvidence[0].detailRef.jsonPointer -eq '/repos/1/sessionEvidence/0') 'Sessions navigation changed original raw positions.'
+  $pointer = $sessionView.repos[1].sessionEvidence[0].detailRef.jsonPointer
+  Assert (@(. $recipes.raw).Count -eq 0) 'Raw pointer selection leaked payload into stdout.'
+  $rawSelection = Get-Content -LiteralPath $rawSelectionPath -Raw -Encoding utf8 | ConvertFrom-Json
+  Assert ($rawSelection.detailRef.jsonPointer -eq '/repos/1/sessionEvidence/0' -and $rawSelection.value.title -ceq $fixture.meta.note -and $rawSelection.value.sessionIds[1] -ceq $selection.sessionId) 'Raw pointer did not recover complete original continuation.'
+  Assert ([IO.File]::ReadAllText($rawPath, [Text.Encoding]::UTF8) -ceq $captured) 'Selection changed raw evidence.'
   Assert ([IO.File]::ReadAllText("$Root/calls.txt") -eq "probe`ncollect`n") 'Formatter/selection recollected evidence.'
   $run = Join-Path $Root ('result-' + $RunLabel)
   $null = New-Item -ItemType Directory -Path $run
-  foreach ($path in @($probePath,$rawPath,$erpPath,$selectedPath,$indexPath,$compatibilityPath)) { Copy-Item -LiteralPath $path -Destination $run }
+  foreach ($path in @($probePath,$rawPath,$erpPath,$selectedPath,$sessionsPath,$rawSelectionPath,$indexPath,$compatibilityPath)) { Copy-Item -LiteralPath $path -Destination $run }
   [IO.File]::WriteAllText((Join-Path $run 'index.json'), $index, $utf8)
   [IO.File]::WriteAllText((Join-Path $run 'runtime.json'), (@{caller=$PSVersionTable.PSVersion.ToString();rawBytes=(Get-Item -LiteralPath $rawPath).Length;selectedBytes=(Get-Item -LiteralPath $selectedPath).Length;indexUtf8Bytes=[Text.Encoding]::UTF8.GetByteCount($index);compatibilityBytes=(Get-Item -LiteralPath $compatibilityPath).Length;diagnosticEntriesPerArray=546;draftCount=2;processId=$PID;ownedTaskRoot=$taskRoot} | ConvertTo-Json), $utf8)
   # 只有合成 checkpoint 完成後才執行真正 cleanup 配方。
@@ -216,6 +235,7 @@ try {
   Copy-Item -LiteralPath $presentationPath -Destination $run
   $flow.logCheckpoint = $true
   Assert (@(Invoke-ConsumerStep 'cleanup').Count -eq 0 -and -not (Test-Path -LiteralPath $taskRoot)) 'Cleanup recipe failed after synthetic delivery checkpoints.'
+  Assert (Test-Path -LiteralPath (Join-Path $SkillRoot 'scripts/capture-daily-work-log.ps1')) 'Cleanup removed the bundled helper.'
   Assert (($events -join ',') -eq 'collect,cleanup' -and [IO.File]::ReadAllText("$Root/calls.txt") -eq "probe`ncollect`n") 'Consumer flow retried collection or escaped approved recipes.'
   [IO.File]::WriteAllText((Join-Path $run 'consumer-flow.json'), (@{scope='synthetic controlled harness; actual agent/conversation delivery not verified';events=@($events);renderRetainsEvidence=$true;cleanupRequiresBothSyntheticCheckpoints=$true;published=$false} | ConvertTo-Json), $utf8)
 } finally {
@@ -249,7 +269,7 @@ $source = [IO.File]::ReadAllText((Join-Path $Root 'scenario.ps1'), [Text.Encodin
     Copy-Item -Path "$root\result-*" -Destination $destination -Recurse
     "Synthetic evidence: $destination"
   }
-  'PASS Windows PowerShell 5.1 -> pwsh 7, pwsh 7 -> pwsh 7 and ANSI-1252 source fallback; UTF-8 capture, bounded large-meta index, full compatibility drafts, Python selection and synthetic checkpoint-controlled cleanup (not actual conversation delivery).'
+  'PASS Windows PowerShell 5.1 -> pwsh 7, pwsh 7 -> pwsh 7 and ANSI-1252 source fallback; bundled UTF-8 capture, bounded index/sessions, full compatibility drafts/ERP, fixed repo/session/raw selection and synthetic checkpoint-controlled cleanup (not actual conversation delivery).'
 } finally {
   if (Test-Path -LiteralPath $root) { Remove-Item -LiteralPath $root -Recurse -Force }
 }

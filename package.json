@@ -5,7 +5,7 @@
   "description": "Personal agent skills collection for OpenCode and Claude-style skills.",
   "type": "module",
   "scripts": {
-    "test:daily-work-log": "python -B -m unittest discover -s skills/daily-work-log/tests -p test_codex_collection.py -v",
+    "test:daily-work-log": "python -B -m unittest discover -s skills/daily-work-log/tests -p test_*.py -v",
     "test:erp-daily-work-log": "python -B -m unittest discover -s skills/erp-daily-work-log/tests -v",
     "test:tracked-path-budget": "node --test test/tracked-path-budget.test.mjs",
     "test:benchmark": "node --test benchmarks/self-challenge/test/contracts.test.mjs benchmarks/self-challenge/test/environment.test.mjs benchmarks/self-challenge/test/held-out.test.mjs benchmarks/self-challenge/test/runner-scorer.test.mjs benchmarks/self-challenge/test/source-attribution.test.mjs benchmarks/self-challenge/test/transcript-order.test.mjs benchmarks/self-challenge/test/stage-two-protocol.test.mjs benchmarks/self-challenge/test/cli.test.mjs benchmarks/self-challenge/test/opencode-no-skill.test.mjs benchmarks/self-challenge/test/opencode-stage-one.test.mjs benchmarks/self-challenge/test/opencode-stage-one-contracts.test.mjs benchmarks/self-challenge/test/opencode-stage-one-oracle.test.mjs",

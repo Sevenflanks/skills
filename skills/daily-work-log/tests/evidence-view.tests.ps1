@@ -54,6 +54,7 @@ exit 2
   $gh = @'
 param([Parameter(ValueFromRemainingArguments=$true)][string[]]$Arguments)
 [IO.File]::AppendAllText('__ROOT__\gh-calls.txt', ($Arguments -join ' ') + "`n")
+[IO.File]::AppendAllText('__ROOT__\gh-contexts.jsonl', ((@{worktree=(Split-Path -Leaf (Get-Location).Path);arguments=@($Arguments)} | ConvertTo-Json -Compress) + "`n"))
 if ($Arguments[0] -eq 'api' -and $Arguments[1] -eq 'user') {
   if ([IO.File]::Exists('__ROOT__\viewer-invalid')) { '{broken'; exit 0 }
   if ($Arguments.Count -eq 2) { '{"login":"fixture-user","name":"Fixture User"}' }
@@ -136,9 +137,20 @@ exit 2
     foreach ($fault in @('list-failed','detail-invalid','viewer-invalid')) {
       Write-Fixture "$root\$fault" ''
       Write-Fixture "$root\gh-calls.txt" ''
+      Write-Fixture "$root\gh-contexts.jsonl" ''
       $data = Collect
       $calls = [IO.File]::ReadAllLines("$root\gh-calls.txt")
-      Assert (@($data.repos[0].prs).Count -eq 0 -and @($data.repos[1].prs).Count -eq 0) "$fault fabricated PRs"
+      if ($fault -eq 'detail-invalid') {
+        Assert (@($data.repos[0].prs).Count -eq 1 -and $data.repos[0].prs[0].number -eq 1 -and $data.repos[0].prs[0].headRefName -eq 'feature/a') 'cheap branch match was lost because unrelated details were invalid'
+        Assert (@($data.repos[1].prs).Count -eq 0) 'invalid hash-fallback details fabricated a PR for worktree B'
+        $contexts = @([IO.File]::ReadAllLines("$root\gh-contexts.jsonl") | ForEach-Object { $_ | ConvertFrom-Json })
+        $numberOneViews = @($contexts | Where-Object { $_.arguments[0] -eq 'pr' -and $_.arguments[1] -eq 'view' -and $_.arguments[2] -eq '1' })
+        # #1 對 A 已有 branch 證據，只有 B 的 unresolved 關聯才需要讀它的 details。
+        Assert ($numberOneViews.Count -eq 1 -and $numberOneViews[0].worktree -eq 'repo-b') 'cheap worktree A queried useless PR #1 details'
+        foreach ($repo in $data.repos) { Assert (($repo.warnings -join '|') -match 'not valid JSON.*#2') 'invalid unresolved hash-fallback details lost their warning' }
+      } else {
+        Assert (@($data.repos[0].prs).Count -eq 0 -and @($data.repos[1].prs).Count -eq 0) "$fault fabricated PRs"
+      }
       if ($fault -eq 'viewer-invalid') {
         Assert (-not $data.meta.ghAvailable -and @($data.warnings).Count -gt 0 -and @($calls).Count -eq 1) 'bad viewer retried or treated as authenticated'
       } else {

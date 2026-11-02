@@ -9,7 +9,7 @@
 | Skill | 版本 | 狀態 | 說明 | 路徑 |
 | --- | --- | --- | --- | --- |
 | `code-intent-comments` | `0.1.0` | stable | 引導 agent 以白話繁中撰寫高價值程式註解，補足 class 責任、核心邏輯、CR、相容性與高風險脈絡。 | [`skills/code-intent-comments/`](skills/code-intent-comments/) |
-| `daily-work-log` | `0.7.0` | stable | 合併 OpenCode／Codex 與 Git／GitHub 證據；Codex metadata、SQLite history 與 exact JSONL 有界補證，依 canonical repo 查 issue 狀態並揭露缺口。 | [`skills/daily-work-log/`](skills/daily-work-log/) |
+| `daily-work-log` | `0.9.0` | stable | 固定 capture／repo／session／raw pointer 選讀；合併 OpenCode／Codex 與 Git／GitHub 證據，提供分段診斷與有界補報補證。 | [`skills/daily-work-log/`](skills/daily-work-log/) |
 | `erp-daily-work-log` | `0.4.1` | stable | 依工作證據與 canonical repo／issue 狀態填報；只刷新失效補證並保留 preview／授權流程。 | [`skills/erp-daily-work-log/`](skills/erp-daily-work-log/) |
 | `gh-body-file` | `0.1.1` | stable | 在 Windows、PowerShell、OpenCode shell 環境中，安全使用 GitHub CLI 支援 `--body-file` 的指令。 | [`skills/gh-body-file/`](skills/gh-body-file/) |
 | `agent-process-lifecycle` | `1.1.1` | stable | 管理可能卡住或跨越 tool call 的本機 process；Windows 同 tool Stop 採當次 owner cleanup 契約，跨 tool Preserve 才需背景返回；缺證據的特殊路由可診斷；non-Windows 僅分類、handoff 或 launch 前 blocked。 | [`skills/agent-process-lifecycle/`](skills/agent-process-lifecycle/) |
@@ -39,7 +39,7 @@
 
 ## daily-work-log
 
-`daily-work-log` 先用固定 PowerShell collector 的 `-ProbeOnly` 探測 OpenCode／Codex，向使用者預告來源與略過理由，再合併本機活動、`git log --all` 與相關 GitHub PR／issue 證據。Codex 以 metadata 找候選、SQLite history 按 item 時間精選，再用 exact JSONL 補證；Python 3.11+ 為必要，已核對的 `0.164.0-alpha.11.1` 僅作 reference contract，不因 Codex 版本不同、未知或缺少版本而拒絕、降級或產生相容性草稿，依實際 schema／時間／內容與安全 indexed query 能力處理。SQL／JSONL 額度分開揭露，有限涵蓋與相容性缺口不推論完整 recall；無來源或讀取全失敗時停止。Collector stdout 維持純 JSON，由 agent 去重相同工作主題，輸出優先依 GitHub repo name 分組的每日工作日誌。
+`daily-work-log` 以 bundled `capture-daily-work-log.ps1 -Mode probe` 探測 OpenCode／Codex，對話預告來源後，用 `-Mode collect -ProbePath` 固定同次日界線，合併本機活動、`git log --all` 與相關 GitHub PR／issue 證據。Raw 直接存私有 UTF-8 檔，以 index → canonical repo／session → 精確 raw pointer 選讀，不需每輪重寫 capture／Python。Collector 有分段診斷、cheap PR match／hash fallback、同輪 exact-path 重用與有界補報補證；目前狀態與報告日分開。Codex 以 metadata、SQLite history 與 exact JSONL 有界補證；Python 3.11+ 必要，`0.164.0-alpha.11.1` 僅作 reference contract，依實際能力與安全 indexed query 判斷。有限涵蓋不推論完整 recall；無來源或讀取全失敗時停止。完整草稿交付與 ERP 安全契約保留；流程見 [`daily-work-log README`](skills/daily-work-log/README.md)。
 
 適用於需要整理今日或指定時間範圍的工作摘要，例如：
 
@@ -185,6 +185,7 @@ skills/
 - `daily-work-log` 說明文件：[`skills/daily-work-log/README.md`](skills/daily-work-log/README.md)
 - `daily-work-log` 定義檔：[`skills/daily-work-log/SKILL.md`](skills/daily-work-log/SKILL.md)
 - `daily-work-log` PowerShell helper：[`skills/daily-work-log/scripts/collect-daily-work-log.ps1`](skills/daily-work-log/scripts/collect-daily-work-log.ps1)
+- `daily-work-log` 固定 capture 入口：[`skills/daily-work-log/scripts/capture-daily-work-log.ps1`](skills/daily-work-log/scripts/capture-daily-work-log.ps1)
 - `daily-work-log` 評估案例：[`skills/daily-work-log/evals/evals.json`](skills/daily-work-log/evals/evals.json)
 - `gh-body-file` 說明文件：[`skills/gh-body-file/README.md`](skills/gh-body-file/README.md)
 - `gh-body-file` 定義檔：[`skills/gh-body-file/SKILL.md`](skills/gh-body-file/SKILL.md)

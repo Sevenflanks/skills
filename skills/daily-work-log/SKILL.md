@@ -4,7 +4,7 @@ description: 整理每日工作日誌或跨 repo 今日工作時使用。先探�
 license: MIT
 metadata:
   author: sevenflankse
-  version: 0.8.0
+  version: 0.9.0
 ---
 
 # Daily Work Log
@@ -52,17 +52,15 @@ Do not use this skill when:
    - If the current identity cannot be resolved, the helper warns and falls back to all authors instead of silently pretending current-user filtering happened.
 
 3. **先 probe 並預告來源**
-   - 使用 `scripts/collect-daily-work-log.ps1 -ProbeOnly`，傳入本次相同 `From`／`To`／`Timezone`、來源入口覆寫與 repo mode。
+   - 依下方 invocation 使用 `scripts/capture-daily-work-log.ps1 -Mode probe`，將本次 `From`／`To`／`Timezone`、來源入口覆寫與 repo mode 寫入 UTF-8 JSON 參數檔。
    - 讀取 `meta.sources.opencode`／`codex` 的 `available`、`cliAvailable`、`reason`、`entries`，在對話先預告本次使用的來源與每個略過理由，例如：「本次合併 OpenCode 與 Codex；Codex CLI 不存在，但本機紀錄可讀。」
    - probe 只檢查已知紀錄入口與 command 存在；不掃完整歷史、不啟動 CLI、不讀 auth、config 或 secrets。入口可讀不代表有當日活動，也不保證正式讀取成功。
    - 任一來源有可讀本機紀錄，即使沒有 CLI 也可使用。OpenCode CLI 可供非互動式 DB 查詢；Codex 只有 CLI、沒有可讀紀錄時略過。
    - 若兩者 `available=false`，說明各來源原因後結束。即使使用者要求 `scan`／`mixed` 也遵守此停止條件。
 
 4. **Run the bundled collector**
-   - Use `skills/daily-work-log/scripts/collect-daily-work-log.ps1`.
-   - Keep the script output pure JSON on `stdout`.
-   - Do not append human text, markdown, or logging noise to `stdout`.
-   - 使用與 probe 相同參數，移除 `-ProbeOnly`；若原先省略時間，將 probe 的 `meta.from`／`to` 明確傳入，固定本次日界線。兩來源皆可用時全數蒐集，正式 collector 自身會重新檢查來源並阻擋無來源／讀取全失敗的呼叫。
+   - 使用 bundled capture `-Mode collect -ProbePath <同次-probe.json>`，參數檔沿用 probe。Helper 要求 `meta.probeOnly=true`、`errors=[]`、至少一來源 available 與 `from`／`to`／`timezone`，自動固定 probe 日界線並拒絕明傳不一致範圍。先完成對話公告才呼叫 collect。
+   - Collector stdout 維持純 JSON；capture 直接寫私有 UTF-8 檔，成功時不印 raw stdout。兩來源皆可用時全數蒐集，collector 自身會重新檢查來源並阻擋無來源／讀取全失敗的呼叫。
    - 呼叫正式 collect 時，工具支援等待 timeout 設定就設為 **600000 ms**；這是工具設定，不是 script 參數，也不是效能 SLA。若工具不支援，揭露實際等待限制，不以重跑補足。
    - 逾時或未取得有效 JSON 時停止並回報，不自動重跑；工具 timeout 不改變既有來源 guard 或停止條件。
    - 工具等待 timeout 與資料讀取額度分開；Codex 的預設總額度／單檔額度仍依「Codex 有界涵蓋」辦理。
@@ -120,22 +118,18 @@ Do not use this skill when:
 
 ## PowerShell helper invocation
 
-Use PowerShell 7+ and pass an explicit script path. Examples:
+以 [`references/evidence-views.md`](references/evidence-views.md) 的可執行 recipe 建立私有 task root 與 UTF-8 JSON 參數檔；一般 capture／index／repo／session／raw pointer 選讀都使用 bundled scripts，不每輪寫臨時程式。PS5.1／7 呼叫端均由 helper 啟動 pwsh 7+ child：
 
 ```powershell
-pwsh -NoProfile -File "<path-to-skill>\scripts\collect-daily-work-log.ps1" -ProbeOnly
+pwsh -NoProfile -File "<path-to-skill>\scripts\capture-daily-work-log.ps1" -Mode probe -ParametersPath "<parameters.json>" -OutputPath "<probe.json>"
 # 向使用者預告 JSON 中的來源與略過原因後，再使用同一範圍正式蒐集。
-pwsh -NoProfile -File "<path-to-skill>\scripts\collect-daily-work-log.ps1"
+pwsh -NoProfile -File "<path-to-skill>\scripts\capture-daily-work-log.ps1" -Mode collect -ProbePath "<probe.json>" -ParametersPath "<parameters.json>" -OutputPath "<collector.json>"
 ```
 
-Override time range and source mode:
+在參數 JSON 覆寫範圍與來源；省略 From／To 時由 probe 決定當天，collect 自動固定：
 
-```powershell
-pwsh -NoProfile -File "<path-to-skill>\scripts\collect-daily-work-log.ps1" `
-  -From "2026-05-29T00:00:00+08:00" `
-  -To "2026-05-29T23:59:59+08:00" `
-  -SourceMode mixed `
-  -ScanRoots "<scan-root>"
+```json
+{"From":"2026-05-29T00:00:00+08:00","To":"2026-05-29T23:59:59+08:00","Timezone":"Asia/Taipei","SourceMode":"mixed","ScanRoots":["<scan-root>"]}
 ```
 
 ## Collector JSON shape
@@ -147,6 +141,8 @@ Treat collector JSON as source of truth:
 - `repos[]`: `name`, `path`, `source`, `isGitRepo`, optional `githubRepo`, optional `sessionEvidence`, `commits[]`, `prs[]`, `warnings[]`.
 - `commits[]`: commit evidence from `git log --all`, including `authorEmail`; ignore stash noise before summarizing.
 - `prs[]`: PR evidence tied to commit / branch / hash relevance; preserve PR and issue numbers when useful.
+- PR `reportEvidence` 是報告範圍內的關聯依據；`stateObservedAt` 是目前狀態的觀察時間，不回溯成報告日成果。先 cheap PR／branch match，尚無法判斷的候選仍保留 hash fallback；精確補證涵蓋隔日更新／合併及可靠 session-only 引用。
+- `meta.diagnostics` schemaVersion 1：六 stages `sourceAdapter`／`json`／`repoDiscovery`／`git`／`github`／`output` 的 durationMs／calls／cacheHits；未執行為 null。Stage 重疊不可加總，totalDurationMs 是獨立 wall；output 到主 JSON 完成，不含末尾診斷 encoding／stdout。計量邊界與延後優化見 [references](references/evidence-views.md#collector-分段量測與補報狀態)。
 - `sessionEvidence[]`：`agent` 區分 `opencode`／`codex`；OpenCode 保留 DB／fallback session 欄位；Codex 保留有限長度 `title`、`role`、`sessionId`、`sessionIds[]`、`files[]`、`timestamps[]`。repo 去重不刪不同 session 證據。
 
 ## OpenCode repo discovery
@@ -198,11 +194,12 @@ Legacy 日期分區上限限制 filesystem 訪問與 transcript 讀取；日期�
 
 ## Evidence views 與私有原始證據
 
-大型 collection 與 ERP 整理先依 [`references/evidence-views.md`](references/evidence-views.md) 的可執行流程：PS5.1／7 呼叫端只傳檔案路徑，pwsh 7 child 明確以 UTF-8 capture，JSON 參數與多行 Python 走檔案。將原始 JSON 直接存入私有 task-local 暫存，再用 formatter `-InputPath $rawPath -View index` 讀狀態、計數與 raw pointers；保留 ERP 視圖 `$evidence` 供按需 repo／session 選讀。若有草稿，另以 `-View compatibility` 讀完整內容，先在對話呈現脫敏草稿與目的地並註明未發布；完成實際交付後才清理。不可先把整份原始 JSON 送入主上下文再壓縮。
+大型 collection 與 ERP 整理依 [`references/evidence-views.md`](references/evidence-views.md) 的可執行流程：bundled capture 將 raw 直接存入私有 task-local 暫存，再以 formatter `-InputPath $rawPath -View index` 讀狀態、計數與 pointers。用 `-GithubRepo`／`-SessionId` 篩選全部 worktree／來源續行；`-View sessions` 列 lineage 與原始位置，`-View raw -JsonPointer <pointer>` 精確讀同次 raw，不重編位置。`-View erp` 按需讀完整證據。若有草稿，另以 `-View compatibility` 讀完整內容，先在對話呈現脫敏草稿與目的地並註明未發布；完成實際交付後才清理。不可先把整份 raw 送入主上下文再壓縮。
 
 - 預設 `summary`：`shownCommits` 最多 8、PR 文字引用、全部 `sessionEvidence`、`meta`／warnings／errors。Codex 已知正常的 routine tool 僅顯示 status／exit／source IDs，`detailRef` 的 JSON pointer 指回同次 raw collector JSON（`-InputPath` 時另附檔名）；按需讀取，不重 collect。失敗、驗證、交付／成功 readback、需求與 structuredContent／_meta 保守完整展開，依內容及同 source/session/turn 證據判斷，不按同名工具合併工作。適合一般日報，但不保證 ERP 歸屬證據保真。
 - ERP 使用 `-View erp`：不套 commit 上限；以無縮排 JSON 保留每個 repo 的 `githubRepo`、`source`、`isGitRepo`、完整 commits（refs／branchHints）、PR（head／Draft／state／closing issues）、全部 session／續行、warnings 及完整頂層 meta／sources／coverage／errors。省略 repo `path`，缺值維持缺值；這仍是私有證據，不是公開用的去識別輸出。
 - 單次 collection 只解析一次 viewer，並共用同 canonical repo 的 PR list／detail 結果；每個 worktree 仍獨立依當日證據過濾。重用只活在此次執行，不跨任務保存。
+- 同輪只重用正規化 exact aggregate path 的展開（含空結果），各來源 session／warnings／coverage 保留；不以祖先前綴猜 repo。條件式並行／Git root batching 缺收益證據延後；五分鐘不作 CI gate 或 300 秒 timeout。
 
 ## High-commit repos
 

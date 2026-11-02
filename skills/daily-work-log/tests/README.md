@@ -1,4 +1,37 @@
-# Codex collector 回歸
+# daily-work-log 回歸
+
+## 固定 capture／選讀與文件 harness
+
+在 repo root 執行局部入口測試；Windows cases 需要 Windows PowerShell 5.1 與 pwsh 7+：
+
+```powershell
+pwsh -NoProfile -File skills/daily-work-log/tests/windows-capture.tests.ps1
+pwsh -NoProfile -File skills/daily-work-log/tests/capture-cli.tests.ps1
+pwsh -NoProfile -File skills/daily-work-log/tests/selection-cli.tests.ps1
+python -B -m unittest discover -s skills/daily-work-log/tests -p test_collector_efficiency.py -v
+```
+
+`npm run test:daily-work-log` 以 `test_*.py` 納入既有 Codex 與 collector efficiency。CI 保留既有 Ubuntu validate、Windows daily-work-log 與其他 platform gates；Windows job 執行原文件 harness、新 capture／selection CLI cases 及 collector efficiency，讓 Windows-specific native seams 也有實際 CI 執行點。這些是合成正確性／呼叫數／界限測試，不掃私人完整歷史，也沒有五分鐘 CI gate／300 秒 timeout。Repository 完整 validate 留在交付節點集中執行。
+
+`windows-capture.tests.ps1` 逐字執行 [`references/evidence-views.md`](../references/evidence-views.md) 的 fenced recipes。Observer 是經 PS5.1／7 呼叫 bundled capture 與 formatter 的讀者；只替換外部 collector。契約包含公告先於 collect、成功 probe 的固定範圍、BOM-less UTF-8 中文／引號／多行／大型 payload、bounded index／sessions、完整 ERP／草稿、全部 canonical worktree／第二來源／續行、精確原始 raw pointers、不重 collect／不印 raw stdout，以及草稿＋最終日誌 checkpoint 完成後才清理。
+
+此 harness 的檔案 sink 是**合成 checkpoint**，不是實際 agent 對話交付的證明；formatter 不產 posted／delivered receipt，也不授予公開發布。未交付草稿／日誌仍保留 task root，bundled helper 不在清理範圍。`-EvidenceRoot '<existing-external-temp-directory>'` 可保留合成產物，預設自動清理自有暫存。
+
+### Mutation 與穩定性證據
+
+下列命令本輪均已實際 red；每次只變異自有 helper／formatter 副本或合成流程，保留 production 與其他 agent 檔案：
+
+| 命令尾參數（共用上方 windows-capture 命令） | 已觀察的失敗斷言 |
+| --- | --- |
+| `-Mutation utf16` | `Capture is not BOM-less UTF-8 (UTF-16/default redirect regression).` |
+| `-Mutation expanded-index` | `Index expanded private metadata/session/draft content (UTF-8 byte bound).` |
+| `-Mutation early-cleanup` | `Render automatically cleaned evidence before delivery checkpoint.` |
+
+固定 repo filter 錯選／漏 worktree 由 canonical repo 與名稱斷言偵測；session filter 漏第二來源／續行由兩筆 session 與 sessionIds 斷言偵測；pointer 重編由 `/repos/1/sessionEvidence/0` 的原始位置與完整 value 斷言偵測；ERP 截斷由大型原文及 546 筆 metadata 完整性斷言偵測；草稿截短／假發布由逐欄全文／destination／published 與原始檔不變斷言偵測。這些額外 mutation 對應為路徑推論，未另改 production 執行。
+
+False-red pins：每輪 GUID 暫存、固定日期字串、隔離 collector、實際 process completion，沒有 sleep／效能 deadline；driver 的 finally 清除自身狀態。日期字串明確固定，避免 PS7 `ConvertFrom-Json` 自動推成 DateTime 與 PS5 行為差異。本輪 green 覆蓋 PS5.1、pwsh 7 與 ANSI-1252 source fallback 三種 caller；mutation 並行執行各自隔離，結束後再跑一次完整正常 harness 確認回復 green。未聲稱實際私人 workload 或端到端耗時收益。
+
+## Codex 日期 gate
 
 在 repo root 執行以下最小日期 gate 回歸；需要 Python 3.11+、PowerShell 7 與 Git：
 
