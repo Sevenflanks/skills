@@ -182,7 +182,7 @@
       "name": "to-spec-or-ticket",
       "path": "skills/to-spec-or-ticket",
       "summary": "判斷需求應產生 spec 或 tickets，載入選中流程；不適合時僅提出下一步建議。",
-      "version": "0.1.1",
+      "version": "0.1.2",
       "license": "MIT",
       "author": "sevenflankse",
       "tags": [
