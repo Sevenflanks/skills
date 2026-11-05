@@ -136,7 +136,7 @@ end {
 
   function Get-DiagnosticIndex {
     param($Object, [string]$Pointer)
-    $result = Select-IndexScalars $Object @('complete','strategy','archive','accountingKnown','daysConsidered','visitedEntries','candidateFiles','openedFiles','readBytes','enumerationFailures','stopReason','oversizedLines','fileCapStops','oversizedDiscardBytes','filesWithRangeEvents')
+    $result = Select-IndexScalars $Object @('complete','strategy','archive','accountingKnown','daysConsidered','visitedEntries','candidateFiles','openedFiles','readBytes','enumerationFailures','stopReason','oversizedLines','fileCapStops','oversizedDiscardBytes','filesWithRangeEvents','excludedAgentMessages')
     $result.limits = Select-IndexScalars (Get-PropertyValue $Object 'limits') @('days','entries','files','totalBytes','fileBytes','lineBytes','pathComponents')
     foreach ($name in @('selectedDays','candidateDays','visitedDays','unvisitedDays','skipped','limitHits')) {
       $result[$name] = New-ArrayIndex $Object $name $Pointer

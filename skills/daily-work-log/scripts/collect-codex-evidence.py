@@ -68,6 +68,7 @@ class Collector:
         self.adapters['exact']['sessions'] = []
         self.sql = {'rows': 0, 'payloadBytes': 0, 'limits': {'rows': request['rows'], 'payloadBytes': request['payloadBytes'], 'deadlineSeconds': request['deadlineSeconds']}, 'limitHits': [], 'unread': [], 'accounting': 'returned-row serialized UTF-8 payload; not physical I/O or tokens'}
         self.coverage = {'complete': False, 'strategy': 'state-history-exact-no-cache', 'archive': 'exact-candidates', 'limits': {'days': 32, 'entries': 2048, 'files': 128, 'totalBytes': request['totalBytes'], 'fileBytes': request['fileBytes'], 'lineBytes': 65536, 'pathComponents': 64}, 'daysConsidered': 0, 'visitedEntries': 0, 'candidateFiles': 0, 'openedFiles': 0, 'readBytes': 0, 'enumerationFailures': 0, 'selectedDays': [], 'candidateDays': [], 'visitedDays': [], 'unvisitedDays': [], 'stopReason': 'exact-candidates-exhausted', 'oversizedLines': 0, 'fileCapStops': 0, 'oversizedDiscardBytes': 0, 'filesWithRangeEvents': 0, 'readBytesDistribution': {'count': 0, 'totalBytes': 0, 'minBytes': None, 'maxBytes': None, 'buckets': dict.fromkeys(('zero', 'upTo256KiB', 'upTo1MiB', 'upTo8MiB', 'over8MiB'), 0)}, 'limitHits': [], 'skipped': [], 'exactFallback': {'lineBytes': request['exactLineBytes'], 'recoveredOversizedLines': 0, 'unread': []}}
+        self.coverage['excludedAgentMessages'] = 0
         self.evidence, self.seen, self.drafts = [], {}, []
         self.unknown, self.errors, self.valid_events, self.range_events = 0, 0, 0, 0
 
@@ -566,6 +567,15 @@ class Collector:
                     # Legacy 與 canonical 的解析、驗證和去重都屬於單筆 item；壞內容不能中止後續取材。
                     try:
                         pt = payload.get('type', typ)
+                        if typ == 'response_item' and pt == 'agent_message':
+                            # 日誌取材刻意排除整類 agent 傳訊（含明文），不可誤套 event_msg.message 或轉存正文。
+                            # 仍驗證時間並計本期原始紀錄；略過內容不免除既有讀取、lineage 與額度診斷。
+                            when = timestamp(event.get('timestamp'))
+                            if when is None:
+                                raise Gap('compatibility-error', 'unknown-event-time')
+                            if self.start <= when <= self.end:
+                                cov['excludedAgentMessages'] += 1
+                            continue
                         if pt in ('task_started', 'turn_started'):
                             turn = payload.get('turn_id', turn)
                         if 'interop' in encoded(event).lower():
