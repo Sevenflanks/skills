@@ -228,6 +228,154 @@ class CodexCollection(unittest.TestCase):
         self.assertEqual(session['reason'], 'invalid-event-message-content')
         self.assertIn('content-capability', source['compatibilityIssues'][0]['title'])
 
+    def test_agent_mail_is_excluded_while_supported_messages_survive(self):
+        contents = [
+            [{'type': 'input_text', 'text': 'excluded-plaintext-sentinel'}],
+            [{'type': 'input_text', 'text': 'excluded-mixed-sentinel'},
+             {'type': 'encrypted_content', 'encrypted_content': 'excluded-cipher-sentinel'}],
+            [{'type': 'encrypted_content', 'encrypted_content': 'excluded-opaque-sentinel'}],
+        ]
+        mail = [{'type': 'response_item', 'timestamp': '2026-05-29T02:00:00Z',
+                 'payload': {'type': 'agent_message', 'id': f'mail-{i}',
+                             'author': '/synthetic-sender', 'recipient': '/synthetic-recipient',
+                             'content': content}} for i, content in enumerate(contents)]
+        self.rollout(messages=mail + [
+            self.event('retained-user'), self.event('retained-assistant', role='assistant'),
+            {'type': 'response_item', 'timestamp': '2026-05-29T03:00:00Z',
+             'payload': {'type': 'message', 'role': 'assistant',
+                         'content': [{'type': 'output_text', 'text': 'retained-response'}]}},
+            self.completed({'type': 'AgentMessage', 'id': 'canonical-kept',
+                            'content': [{'type': 'Text', 'text': 'retained-canonical'}]}),
+        ])
+        self.item('retained-SQL')
+        data = self.collect()
+        source = data['meta']['sources']['codex']
+        self.assertEqual(source['readStatus'], 'success')
+        self.assertEqual(source['coverage']['excludedAgentMessages'], 3)
+        self.assertEqual(source.get('compatibilityIssues', []), [])
+        self.assertEqual({e['text'] for e in data['repos'][0]['sessionEvidence']},
+                         {'retained-user', 'retained-assistant', 'retained-response',
+                          'retained-canonical', 'retained-SQL'})
+        self.assertNotIn('excluded-', json.dumps(data))
+        self.assertFalse(source['coverage']['complete'])
+
+    def test_agent_mail_count_uses_inclusive_range_and_original_records(self):
+        times = ['2026-05-28T15:59:59Z', '2026-05-28T16:00:00Z',
+                 '2026-05-29T02:00:00Z', '2026-05-29T15:59:59Z', '2026-05-29T16:00:00Z']
+        paths = []
+        for sid in ('first', 'later'):
+            # Excluded contents are intentionally uninterpreted, even when not a valid message body.
+            mail = [{'type': 'response_item', 'timestamp': time,
+                     'payload': {'type': 'agent_message', 'id': 'same-mail', 'content': 17}}
+                    for time in times]
+            paths.append(self.rollout(sid=sid, messages=mail + [self.event('kept-' + sid)]))
+        data = self.collect()
+        source = data['meta']['sources']['codex']
+        self.assertEqual(source['readStatus'], 'success')
+        self.assertEqual(source['coverage']['excludedAgentMessages'], 6)
+        self.assertEqual(source['coverage']['readBytes'], sum(p.stat().st_size for p in paths))
+        self.assertEqual(source['coverage']['limitHits'], [])
+        self.assertEqual({e['text'] for e in data['repos'][0]['sessionEvidence']},
+                         {'kept-first', 'kept-later'})
+
+    def test_agent_mail_cap_does_not_count_unread_records(self):
+        mail = {'type': 'response_item', 'timestamp': '2026-05-29T02:00:00Z',
+                'payload': {'type': 'agent_message', 'content': []}}
+        path = self.rollout(messages=[mail, mail, self.event('unread-after-cap')])
+        lines = path.read_bytes().splitlines(keepends=True)
+        cap = len(lines[0]) + len(lines[1]) + 1
+        self.item('kept-SQL-at-cap')
+        data = self.collect('-CodexFileBytes', str(cap))
+        source = data['meta']['sources']['codex']
+        self.assertEqual(source['coverage']['excludedAgentMessages'], 1)
+        self.assertEqual(source['coverage']['readBytes'], cap)
+        self.assertEqual(source['coverage']['limitHits'], ['fileBytes'])
+        self.assertEqual(source['coverage']['fileCapStops'], 1)
+        self.assertEqual(source['readStatus'], 'partial')
+        self.assertEqual(source['adapters']['exact']['sessions'][0]['unreadFromByte'],
+                         len(lines[0]) + len(lines[1]))
+        self.assertEqual([e['text'] for e in data['repos'][0]['sessionEvidence']], ['kept-SQL-at-cap'])
+
+    def test_agent_mail_only_is_no_activity_without_a_content_failure(self):
+        self.rollout(messages=[{'type': 'response_item', 'timestamp': '2026-05-29T02:00:00Z',
+                                'payload': {'type': 'agent_message', 'content': [
+                                    {'type': 'input_text', 'text': 'excluded-only-sentinel'}]}}])
+        data = self.collect()
+        source = data['meta']['sources']['codex']
+        self.assertEqual(source['readStatus'], 'empty')
+        self.assertEqual(source['coverage']['excludedAgentMessages'], 1)
+        self.assertEqual(source['coverage']['filesWithRangeEvents'], 0)
+        self.assertEqual(source.get('compatibilityIssues', []), [])
+        self.assertEqual(data['meta']['collectionStatus'], 'no-activity')
+        self.assertFalse(data['meta']['canGenerateLog'])
+        self.assertEqual(data['repos'], [])
+
+    def test_agent_mail_exclusion_keeps_unknown_time_visible(self):
+        for i, time in enumerate((None, 'synthetic-invalid', 17)):
+            self.rollout(sid=f'bad-time-{i}', messages=[
+                {'type': 'response_item', 'timestamp': time,
+                 'payload': {'type': 'agent_message', 'content': []}},
+                self.event(f'kept-after-time-{i}'),
+            ])
+        data = self.collect()
+        source = data['meta']['sources']['codex']
+        self.assertEqual(source['readStatus'], 'partial')
+        self.assertEqual(source['coverage']['excludedAgentMessages'], 0)
+        self.assertEqual(source['unknownTimeEvents'], 3)
+        self.assertEqual({s['reason'] for s in source['adapters']['exact']['sessions']},
+                         {'unknown-event-time', 'unknown-time-unit'})
+        self.assertEqual({e['text'] for e in data['repos'][0]['sessionEvidence']},
+                         {'kept-after-time-0', 'kept-after-time-1', 'kept-after-time-2'})
+
+    def test_agent_mail_exclusion_keeps_lineage_and_other_parse_failures_visible(self):
+        mail = {'type': 'response_item', 'timestamp': '2026-05-29T02:00:00Z',
+                'payload': {'type': 'agent_message', 'content': []}}
+        path = self.rollout(sid='wrong-lineage', messages=[mail, self.event('kept-lineage')])
+        records = [json.loads(line) for line in path.read_text(encoding='utf-8').splitlines()]
+        records[0]['payload']['id'] = 'different-thread'
+        path.write_text('\n'.join(json.dumps(e) for e in records), encoding='utf-8')
+        path = self.rollout(sid='bad-items', messages=[mail,
+            self.event(17, role='assistant'),
+            {'type': 'response_item', 'timestamp': '2026-05-29T02:00:00Z',
+             'payload': {'type': 'message', 'role': 'assistant', 'content': 17}},
+            self.event('kept-after-errors')])
+        path.write_text(path.read_text(encoding='utf-8') + '\n{broken-json\n', encoding='utf-8')
+        data = self.collect()
+        source = data['meta']['sources']['codex']
+        sessions = {s['sessionId']: s for s in source['adapters']['exact']['sessions']}
+        self.assertEqual(source['readStatus'], 'partial')
+        self.assertEqual(source['coverage']['excludedAgentMessages'], 2)
+        self.assertFalse(sessions['wrong-lineage']['lineageMatch'])
+        self.assertEqual(sessions['wrong-lineage']['reason'], 'lineage-mismatch')
+        self.assertEqual(sessions['bad-items']['semanticGaps'], 2)
+        self.assertEqual(sessions['bad-items']['invalidLines'], 1)
+        self.assertEqual(sessions['bad-items']['reason'], 'invalid-event-message-content')
+        self.assertFalse(source['coverage']['complete'])
+        self.assertEqual({e['text'] for e in data['repos'][0]['sessionEvidence']},
+                         {'kept-lineage', 'kept-after-errors'})
+
+    def test_agent_mail_count_is_visible_without_body_in_evidence_views(self):
+        self.rollout(messages=[
+            {'type': 'response_item', 'timestamp': '2026-05-29T02:00:00Z',
+             'payload': {'type': 'agent_message', 'content': [
+                 {'type': 'encrypted_content', 'encrypted_content': 'excluded-view-sentinel'}]}},
+            self.event('kept-view-message'),
+        ])
+        data = self.collect()
+        for view in ('index', 'sessions', 'summary', 'erp'):
+            with self.subTest(view=view):
+                process = subprocess.run(
+                    [PWSH, '-NoProfile', '-File', str(SCRIPTS / 'format-daily-work-log-evidence.ps1'),
+                     '-View', view], input=json.dumps(data), capture_output=True, text=True,
+                    encoding='utf-8', timeout=15, env=self.env)
+                self.assertEqual(process.returncode, 0, process.stderr)
+                formatted = json.loads(process.stdout)
+                self.assertEqual(formatted['meta']['sources']['codex']['coverage'].get('excludedAgentMessages'), 1)
+                self.assertNotIn('excluded-view-sentinel', process.stdout)
+                if view in ('summary', 'erp'):
+                    self.assertEqual([e['text'] for e in formatted['repos'][0]['sessionEvidence']],
+                                     ['kept-view-message'])
+
     def test_canonical_messages_use_materializer_time_and_item_identity(self):
         # PascalCase TurnItem/Text → app-server agentMessage/text at the pinned official tag.
         canonical = {'type': 'AgentMessage', 'id': 'msg-a', 'content': [{'type': 'Text', 'text': 'canonical result'}]}

@@ -9,7 +9,7 @@
 | Skill | 版本 | 狀態 | 說明 | 路徑 |
 | --- | --- | --- | --- | --- |
 | `code-intent-comments` | `0.1.0` | stable | 引導 agent 以白話繁中撰寫高價值程式註解，補足 class 責任、核心邏輯、CR、相容性與高風險脈絡。 | [`skills/code-intent-comments/`](skills/code-intent-comments/) |
-| `daily-work-log` | `0.9.0` | stable | 固定 capture／repo／session／raw pointer 選讀；合併 OpenCode／Codex 與 Git／GitHub 證據，提供分段診斷與有界補報補證。 | [`skills/daily-work-log/`](skills/daily-work-log/) |
+| `daily-work-log` | `0.9.1` | stable | 固定 capture／repo／session／raw pointer 選讀；合併 OpenCode／Codex 與 Git／GitHub 證據，提供分段診斷與有界補報補證。 | [`skills/daily-work-log/`](skills/daily-work-log/) |
 | `erp-daily-work-log` | `0.4.1` | stable | 依工作證據與 canonical repo／issue 狀態填報；只刷新失效補證並保留 preview／授權流程。 | [`skills/erp-daily-work-log/`](skills/erp-daily-work-log/) |
 | `gh-body-file` | `0.1.1` | stable | 在 Windows、PowerShell、OpenCode shell 環境中，安全使用 GitHub CLI 支援 `--body-file` 的指令。 | [`skills/gh-body-file/`](skills/gh-body-file/) |
 | `agent-process-lifecycle` | `1.1.1` | stable | 管理可能卡住或跨越 tool call 的本機 process；Windows 同 tool Stop 採當次 owner cleanup 契約，跨 tool Preserve 才需背景返回；缺證據的特殊路由可診斷；non-Windows 僅分類、handoff 或 launch 前 blocked。 | [`skills/agent-process-lifecycle/`](skills/agent-process-lifecycle/) |

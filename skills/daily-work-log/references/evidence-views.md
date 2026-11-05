@@ -147,6 +147,8 @@ ERP 視圖仍含完整 meta／來源／session 及私人文字；省略 repo pat
 
 ## 3. Adapter contract 與 diagnostics
 
+SQL exact 的 `coverage.excludedAgentMessages` 是範圍內刻意排除的 `response_item.agent_message` 原始筆數，index／sessions 保留 scalar，summary／ERP 保留完整 coverage。這些傳訊的明文／密文正文不在 collector evidence 中；欄位缺少代表未提供，不能當作 0 或完整收集。計數、來源保留與實讀額度定義見 [`SKILL.md`](../SKILL.md#agent-傳訊的取材排除)。
+
 ### Collector 分段量測與補報狀態
 
 `meta.diagnostics.schemaVersion=1` 提供六個固定 stages：`sourceAdapter`、`json`、`repoDiscovery`、`git`、`github`、`output`，各有 `durationMs`／`calls`／`cacheHits`。未執行維持 `null`，不是量到零；失敗／提前返回保留已知計量。Calls 是該 stage 的 instrumented operation 次數，不全等於 native process 或網路呼叫。Stage 可巢狀／重疊，**不可加總**；`totalDurationMs` 由獨立 wall clock 取得。`output` 到主 evidence JSON 序列化完成為止，不含末尾 diagnostics 編碼／置換與 stdout 傳輸；total 同樣不是完整 capture／摘要／ERP 的 end-to-end 耗時。診斷僅固定 aggregate，不含私人內容、命令、路徑或 credentials；index 保留 v1 固定 scalars，未知 schema 由 raw pointer 選讀。

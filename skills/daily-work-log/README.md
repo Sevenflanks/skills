@@ -75,6 +75,7 @@ SQL 與 JSONL 資源分開計帳：SQL 預設最多 10,000 rows、16 MiB seriali
 | `readBytesDistribution` | 成功 open 的實讀量分布：count、totalBytes、minBytes、maxBytes 與固定五桶；空檔與中途失敗計入，open 失敗除外。無樣本極值為 null。 |
 | `oversizedDiscardBytes` | 已確認超長行的實讀丟棄 bytes，含 buffered prefix 與已讀 newline；是 readBytes 子集，不再加算預算。 |
 | `filesWithRangeEvents` | 去重前有保留範圍內事件的檔數，逐檔一次；不是 session 數或最終證據列數，後段失敗仍保留計數。 |
+| `excludedAgentMessages` | SQL exact adapter 刻意排除的範圍內 `response_item.agent_message` 原始筆數；包含明文／密文，不跨 thread 去重。無其他 evidence 仍計，欄位缺少表示未提供。 |
 
 詳細計帳、桶界、錯誤與去重定義以 [`SKILL.md` 的 aggregate 契約](SKILL.md#aggregate-診斷的計帳契約) 為準。Probe／不可用來源沒有 collection coverage；可用空來源則有零 counters、空分布。新增統計只使用固定大小 aggregate state，不保存新的逐檔路徑／內容。
 
@@ -173,7 +174,15 @@ npm run validate
 
 冷是同一測試 process 在 fixture 增量後首次呼叫，暖是重跑；不控制 OS filesystem cache。Collection 計時包含 collector 的 probe、合成 Git／gh 邊界呼叫與 JSON 序列化，排除 fixture 建立及外部測試啟動。Memory 為整個測試 process 累積 `PeakWorkingSet64`，包含 fixture 建立與 reference，不代表 collector-only、child processes 或每次配置量。Entries 是 application-level MoveNext，bytes 是 FileStream.Read 回傳量，排除 OS metadata／prefetch。Reference 不執行 Git／gh 或完整 collector，耗時不能當作同等流程的速度提升比例；其 output size 不適用。日期候選陣列隨要求日期範圍成長；4 KiB／64 KiB 只限 reader buffers，不是事件清單或整個 process 的 hard memory cap。64／8 MiB 是已確認預設，不是最佳門檻或性能 SLA；本回歸未確認真實 workload。
 
+### Agent 傳訊排除
+
+日誌不採用任何 `response_item.agent_message` 傳訊，可能排除未來獨有明文；一般助手訊息與其他既有證據照常保留。SQL exact 的 `coverage.excludedAgentMessages` 可由 index／sessions／summary／ERP 查到，只有排除內容時沿用 no-activity guard。
+
+這只降低輸出與上下文，**不節省 JSONL 64 MiB 總額度／8 MiB 單檔額度**，也不新增回讀或加碼；legacy 日期 fallback 沒有此 counter 時不當作 0。完整定義見 [`SKILL.md`](SKILL.md#agent-傳訊的取材排除)。
+
 ## 版本變更
+
+`0.9.1` 修正 `response_item.agent_message` 與一般助手訊息同名造成的誤報；依日誌取材範圍整類排除明文／密文傳訊，新增範圍內原始筆數 `excludedAgentMessages` 及 evidence views 診斷。保留其他證據、錯誤與資源 guard；既有讀取額度不變，不宣稱完整 recall。
 
 `0.9.0` 新增向後相容的 bundled capture 與 repo／session／sessions／raw pointer 選讀，取代每輪臨時 capture／Python recipe。Collector 新增分段診斷、cheap PR match／hash fallback、同輪 exact-path 展開重用、有界補報 PR 補證與 native stdout／stderr 同步排空。保留完整證據、partial coverage、草稿交付與 ERP 安全契約；無真實端到端加速數據，不承諾固定倍率。
 
