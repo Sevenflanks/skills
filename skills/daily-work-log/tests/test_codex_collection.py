@@ -376,6 +376,50 @@ class CodexCollection(unittest.TestCase):
                     self.assertEqual([e['text'] for e in formatted['repos'][0]['sessionEvidence']],
                                      ['kept-view-message'])
 
+    def test_agent_mail_legacy_fallback_counts_without_recovering_bodies(self):
+        path = self.rollout(messages=[])
+        metadata = json.loads(path.read_text(encoding='utf-8').splitlines()[0])
+        contents = [[{'type': 'input_text', 'text': 'excluded-legacy-plaintext'}],
+                    [{'type': 'input_text', 'text': 'excluded-legacy-mixed'},
+                     {'type': 'encrypted_content', 'encrypted_content': 'excluded-legacy-cipher'}],
+                    [{'type': 'encrypted_content', 'encrypted_content': 'excluded-legacy-opaque'}]]
+        mail = [{'type': 'response_item', 'timestamp': '2026-05-29T02:00:00Z',
+                 'payload': {'type': 'agent_message', 'content': content}} for content in contents]
+        directory = self.home / 'sessions/2026/05/29'
+        directory.mkdir(parents=True)
+        paths = [directory / 'first.jsonl', directory / 'later.jsonl']
+        blocked = ('python', 'codex', 'opencode', 'gh')
+        outside = [{**mail[0], 'timestamp': time} for time in
+                   ('2026-05-28T15:59:59Z', '2026-05-29T16:00:00Z')]
+        boundaries = [{**mail[0], 'timestamp': time} for time in
+                      ('2026-05-28T16:00:00Z', '2026-05-29T15:59:59Z')]
+        for i, candidate in enumerate(paths):
+            records = [metadata, *mail, *outside, *boundaries, self.event(f'kept-legacy-{i}')]
+            candidate.write_text('\n'.join(json.dumps(e) for e in records), encoding='utf-8')
+        data = self.collect(unavailable_commands=blocked)
+        source = data['meta']['sources']['codex']
+        self.assertEqual(source['coverage'].get('excludedAgentMessages'), 10)
+        self.assertEqual(source['coverage']['strategy'], 'date-partitions-no-cache')
+        self.assertEqual(source['coverage']['readBytes'], sum(p.stat().st_size for p in paths))
+        self.assertEqual(source['readStatus'], 'success')
+        self.assertEqual({e['title'] for e in data['repos'][0]['sessionEvidence']},
+                         {'kept-legacy-0', 'kept-legacy-1'})
+        self.assertNotIn('excluded-legacy-', json.dumps(data))
+        for candidate in paths:
+            candidate.write_text('\n'.join(json.dumps(e) for e in [metadata, mail[0]]), encoding='utf-8')
+        empty = self.collect(unavailable_commands=blocked)
+        self.assertEqual(empty['meta']['sources']['codex']['coverage']['excludedAgentMessages'], 2)
+        self.assertEqual(empty['meta']['sources']['codex']['readStatus'], 'empty')
+        self.assertEqual(empty['meta']['collectionStatus'], 'no-activity')
+        self.assertFalse(empty['meta']['canGenerateLog'])
+        paths[0].write_text('\n'.join(json.dumps(e) for e in
+                                    [metadata, {**mail[0], 'timestamp': None}, self.event('kept-after-bad-time')]),
+                            encoding='utf-8')
+        partial = self.collect(unavailable_commands=blocked)
+        self.assertEqual(partial['meta']['sources']['codex']['coverage']['excludedAgentMessages'], 1)
+        self.assertEqual(partial['meta']['sources']['codex']['readStatus'], 'partial')
+        self.assertEqual([e['title'] for e in partial['repos'][0]['sessionEvidence']], ['kept-after-bad-time'])
+
     def test_canonical_messages_use_materializer_time_and_item_identity(self):
         # PascalCase TurnItem/Text → app-server agentMessage/text at the pinned official tag.
         canonical = {'type': 'AgentMessage', 'id': 'msg-a', 'content': [{'type': 'Text', 'text': 'canonical result'}]}

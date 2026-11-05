@@ -180,7 +180,7 @@ Treat collector JSON as source of truth:
 
 工作日誌刻意排除所有外層 `response_item`、`payload.type=agent_message` 的 agent 傳訊，包含純明文與密文；不收集正文、不解密、不轉存 tool／assistant evidence，也不因缺少 `message` 或正文形狀產生 content-capability 草稿。這不是 `event_msg.agent_message.message` 或 canonical `item_completed`，後兩者與 SQL history、一般 `response_item.message` 仍依原契約收集。未來可能排除獨有的明文傳訊；不假設皆有副本，不以逐日人工判定「資料足夠」作為略過 gate，也不宣稱完整 recall。
 
-SQL exact adapter 的 `coverage.excludedAgentMessages` 初始化為 0，逐筆計本次選中、實際讀到且 envelope timestamp 落在 inclusive From/To 範圍的原始傳訊。範圍外不計；跨 thread／相同 ID 不去重；無效／未知時間、lineage、壞 JSON、讀取與達限仍保留原有診斷。計數不要求有其他 evidence，只有排除內容且無其他錯誤時沿用 empty／no-activity guard。Counter 不含正文或識別值，index／sessions／summary／ERP views 皆可查；legacy 日期 fallback 或舊輸出缺少此欄位代表未提供，不推定為 0。
+SQL exact 與 legacy 日期 fallback 的 `coverage.excludedAgentMessages` 都初始化為 0，逐筆計本次選中、實際讀到且 envelope timestamp 落在 inclusive From/To 範圍的原始傳訊。範圍外不計；跨 thread／相同 ID 不去重；無效／未知時間、lineage、壞 JSON、讀取與達限仍保留原有診斷。計數不要求有其他 evidence，只有排除內容且無其他錯誤時沿用 empty／no-activity guard。Counter 不含正文或識別值，index／sessions／summary／ERP views 皆可查；舊輸出缺少此欄位代表未提供，不推定為 0。
 
 排除發生在整行讀取之後，仍消耗相同 JSONL 實讀 bytes 與既有 64／8 MiB 額度；只減少 evidence、序列化與下游上下文，不新增掃描、回讀或自動加碼。`coverage.complete=false` 與其他來源缺口照常揭露。
 

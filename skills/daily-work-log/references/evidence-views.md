@@ -147,7 +147,7 @@ ERP 視圖仍含完整 meta／來源／session 及私人文字；省略 repo pat
 
 ## 3. Adapter contract 與 diagnostics
 
-SQL exact 的 `coverage.excludedAgentMessages` 是範圍內刻意排除的 `response_item.agent_message` 原始筆數，index／sessions 保留 scalar，summary／ERP 保留完整 coverage。這些傳訊的明文／密文正文不在 collector evidence 中；欄位缺少代表未提供，不能當作 0 或完整收集。計數、來源保留與實讀額度定義見 [`SKILL.md`](../SKILL.md#agent-傳訊的取材排除)。
+SQL exact／legacy 日期 fallback 的 `coverage.excludedAgentMessages` 是範圍內刻意排除的 `response_item.agent_message` 原始筆數，index／sessions 保留 scalar，summary／ERP 保留完整 coverage。這些傳訊的明文／密文正文不在 collector evidence 中；欄位缺少代表未提供，不能當作 0 或完整收集。計數、來源保留與實讀額度定義見 [`SKILL.md`](../SKILL.md#agent-傳訊的取材排除)。
 
 ### Collector 分段量測與補報狀態
 

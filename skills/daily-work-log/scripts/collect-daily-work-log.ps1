@@ -243,7 +243,7 @@ function Get-CodexFilesBounded {
     enumerationFailures = 0; selectedDays = [System.Collections.Generic.List[string]]::new()
     candidateDays = @(); visitedDays = [System.Collections.Generic.List[string]]::new(); unvisitedDays = @()
     stopReason = 'candidate-days-exhausted'; oversizedLines = 0
-    fileCapStops = 0; oversizedDiscardBytes = [long]0; filesWithRangeEvents = 0
+    fileCapStops = 0; oversizedDiscardBytes = [long]0; filesWithRangeEvents = 0; excludedAgentMessages = 0
     readBytesDistribution = [pscustomobject][ordered]@{
       count = 0; totalBytes = [long]0; minBytes = $null; maxBytes = $null
       buckets = [pscustomobject][ordered]@{ zero = 0; upTo256KiB = 0; upTo1MiB = 0; upTo8MiB = 0; over8MiB = 0 }
@@ -524,6 +524,11 @@ function Get-CodexSessionDirectories {
           $validTimedEvents++
           if ($time -lt $FromRange -or $time -gt $ToRange) { return }
           $payloadType = [string](Get-ObjectPropertyValue $payload 'type')
+          # 與 exact adapter 採相同取材排除；時間與實讀 bytes 已按原契約驗證／計帳。
+          if ($type -ceq 'response_item' -and $payloadType -ceq 'agent_message') {
+            $Source.coverage.excludedAgentMessages++
+            return
+          }
           $text = $null
           $role = $null
           if ($type -eq 'event_msg' -and $payloadType -in @('user_message', 'agent_message')) {

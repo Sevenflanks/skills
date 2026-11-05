@@ -75,7 +75,7 @@ SQL 與 JSONL 資源分開計帳：SQL 預設最多 10,000 rows、16 MiB seriali
 | `readBytesDistribution` | 成功 open 的實讀量分布：count、totalBytes、minBytes、maxBytes 與固定五桶；空檔與中途失敗計入，open 失敗除外。無樣本極值為 null。 |
 | `oversizedDiscardBytes` | 已確認超長行的實讀丟棄 bytes，含 buffered prefix 與已讀 newline；是 readBytes 子集，不再加算預算。 |
 | `filesWithRangeEvents` | 去重前有保留範圍內事件的檔數，逐檔一次；不是 session 數或最終證據列數，後段失敗仍保留計數。 |
-| `excludedAgentMessages` | SQL exact adapter 刻意排除的範圍內 `response_item.agent_message` 原始筆數；包含明文／密文，不跨 thread 去重。無其他 evidence 仍計，欄位缺少表示未提供。 |
+| `excludedAgentMessages` | SQL exact／legacy 日期 fallback 刻意排除的範圍內 `response_item.agent_message` 原始筆數；包含明文／密文，不跨 thread 去重。無其他 evidence 仍計，欄位缺少表示未提供。 |
 
 詳細計帳、桶界、錯誤與去重定義以 [`SKILL.md` 的 aggregate 契約](SKILL.md#aggregate-診斷的計帳契約) 為準。Probe／不可用來源沒有 collection coverage；可用空來源則有零 counters、空分布。新增統計只使用固定大小 aggregate state，不保存新的逐檔路徑／內容。
 
@@ -176,9 +176,9 @@ npm run validate
 
 ### Agent 傳訊排除
 
-日誌不採用任何 `response_item.agent_message` 傳訊，可能排除未來獨有明文；一般助手訊息與其他既有證據照常保留。SQL exact 的 `coverage.excludedAgentMessages` 可由 index／sessions／summary／ERP 查到，只有排除內容時沿用 no-activity guard。
+日誌不採用任何 `response_item.agent_message` 傳訊，可能排除未來獨有明文；一般助手訊息與其他既有證據照常保留。`coverage.excludedAgentMessages` 可由 index／sessions／summary／ERP 查到，只有排除內容時沿用 no-activity guard。
 
-這只降低輸出與上下文，**不節省 JSONL 64 MiB 總額度／8 MiB 單檔額度**，也不新增回讀或加碼；legacy 日期 fallback 沒有此 counter 時不當作 0。完整定義見 [`SKILL.md`](SKILL.md#agent-傳訊的取材排除)。
+這只降低輸出與上下文，**不節省 JSONL 64 MiB 總額度／8 MiB 單檔額度**，也不新增回讀或加碼；舊輸出沒有此 counter 時不當作 0。完整定義見 [`SKILL.md`](SKILL.md#agent-傳訊的取材排除)。
 
 ## 版本變更
 
