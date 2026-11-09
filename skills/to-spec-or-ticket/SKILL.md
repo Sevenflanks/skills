@@ -47,4 +47,4 @@ metadata:
 
 ## 外部依賴與環境
 
-開始每一階段時，使用 runtime 的 skill 載入機制執行外部 skill 原文。若 runtime 無法由 router 呼叫僅限手動觸發的 skill，從該 runtime 的 skill 目錄定位並讀取完整 `SKILL.md`，依原文執行。缺少所需 skill 或 tracker 配置時，停在該階段並回報缺口。第三類只需提供建議。Shell 指令依實際 pwsh／bash 環境選擇。
+開始每一階段時，依 runtime 允許的方式載入並執行外部 skill 原文。若 runtime 缺少巢狀呼叫機制，但允許直接讀取 skill 作為流程指引，從其 skill 目錄定位並讀取完整 `SKILL.md`。若 runtime 要求使用者直接觸發，或缺少所需 skill 或 tracker 配置，停在該階段並回報所需操作。第三類只需提供建議。Shell 指令依實際 pwsh／bash 環境選擇。
