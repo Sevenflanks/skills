@@ -33,6 +33,39 @@
         "不替換流程",
         "不發布不完整產物"
       ]
+    },
+    {
+      "id": 4,
+      "prompt": "本次路由已選 to-spec。兩個外部 skill 都可用，我已確認測試 seam，tracker 剛回傳本次規格發布成功，issue 編號是 #42。我還沒看到拆票方案。",
+      "expected_output": "於同一個 session 自動執行 to-tickets，以 issue #42 為規格來源並提出拆票方案，等待確認後才發布。",
+      "files": [],
+      "expectations": [
+        "使用剛發布的 issue #42 拆票",
+        "同一次呼叫提出票券粒度和 blocking edges 供確認",
+        "拆票方案尚未核准時，tracker 沒有新增執行票"
+      ]
+    },
+    {
+      "id": 5,
+      "prompt": "本次路由已選 to-spec。兩個外部 skill 都可用，規格已寫好，但我還沒確認測試 seam，tracker 也沒有發布的規格。",
+      "expected_output": "停在 to-spec 的測試 seam 確認。",
+      "files": [],
+      "expectations": [
+        "等待測試 seam 確認後才發布規格",
+        "tracker 沒有新增規格或執行票",
+        "尚未提出拆票方案"
+      ]
+    },
+    {
+      "id": 6,
+      "prompt": "本次路由已選 to-spec，測試 seam 已確認，tracker 剛回傳本次規格發布成功，issue 編號是 #42，但 to-tickets 無法載入。",
+      "expected_output": "回報已發布的 issue #42 和拆票階段的依賴缺口。",
+      "files": [],
+      "expectations": [
+        "保留並回報 issue #42",
+        "指出缺少可載入的 to-tickets",
+        "tracker 沒有新增第二份規格或執行票"
+      ]
     }
   ]
 }
