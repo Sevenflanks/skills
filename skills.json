@@ -181,8 +181,8 @@
     {
       "name": "to-spec-or-ticket",
       "path": "skills/to-spec-or-ticket",
-      "summary": "判斷需求應產生 spec 或 tickets，載入選中流程；不適合時僅提出下一步建議。",
-      "version": "0.1.2",
+      "summary": "依需求直接拆票、先發布 spec 再接續拆票，或提出下一步建議。",
+      "version": "0.2.0",
       "license": "MIT",
       "author": "sevenflankse",
       "tags": [

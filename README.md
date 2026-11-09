@@ -19,7 +19,7 @@
 | `opencode-db-prune` | `0.3.0` | stable | 完整保留或近期 30 天的激進精簡；Deja 選用且自動偵測，未安裝仍可用兩種模式。 | [`skills/opencode-db-prune/`](skills/opencode-db-prune/) |
 | `push-post-pr` | `0.1.1` | stable | 確認工作完成後，依授權 commit／push 並發布繁中 PR，核對 title、本文與交付狀態。 | [`skills/push-post-pr/`](skills/push-post-pr/) |
 | `start-from-matt` | `0.1.2` | stable | 透過外部 ask-matt 建議流程，預設維持討論與決策，確認開發授權後才進入實作。 | [`skills/start-from-matt/`](skills/start-from-matt/) |
-| `to-spec-or-ticket` | `0.1.2` | stable | 判斷需求應產生 spec 或 tickets，載入選中流程；不適合時僅提出下一步建議。 | [`skills/to-spec-or-ticket/`](skills/to-spec-or-ticket/) |
+| `to-spec-or-ticket` | `0.2.0` | stable | 依需求直接拆票、先發布 spec 再接續拆票，或提出下一步建議。 | [`skills/to-spec-or-ticket/`](skills/to-spec-or-ticket/) |
 | `write-design-spec-for-user-confirm` | `0.1.1` | stable | 以使用者與 UI 語言，撰寫需求背景、功能與操作流程導向的 -srs Markdown 文件。 | [`skills/write-design-spec-for-user-confirm/`](skills/write-design-spec-for-user-confirm/) |
 
 完整 catalog 可見 [`skills.json`](skills.json)。若需要 Claude plugin-style metadata，可見 [`.claude-plugin/marketplace.json`](.claude-plugin/marketplace.json)。新增、調整或移除 skill 時，請同步更新 catalog 並執行驗證。

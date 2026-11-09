@@ -1,11 +1,11 @@
 ---
 name: to-spec-or-ticket
-description: 判斷需求應產生 spec 或 tickets，載入選中流程；不適合時僅提出下一步建議。
+description: 依需求直接拆票、先發布 spec 再接續拆票，或提出下一步建議。
 license: MIT
 disable-model-invocation: true
 metadata:
   author: sevenflankse
-  version: 0.1.2
+  version: 0.2.0
 ---
 
 # Spec／ticket 路由
@@ -32,22 +32,19 @@ metadata:
 
 3. 執行選擇
    - 先簡短回報選擇、具體理由與下一步；不要額外詢問路由核准。
-   - 使用 runtime 可用的 skill 載入機制直接載入並執行選中的 skill 原文，不只印出 slash command，也不要手抄其模板。
-   - 執行 `to-spec` 時保留它的測試 seam 確認，不自動接續 `to-tickets`。
-   - 執行 `to-tickets` 時保留它的 ticket 粒度、blocking edges 核准，不先額外建立 parent spec。
+   - 選 `to-spec` 時，先執行原流程並等待測試 seam 確認。確認規格已成功發布到 tracker 並取得實際引用後，在同一個 session 自動載入並執行 `to-tickets`，以該 issue URL、識別碼或本地規格路徑為拆票來源。規格仍是草稿、等待確認或發布失敗時，停在 `to-spec`。
+   - 直接選 `to-tickets` 時，以本次需求為來源，無須先建立 parent spec。
+   - 兩條拆票路徑均依 `to-tickets` 提出拆票方案，等使用者確認 ticket 粒度與 blocking edges 後才發布。
    - 使用專案已配置的 tracker；未配置時遵照所載入 skill 的提示處理，不猜測 repo 或 tracker。
-   - 不自動進入實作、`implement`、`tdd`、commit 或其他後續流程；一次呼叫只執行選中的一個階段。
-   - 保留所選 skill 的正式流程與核准門檻；需要確認時停在該確認點等待使用者。
+   - 本次流程以規格與票券為交付範圍。實作、`implement`、`tdd` 與 commit 需另有使用者授權。
    - 不因路由結果而改變使用者原有權限、session context 或目前工作模式；只在允許範圍內執行。
 
 4. 第三類與收尾
    - 第三類只回報具體理由與最小下一步建議，不建立或修改 issue，也不自動執行其他流程。
-   - 完成所選 skill 後，回報實際產出的 issue URL 或識別碼；若 tracker 產出的是本地檔案，回報實際路徑。
-   - 若因使用者核准、權限或設定而阻擋，精確回報阻擋原因與已完成部分，不假稱完成。
+   - 回報已發布的規格與票券，附實際 issue URL、識別碼或本地檔案路徑。
+   - 若流程卡在使用者核准、權限、設定或依賴，回報目前階段、具體原因與已完成的產物引用。接回同一次流程時沿用已發布的規格。
 
 
 ## 外部依賴與環境
 
-選擇後確認該外部 `to-spec` 或 `to-tickets` 可載入，再讀取完整原文執行。不硬編碼個人路徑，不複製外部 skill、不手抄其模板。選中的 skill 缺少／無法載入，或 tracker 沒有配置時，依原流程回報精確缺口並保留已完成部分，不改走另一個流程或猜目標 repo。
-
-完成前述釐清後，只載入本次選中的外部流程；第三類建議不需要先安裝其他流程。Shell 指令依實際 pwsh／bash 選擇，對外發布在所選 skill 的核准完成後才執行，保持既有 session 與權限邊界。
+開始每一階段時，使用 runtime 的 skill 載入機制執行外部 skill 原文。若 runtime 無法由 router 呼叫僅限手動觸發的 skill，從該 runtime 的 skill 目錄定位並讀取完整 `SKILL.md`，依原文執行。缺少所需 skill 或 tracker 配置時，停在該階段並回報缺口。第三類只需提供建議。Shell 指令依實際 pwsh／bash 環境選擇。

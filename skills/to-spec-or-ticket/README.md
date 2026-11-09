@@ -1,6 +1,6 @@
 # to-spec-or-ticket
 
-判斷需求應產生 spec 或 tickets，載入選中流程；不適合時僅提出下一步建議。
+依需求直接拆票、先發布 spec 再接續拆票，或提出下一步建議。
 
 ## 使用方式
 
@@ -15,7 +15,7 @@
 
 ## 外部依賴
 
-路由前若有需要使用者回答的問題，使用 `grill-with-docs` 釐清。`to-spec` 與 `to-tickets` 依路由條件擇一載入；需具備本次選中的流程。名稱、原文與核准點由外部安裝提供，此 repo 不包含其內容。Tracker 使用目標專案配置，不指定這個 skills repo 當通用目標。
+路由前若有需要使用者回答的問題，使用 `grill-with-docs` 釐清。直接拆票需安裝 `to-tickets`。先寫規格的路徑需要 `to-spec` 和 `to-tickets`，規格發布成功後會在同一個 session 自動接續拆票。發布規格前仍須確認測試 seam，發布票券前仍須確認拆票粒度與 blocking edges。Tracker 使用目標專案的配置。
 
 ## 來源與維護
 
