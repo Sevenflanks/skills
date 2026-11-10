@@ -1,10 +1,10 @@
 # finish-and-admin-merge
 
-依最新 PR、review 與 checks 證據執行已授權的 admin squash merge，並安全收尾 branch／worktree。
+使用者明確呼叫執行時，一次授權涵蓋本次範圍內的 PR。逐張核實最新 review 與 checks，通過後執行 admin squash merge 並安全收尾。
 
 ## 使用方式
 
-本 skill 僅限人工明確觸發：Codex 使用 `$finish-and-admin-merge`，Claude Code 使用 `/finish-and-admin-merge`。其他 runtime 也須由使用者明確指定本 skill。提供本次需求或目標；沒有額外輸入時依入口說明使用前文。
+本 skill 僅限人工明確觸發：Codex 使用 `$finish-and-admin-merge`，Claude Code 使用 `/finish-and-admin-merge`。其他 runtime 也須由使用者明確指定本 skill。明確呼叫執行即授權對本次範圍內的 PR 執行 admin squash merge。討論、引用名稱或只要求檢查時維持唯讀。可指定 PR，或由當前工作脈絡確認範圍，例如同一父 issue 下各子 issue 對應的 PR。多張 PR 依順序逐張重驗與合併。
 
 安裝時複製整個 skill 資料夾，包含 [agents/openai.yaml](agents/openai.yaml)、references（如有）與 evals，不只複製入口。
 

@@ -76,8 +76,8 @@
     {
       "name": "finish-and-admin-merge",
       "source": "skills/finish-and-admin-merge",
-      "description": "依最新 PR、review 與 checks 證據執行已授權的 admin squash merge，並安全收尾 branch／worktree。",
-      "version": "0.1.2",
+      "description": "使用者明確呼叫執行時，一次授權涵蓋本次範圍內的 PR。逐張核實最新 review 與 checks，通過後執行 admin squash merge 並安全收尾。",
+      "version": "0.2.0",
       "keywords": [
         "github",
         "merge",
