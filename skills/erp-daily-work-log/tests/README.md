@@ -109,3 +109,7 @@ git diff --check
 `test:erp-daily-work-log` 執行既有 unittest discover，`validate` 只透過該 script 接一次；CI validate job 設定 Python 3.12 後仍只跑 `npm run validate`，無新框架或 dependency。局部 mapping 檢查可用上列 `-p test_project_repo_mapping.py` 命令。
 
 本輪測試同步結束，沒有啟動常駐 process。CLI subprocess 有 timeout；fixture 暫存檔由 TemporaryDirectory 清理，沒有真 ERP 或實際 config 讀寫。Python 其他版本未在本輪實跑。
+
+## 0.5.0 人類確認稿
+
+`test_daily_report_markdown.py` 透過公開 CLI／preview 邊界，以合成 plan/options 驗證完整原文、總覽、追加／替換、空值、名稱依 ID 對應、Markdown 轉義、layout／submit 行動提示、寫入旗標拒絕與 intent 不變。既有 JSON/readback 測試仍保留；不讀真 config、不連 ERP。這些是 helper 行為測試，不代替 consuming-agent 授權判斷 eval。

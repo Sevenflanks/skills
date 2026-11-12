@@ -10,7 +10,7 @@
 | --- | --- | --- | --- | --- |
 | `code-intent-comments` | `0.1.0` | stable | 引導 agent 以白話繁中撰寫高價值程式註解，補足 class 責任、核心邏輯、CR、相容性與高風險脈絡。 | [`skills/code-intent-comments/`](skills/code-intent-comments/) |
 | `daily-work-log` | `0.9.1` | stable | 固定 capture／repo／session／raw pointer 選讀；合併 OpenCode／Codex 與 Git／GitHub 證據，提供分段診斷與有界補報補證。 | [`skills/daily-work-log/`](skills/daily-work-log/) |
-| `erp-daily-work-log` | `0.4.1` | stable | 依工作證據與 canonical repo／issue 狀態填報；只刷新失效補證並保留 preview／授權流程。 | [`skills/erp-daily-work-log/`](skills/erp-daily-work-log/) |
+| `erp-daily-work-log` | `0.5.0` | stable | 依工作證據與 canonical repo／issue 狀態填報；只刷新失效補證並保留 preview／授權流程。 | [`skills/erp-daily-work-log/`](skills/erp-daily-work-log/) |
 | `gh-body-file` | `0.1.1` | stable | 在 Windows、PowerShell、OpenCode shell 環境中，安全使用 GitHub CLI 支援 `--body-file` 的指令。 | [`skills/gh-body-file/`](skills/gh-body-file/) |
 | `agent-process-lifecycle` | `1.1.1` | stable | 管理可能卡住或跨越 tool call 的本機 process；Windows 同 tool Stop 採當次 owner cleanup 契約，跨 tool Preserve 才需背景返回；缺證據的特殊路由可診斷；non-Windows 僅分類、handoff 或 launch 前 blocked。 | [`skills/agent-process-lifecycle/`](skills/agent-process-lifecycle/) |
 | `finish-and-admin-merge` | `0.2.0` | stable | 使用者明確呼叫執行時，一次授權涵蓋本次範圍內的 PR。逐張核實最新 review 與 checks，通過後執行 admin squash merge 並安全收尾。 | [`skills/finish-and-admin-merge/`](skills/finish-and-admin-merge/) |
@@ -52,7 +52,7 @@
 
 ## erp-daily-work-log
 
-`erp-daily-work-log` 結合 `daily-work-log` 的 probe／預告／collect 與外部唯讀 `erp` skill 的本人 context、請假及日期 mapping。預設列完整預覽再確認；官方 append 可用時首次填寫／已有日誌均可補新增。只有明確替換才走 replace，保留獨立覆蓋授權及次日 10:00 期限；整日請假不 collect、不寫日誌。
+`erp-daily-work-log` 結合 `daily-work-log` 的 probe／預告／collect 與外部唯讀 `erp` skill 的本人 context、請假及日期 mapping。預設用總覽表與逐列完整原文確認；版型試稿與正式提交預覽分開，內部 JSON／intent 檢查保留。官方 append 可用時首次填寫／已有日誌均可補新增。只有明確替換才走 replace，保留獨立覆蓋授權及次日 10:00 期限；整日請假不 collect、不寫日誌。
 
 `0.3.0` 支援可信未生效證據下一次受控 retry、確認啟用後的個人偏好記憶，仍核對當日官方 project／module／RD 參照。共用 repo mapping 儲存另有差異預覽／授權，維護不受日誌 deadline／請假 gate 影響，不宣稱跨端點 atomic。
 

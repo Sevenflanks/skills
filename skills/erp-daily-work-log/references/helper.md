@@ -109,14 +109,34 @@ python -B "<skill>/scripts/daily_report.py" --plan "<private-plan.json>" --autho
 
 ## 本地 preview 與 readback
 
-兩個入口只讀指定的私有 JSON 檔，不讀 ERP config／credential、不發 request，且拒絕與寫入／access flags 混用：
+所有本地入口只讀指定的私有 JSON 檔，不讀 ERP config／credential、不發 request，且拒絕與寫入／access flags 混用：
 
 ```powershell
 python -B "<skill>/scripts/daily_report.py" --plan "<private-plan.json>" --preview
 python -B "<skill>/scripts/daily_report.py" --plan "<original-submitted-plan.json>" --readback "<private-official-data.json>"
 ```
 
-- **Preview**：沿用 prepare／dry-run gates，由同一 plan 產生 mode、reportDate、snapshot、intent、每列分類／三種參照 ID／subject／description 全文／todos／hours（省略的可選欄位顯示 null），列 `impact.preserved`／`impact.replaced` 全文及 append 保留或 replace 全日範圍。`hours` 的 existing／new 及工作／請假／日合計以實際 payload 計算；replace 的 existing 為 0，因舊列不計入替換後工時。agent 將 CLI 完整輸出直接展示給使用者，逐欄核對方式以 [主流程第 5 節](../SKILL.md#5-預覽送出與讀回) 為準；官方 label 可在輸出外補充。preview 回傳深拷貝，不修改 plan 或排版；原 dry-run payload 仍是送出依據。helper 不判斷 topic 的業務歸屬，該核對由 agent 在合併 description 前完成。
+- **內部 JSON**：`--preview` 的 schema 與行為保持相容，沿用同 plan 的 prepare／dry-run，保留 snapshot／intent、全部業務欄位及 null、完整 impact 與五項工時；作為私有內部核對資料，不直接要求使用者閱讀 JSON。
+- **人類確認稿**：`--preview-markdown submit --display-options <options.json>` 從上述同一 preview 結果產生總覽表與逐列原文，含 subject／description／todos、保留或替換的既有全文。渲染 helper 的完整 Markdown，不能手工摘要。原文中的 HTML／Markdown 控制符只在顯示時轉義，換行、repo 條列、PR／Issue 與 payload 原值保持；沒有日期／工時簡化或變更摘要功能。
+- **版型試稿**：改用 `--preview-markdown layout`；僅詢問版型並明示不構成提交授權。`submit` 僅呈現正式確認問題，也不自動送出；兩種呈現均拒絕 authorized／contract／access flags。非 ready gate 仍回原 JSON 的 ask／stop／output_only，不假造可提交稿。階段與顯示 options 不進 payload／intent，也不能代替既有提交授權、fresh options 或 snapshot 核對。
+
+`--display-options` 是私有唯讀呈現資料，由 agent 將本次已核實的官方 options 彙整；不是第二份日誌、永久 mapping 或官方合法性證明。僅與 `--preview-markdown` 合用，根物件必須恰有下列三欄；選項保留官方 id／value／code／label，modules 以 project ID 字串分組：
+
+```json
+{
+  "projects": [{"id": 7, "value": "7", "code": "P-7", "label": "營運系統"}],
+  "modules": {"7": [{"id": 71, "value": "71", "code": null, "label": "帳務"}]},
+  "mandateCharters": [{"id": 81, "value": "81", "code": "RC-81", "label": "工具研發"}]
+}
+```
+
+合法專案確認無模組時，仍帶 `"modules": {"7": []}`；非空 modules 不能把缺選擇顯示成「無模組」。未選立案書 RD 顯示「未選立案書」，非適用參照顯示「不適用」，空待辦顯示「未填待辦」。helper 依實際 ID 找名稱，缺選項、同清單重複 ID、value 與 ID 矛盾、換行 label 或不適用欄位帶 ID 均拒絕呈現；不以 ID 或猜測名稱補缺口。此檔與 plan 均用後清理。
+
+```powershell
+python -B "<skill>/scripts/daily_report.py" --plan "<private-plan.json>" --preview-markdown layout --display-options "<options.json>"
+python -B "<skill>/scripts/daily_report.py" --plan "<private-plan.json>" --preview-markdown submit --display-options "<options.json>"
+```
+
 - **意圖一致**：保留原 preview／dry-run intent，與寫前同 plan 的 dry-run 比對；mode、日期、subject／description／todos／工時、參照或 snapshot 改變都須重新預覽／取得相應授權。CLI flags 仍只是 agent 的授權紀錄，hash 不是自然語言授權或 server CAS；不因產生 preview 自動授權。
 - **Readback 輸入**：外部 `erp` 唯讀工具先取得固定日期的**完整**官方 `AjaxResponse.data`（含 reportDate、details；不是 response envelope、POST 回應或 exists 結果），存於 repo 外。保留**原送出 plan**，尤其 append 的寫前 existing baseline；不能用寫後 context 取代，否則會把新列當既有列。helper 不自行 GET，也不核實 caller 是否取得完整資料。
 - **比對**：新列依分類、projectId／projectModuleId／mandateCharterId、subject、description、todos、hours 做不依排序的逐列比對，保留相同內容列的筆數。optional 省略的預期值視為 null，但讀回缺欄位不能當 null 通過；空白、縮排與換行須完全相同，工時用 Decimal 比較合法數值。append 先以原 ID 找回每筆 existing，核對全部上述業務欄位；baseline 缺 ID／欄位或重複 ID 拒絕，不能用新列冒充舊列。讀回 ID 須合法唯一，逐列若帶 reportDate 亦須同日；server-only content／modifiedTime 等衍生 metadata 不作業務內容 oracle。

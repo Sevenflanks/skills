@@ -5,6 +5,7 @@ from datetime import date, datetime, time, timedelta
 import argparse
 import copy
 import hashlib
+import html
 import http.client
 import json
 import os
@@ -418,6 +419,111 @@ def preview(plan):
     })
 
 
+def markdown_text(value):
+    # 原文是純文字；轉義只影響呈現，避免 HTML／Markdown 把待確認文字隱藏或變成操作。
+    lines = []
+    in_list = False
+    for line in value.split('\n'):
+        if in_list and line and not line[0].isspace() and not line.startswith('- '):
+            lines.append('')
+        in_list = bool(line) and (line.startswith('- ') or (in_list and line[0].isspace()))
+        line = re.sub(r'([\\`*_\[\]|])', r'\\\1', html.escape(line, quote=False))
+        if not line.startswith('- ') or re.fullmatch(r'[- ]+', line):
+            line = re.sub(r'^(\s*)([#=+~\-])', r'\1\\\2', line)
+        line = re.sub(r'^(\s*\d+)([.)])(?=\s)', r'\1\\\2', line)
+        lines.append(line)
+    return '  \n'.join(lines)
+
+
+def render_preview(result, display_options, stage):
+    """離線呈現同一 preview；名稱來自 caller 已核對的官方 options，不能以 label 改寫 ID。"""
+    if result.get('action') != 'preview' or stage not in ('layout', 'submit'):
+        raise ReportError('preview_not_ready')
+    if (not isinstance(display_options, dict)
+            or set(display_options) != {'projects', 'modules', 'mandateCharters'}
+            or not isinstance(display_options['modules'], dict)):
+        raise ReportError('invalid_display_options')
+
+    def option_name(items, selected):
+        if not isinstance(items, list):
+            raise ReportError('invalid_display_options')
+        found, seen = None, set()
+        for item in items:
+            if (not isinstance(item, dict) or not valid_id(item.get('id')) or item['id'] <= 0
+                    or item['id'] in seen or not isinstance(item.get('label'), str) or not item['label'].strip()
+                    or (item.get('code') is not None and not isinstance(item['code'], str))):
+                raise ReportError('invalid_display_options')
+            if (any(char in item['label'] + (item.get('code') or '') for char in '\r\n\t')
+                    or item.get('value', str(item['id'])) != str(item['id'])):
+                raise ReportError('invalid_display_options')
+            seen.add(item['id'])
+            if item['id'] == selected:
+                found = item
+        if found is None:
+            raise ReportError('display_option_missing')
+        return found['label'] + (f'（{found["code"]}）' if found.get('code') else '')
+
+    def references(row):
+        kind = row['reportType']
+        used = {'PROJECT': {'projectId', 'projectModuleId'}, 'RD': {'mandateCharterId'}}.get(kind, set())
+        if any(row.get(key) is not None for key in {'projectId', 'projectModuleId', 'mandateCharterId'} - used):
+            raise ReportError('invalid_display_references')
+        if kind == 'PROJECT':
+            name = option_name(display_options['projects'], row['projectId'])
+            modules = display_options['modules'].get(str(row['projectId']))
+            if not isinstance(modules, list):
+                raise ReportError('display_option_missing')
+            if row.get('projectModuleId') is None:
+                if modules:
+                    raise ReportError('display_module_required')
+                return name, '無模組'
+            return name, option_name(modules, row['projectModuleId'])
+        if kind == 'RD':
+            return (option_name(display_options['mandateCharters'], row['mandateCharterId'])
+                    if row.get('mandateCharterId') is not None else '未選立案書'), '不適用'
+        return '不適用', '不適用'
+
+    kinds = {'RD': '研發', 'PROJECT': '專案', 'COMPANY': '公司', 'OTHER': '其他', 'LEAVE': '請假'}
+
+    def amount(value):
+        return format(hours(value).normalize(), 'f')
+
+    def full_row(row, label):
+        validate_detail({field: row.get(field) for field in DETAIL_FIELDS})
+        name, module = references(row)
+        return [f'**{label}｜{kinds[row["reportType"]]}｜{amount(row["hours"])}h**', '',
+                f'歸屬：{markdown_text(name)}；模組：{markdown_text(module)}', '',
+                '**主旨**', '', markdown_text(row['subject']), '',
+                '**工作內容全文**', '', markdown_text(row.get('description') or '未填工作內容'), '',
+                '**待辦全文**', '', markdown_text(row.get('todos') or '未填待辦'), '', '---', '']
+
+    heading = '版型試稿' if stage == 'layout' else '正式提交預覽'
+    lines = [f'**{result["reportDate"]} 工作日誌｜{heading}**', '']
+    existing = result['impact']['preserved'] if result['mode'] == 'append' else result['impact']['replaced']
+    lines += ([f'操作：追加 {len(result["details"])} 列；保留既有日誌 {len(existing)} 列。', '']
+              if result['mode'] == 'append' else
+              [f'**操作：替換當日全部日誌；原有 {len(existing)} 列將被以下 {len(result["details"])} 列取代。**', ''])
+    lines += ['| 類別 | 歸屬 | 模組 | 工時 |', '|---|---|---|---:|']
+    for row in result['details']:
+        name, module = references(row)
+        lines.append(f'| {kinds[row["reportType"]]} | {markdown_text(name)} | {markdown_text(module)} | {amount(row["hours"])}h |')
+    totals = result['hours']
+    lines += [f'| **合計** | 工作 {amount(totals["work"])}h／請假 {amount(totals["leave"])}h | | **{amount(totals["total"])}h** |', '',
+              f'既有 {amount(totals["existing"])}h ＋ 新增 {amount(totals["new"])}h ＝ 當日合計 {amount(totals["total"])}h', '']
+    if result['mode'] == 'replace':
+        lines += ['工時列示為替換後合計；原有被替換列不重複計入。', '']
+    lines += ['---', '']
+    for index, row in enumerate(result['details'], 1):
+        lines += full_row(row, f'第 {index} 列')
+    if existing:
+        lines += ['**既有日誌（保留原文）**' if result['mode'] == 'append' else '**將被替換的既有日誌全文**', '']
+        for index, row in enumerate(existing, 1):
+            lines += full_row(row, f'既有第 {index} 列')
+    lines.append('**本稿僅供版型確認，不構成提交授權。請確認版型是否接受。**' if stage == 'layout' else
+                 '**請回覆「確認提交」或指出要修改的列。**')
+    return '\n'.join(lines) + '\n'
+
+
 def _field_equal(field, expected, actual):
     if field == 'hours':
         try:
@@ -512,7 +618,9 @@ def main():
     parser.add_argument('--plan', required=True)
     local = parser.add_mutually_exclusive_group()
     local.add_argument('--preview', action='store_true', help='只從同一 plan 輸出全文與影響範圍')
+    local.add_argument('--preview-markdown', choices=('layout', 'submit'), help='離線產生版型試稿或正式提交預覽')
     local.add_argument('--readback', help='只比較原 plan 與已取得的官方 AjaxResponse.data JSON 檔')
+    parser.add_argument('--display-options', help='已核實的官方 project／module／charter options JSON；僅供 Markdown 呈現')
     parser.add_argument('--authorized', action='store_true')
     parser.add_argument('--overwrite-confirmed', action='store_true')
     parser.add_argument('--contract-verified', action='store_true')
@@ -522,12 +630,20 @@ def main():
     args = parser.parse_args()
     try:
         plan = json.loads(Path(args.plan).read_text(encoding='utf-8'))
-        if args.preview or args.readback is not None:
+        if args.display_options is not None and not args.preview_markdown:
+            raise ReportError('display_options_require_markdown')
+        if args.preview or args.preview_markdown or args.readback is not None:
             if any((args.authorized, args.overwrite_confirmed, args.contract_verified,
                     args.config_root is not None, args.config_file is not None, args.base_url is not None)):
                 raise ReportError('local_mode_conflicting_flags')
-            result = (preview(plan) if args.preview else
+            result = (preview(plan) if args.preview or args.preview_markdown else
                       compare_readback(plan, json.loads(Path(args.readback).read_text(encoding='utf-8'))))
+            if args.preview_markdown and result['action'] == 'preview':
+                if args.display_options is None:
+                    raise ReportError('display_options_required')
+                options = json.loads(Path(args.display_options).read_text(encoding='utf-8'))
+                print(render_preview(result, options, args.preview_markdown), end='')
+                return 0
         else:
             result = execute(plan, args.authorized, args.overwrite_confirmed, args.contract_verified,
                              args.config_root, args.config_file, args.base_url)

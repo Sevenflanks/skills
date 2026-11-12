@@ -21,25 +21,29 @@
 | 50–51 | 外部官方 data＋原送出 plan 的純本地 readback；欄位／缺列／舊列異動與順序獨立、低噪音回報仍保留 fresh options／snapshot／授權 guard。 |
 | 53 | 同任務新證據只刷新受影響 issue；其他有效準備／查詢及 collector 沿用，內容變更重 preview／授權，fresh-write guard 保留。 |
 | 54 | 先核對 topic→已確認 row 才合 description：跨 repo 同 RD 合列，同 repo 跨 RD／PROJECT 及多 modules；辨識跨分類／跨 module 錯置，existing 同 charter 衝突仍先問。 |
-| 55 | 同 plan CLI 全輸出與使用者展示逐欄比對，append／replace 範圍、snapshot／intent、null／todos／ID／工時都保留；label 只補充，todos 改變重授權。 |
+| 55 | 同 plan 內部 JSON 與正式 Markdown 分別核對；原文／待辦、官方歸屬、追加／替換與五項工時完整；錯 options 拒絕，todos 改變重授權。 |
+| 56 | layout／submit 的確認問題與授權邊界；接受版型仍零寫入，兩階段不改 payload／intent。 |
 
 ### #52 合成輸入與判定
 
 [`fixtures/topic-routing-plan.json`](fixtures/topic-routing-plan.json) 是可直接交給既有 helper 的合成 plan，不是新增歸屬 schema、另一份授權稿或真實 ERP 資料。固定 case 54 的確認結果：RD81 只有 `acme/widget#44`／`acme/tools#32`，PROJECT7/71 只有 `acme/widget#31`，PROJECT7/72 只有 `acme/widget#45`；另有既有 COMPANY1h 及新 LEAVE1h，日合計8h。這些歸屬由 prompt 的使用者確認提供；helper 只能保留已組好的內容，無從判斷主題語意。
 
 1. case 54 分別跑正例與兩個錯置草稿。評估者在 fixture 副本將 PR31 成果從7/71移到RD81，或將issue45成果從7/72移到7/71，維持合法主旨、欄位與原工時；將該副本作交接草稿輸入。依 prompt 的已確認歸屬檢查 consuming agent 的核對過程及最終 plan，不能只看ID／總工時合法或agent自稱已核對。existing RD81碰撞變體獨立執行，須先問而非改既有列。
-2. case 55 捕捉同 plan CLI stdout 和 agent 的展示內容；允許 code block 外補 label，code block 內解析後深比對**整個**原輸出，不能略掉 metadata／null／空陣列。append 工時為existing/new/work/leave/total＝1/7/7/1/8；replace 依 prompt 把既有列業務欄位加入新rows後為0/8/7/1/8，`replaced` 仍含原id80全文。
-3. 分別將展示刪去snapshot／intent、null參照／todos、影響範圍全文、任一工時欄，或以label取代ID；各變體須判失敗，完整展示正例須通過。此為人工／模型輸出判準，不新增驗證 subsystem。只有todos變更的變體則觀察重preview／新授權及零write。
+2. case 55 分別捕捉內部 JSON stdout、正式 Markdown stdout 及 consuming agent 的渲染對話。內部 JSON 按同 plan 深比全部 metadata／ID／null；人類版按官方 options 對照名稱與模組，保留全文與工時。append 的 existing/new/work/leave/total＝1/7/7/1/8；replace 為0/8/7/1/8，且舊列全文可見。
+3. 省待辦、既有全文、任一工時資訊的錯呈現均失敗；只變更 options 的 ID 但不變 label 亦拒絕。todos 變更須重產正式稿及新授權。case 56 使用同 plan 先試稿、回覆採用版型，確認沒有 ERP write，再獨立產正式稿等待提交授權。本文新增判準不代表 consuming-agent 已通過。
 
 可重現本地 preview（只有合成資料）：
 
 ```powershell
 python -B skills/erp-daily-work-log/scripts/daily_report.py --plan skills/erp-daily-work-log/evals/fixtures/topic-routing-plan.json --preview
+python -B skills/erp-daily-work-log/scripts/daily_report.py --plan skills/erp-daily-work-log/evals/fixtures/topic-routing-plan.json --preview-markdown submit --display-options skills/erp-daily-work-log/evals/fixtures/topic-routing-options.json
 ```
 
 保留證據時把 CLI stdout 原樣存到 repo 外的 task-local 暫存路徑；不手工另寫或精簡 helper 輸出。正式資料仍遵守私有 plan 用後清理。
 
 ## 驗證狀態
+
+0.5.0 共56案：55 改為雙輸出呈現判準，56 新增試稿授權邊界。以下 0.4.2 及更早版本的 JSON 對話呈現結果是歷史紀錄，不能當成人類版行為通過。新版自動化及 bounded consuming-agent 結果另依實際執行記錄；未跑分支仍未驗證。
 
 0.3.0 共 47 案（含多個獨立變體），新增 4 案核對 RD 指定 code 解析、指定後查無／多義／查詢失敗、未指定時唯一候選優先，以及確認無適用時 null 與 null 唯一性。JSON parse／文件一致性檢查完成，**尚未執行 consuming-agent eval**；沒有啟動新 session、遞迴委派或連正式 ERP。
 
@@ -59,3 +63,7 @@ python -B skills/erp-daily-work-log/scripts/daily_report.py --plan skills/erp-da
 依主agent回報，兩案均只執行本地`--preview`，無network／config／report write，並等待正向授權。**尚未跑**existing charter collision、replace的模型展示、A–E注入省欄／label替ID，以及todos變更後重新授權分支；寫前fresh context/options與提交後readback亦未exercise。先前helper CLI append／replace測試與省snapshot mutation是獨立證據，不能補足這些模型分支；#47既有partial結果也不自動轉為通過。所有本次資料皆為合成，無正式ERP/config存取。
 
 0.2.0 曾在 2026-10-15 以 mock action-trace 跑過 8 個選定情境，涵蓋模組、選項失效、mapping 授權與分開讀回。該版逾期一律 output_only 的期待已被 #39 修正，舊結果不能作為 0.3.0 通過證據。Python transport 回歸與 repository validate 另行記錄於 [`../tests/README.md`](../tests/README.md)。
+
+## 0.5.0 bounded smoke（#64）
+
+本次用一個乾淨 consuming-agent context，只提供新 skill／必要 reference 與既有合成 plan/options，未提供 eval answers。實際執行 layout Markdown 及內部 JSON，產出完整總覽、4 筆新列、1 筆保留列與五項工時；主 agent 檢視實際輸出，末尾只問版型。第二輪回覆「可以，採用這個版型」後，agent 只確認版型並停止，沒有把它轉成提交授權，也沒有 ERP／mapping／preference write。原 plan／payload／intent 未變，process 已結束。這是 case56 的兩輪 bounded smoke，非完整55／56或正式 ERP 端到端通過；未 exercise consuming-agent 的 replace、錯 options／省欄及正式提交後 fresh context／readback 分支。helper 自動化另有獨立覆蓋，不能代替這些未跑的模型分支。實際合成輸出、命令與界線隨本次 PR 保存。
