@@ -83,6 +83,11 @@ class MarkdownPreviewTests(unittest.TestCase):
         changed['rows'][0]['detail']['todos'] = '修正後必須重新確認'
         self.assertNotEqual(report.execute(changed)['intent'], before['intent'])
 
+    def test_repo_after_bullets_starts_a_separate_block(self):
+        code, text = self.run_cli(example(), options(), '--preview-markdown', 'submit')
+        self.assertEqual(code, 0)
+        self.assertIn('issue #44 CLOSED。  \n  \nacme/tools', text)
+
     def test_replace_shows_the_complete_old_rows_and_only_counts_replacement_hours(self):
         value = example()
         value['mode'] = 'replace'

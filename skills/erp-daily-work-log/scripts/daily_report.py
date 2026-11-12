@@ -422,7 +422,11 @@ def preview(plan):
 def markdown_text(value):
     # 原文是純文字；轉義只影響呈現，避免 HTML／Markdown 把待確認文字隱藏或變成操作。
     lines = []
+    in_list = False
     for line in value.split('\n'):
+        if in_list and line and not line[0].isspace() and not line.startswith('- '):
+            lines.append('')
+        in_list = bool(line) and (line.startswith('- ') or (in_list and line[0].isspace()))
         line = re.sub(r'([\\`*_\[\]|])', r'\\\1', html.escape(line, quote=False))
         if not line.startswith('- ') or re.fullmatch(r'[- ]+', line):
             line = re.sub(r'^(\s*)([#=+~\-])', r'\1\\\2', line)
