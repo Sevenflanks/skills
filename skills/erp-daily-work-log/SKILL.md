@@ -4,7 +4,7 @@ description: 使用者要求將每日工作證據填寫、補新增或替換到 
 license: MIT
 metadata:
   author: sevenflankse
-  version: 0.4.2
+  version: 0.5.0
 ---
 
 # ERP Daily Work Log
@@ -25,7 +25,7 @@ metadata:
 
 同任務、同日已核對的唯讀準備，在契約／options／選擇未漂移時沿用；handoff 或使用者簡稱不等官方 label 本身不構成重查理由。
 
-日誌主題選定後、ERP preview 前，依 [`daily-work-log` issue-state 補證規則](../daily-work-log/SKILL.md#workflow) 核對會影響成果／待辦的明確引用 issue；只刷新因新證據或失效而受影響的查詢。若補證改變日誌內容／意圖，依第 5 節直接呈現同 plan 的 `--preview` 全文並重新取得授權，不以摘要取代授權稿；輸出未變時沿用原 preview／授權，不重問。取得本次有效授權並準備實際 write 時，才重新讀 fresh context 與必要 options／snapshot；單純重 preview 不提前重查未受影響的 context／options。每次 write 都須 fresh 核對並保留 snapshot／intent guards，不沿用過時授權 snapshot。
+日誌主題選定後、ERP preview 前，依 [`daily-work-log` issue-state 補證規則](../daily-work-log/SKILL.md#workflow) 核對會影響成果／待辦的明確引用 issue；只刷新因新證據或失效而受影響的查詢。若補證改變日誌內容／意圖，依第 5 節重新產生同 plan 的正式 Markdown 預覽全文並取得授權，不以摘要取代；輸出未變時沿用原 preview／授權，不重問。取得本次有效授權並準備實際 write 時，才重新讀 fresh context 與必要 options／snapshot；單純重 preview 不提前重查未受影響的 context／options。每次 write 都須 fresh 核對並保留 snapshot／intent guards，不沿用過時授權 snapshot。
 
 完成條件：日誌 `stop` 已終止，`output_only` 轉第 3 步，或 append／replace 意圖與可用官方契約確定。
 
@@ -68,7 +68,8 @@ Model 在**已確認工作總預算內自行提出合理主題分配**，不逐�
 
 ## 5. 預覽、送出與讀回
 
-- **直接展示同 plan 的 helper `--preview` 完整輸出**（可放 code block）：保留 `action`、`mode`、`reportDate`、`expectedSnapshot`、`intent`、`details` 全部業務欄位及 null、`impact.scope`／`preserved`／`replaced` 全文與 `hours` 全部工時。append 的 existing 保留／新增及日合計、replace 的全日替換範圍均須可見；送出前逐欄核對展示內容與 helper 輸出相同。已核對的官方 label／選擇依據可在輸出外補充，不能取代 ID、改寫原輸出或另做一份手工縮略授權稿。取得正向授權後才提交，不先給縮略版再送不同文字。只有**當次明確直接提交**才略 preview；否定、引文、歷史 log、技能說明及含糊「先看看」皆不授權。日期／內容（含 todos）／歸屬／mode／snapshot 改變須重 preview／確認相應意圖，送出前核對與原 dry-run intent 相同。
+- **以 helper 產生「總覽表＋逐列完整原文」**：同一 plan 的 `--preview` JSON 私下保留，供 ID／snapshot／intent／全文一致性核對；使用者看到的是 `--preview-markdown submit --display-options <已核實-options.json>` 的完整 Markdown，直接渲染，不加 JSON 外框、不由模型另寫摘要。總覽保留日期、操作、分類、官方歸屬名稱／代碼、模組與各列工時；全部既有／新增／工作／請假／日合計，以及追加保留或全日替換範圍都須可見。逐列主旨、description 與 todos 全文、受保留／替換的既有列全文均由同一 preview 產生。空值以可讀文字呈現，原 ID／null 留內部；options 缺漏或不一致先補齊，不猜 label。命令與 options 格式見 [helper.md](references/helper.md#本地-preview-與-readback)。
+- **區分版型與提交確認**：只要求視覺試產時用 `--preview-markdown layout`，標示「版型試稿」，只問版型是否接受；「可以／採用」只確認版型，不得據此提交。正式送出前用 `submit` 顯示「正式提交預覽」並取得本次正向提交授權。兩種輸出都離線，不讀認證、不寫 ERP；階段不改變 payload 或 intent。只有**當次明確直接提交**才略正式預覽；否定、引文、歷史 log、技能說明及含糊「先看看」皆不授權。日期／內容（含 todos）／歸屬／mode／snapshot 改變須重 preview／確認相應意圖，送出前核對與原 dry-run intent 相同。
 - 寫前 fresh GET 同日 context、必要 project／module／RD options，重核日期、假時、工時、唯一性與 preview snapshot；已知全天假 stop，unknown／衝突先釐清。僅 replace 重核期限；append 不套 replace deadline。選項失效重新列候選問，不能默換 ID 或 snapshot。
 - 依 [helper.md](references/helper.md) 在 repo 外產生私有 task-local plan，context 放完整官方 `AjaxResponse.data`，保留預覽的 `expectedSnapshot`，先 dry-run。append 明填 `mode=append`、只送無 id／modifiedTime 的新 detail；POST body **不含 expectedSnapshot**，本地 snapshot 比對只保護 preview 意圖，不是 server CAS，也不保證寫入當下仍空日。replace 才將 snapshot 送 `/replace` 做全日原子替換。僅契約與當次授權完成才用 `--authorized --contract-verified`，replace existing 另需 `--overwrite-confirmed`。
 - 沿用外部 access 的 config root 與 resolved base URL，API key 不進 CLI；本地配置／驗證失敗是 `not_sent`，修正後可續作。傳輸後任何 2xx、應用拒絕、500、timeout 都先用 `erp` 完整讀回同日日誌，再依 [helper.md](references/helper.md#本地-preview-與-readback) 以原送出 plan＋官方 data 執行 `--readback`：核對日期、分類、project／module／立案書、主旨、description 全文、todos 及工時；append 還核對既有列 ID 與原業務內容未變。列順序不影響比對。差異／缺欄位先回報待確認；2xx 本身不代表完成。

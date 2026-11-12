@@ -1,6 +1,6 @@
 # erp-daily-work-log
 
-將可靠每日工作證據整理成 SoftLeader ERP 本人日誌；預設先預覽再確認。`0.4.2`／MIT／sevenflankse。
+將可靠每日工作證據整理成 SoftLeader ERP 本人日誌；預設先預覽再確認。`0.5.0`／MIT／sevenflankse。
 
 ## 使用
 
@@ -12,9 +12,9 @@
 
 官方契約、認證、未知 state、必要資料與 collector 停止規則始終適用。主題選定後、完整 ERP preview 前，依 [`daily-work-log`](../daily-work-log/SKILL.md) 補查影響成果／待辦的明確引用 issue；有效準備可續用，失效時只刷新受影響項。只回報新發現及必要問題，減少重複 Checking 訊息；若補證改變日誌內容／意圖，才更新完整 preview 並重新授權。寫前 fresh context/options 與完整讀回照常保留。
 
-## 0.4.2：歸屬核對與完整預覽
+## 0.5.0：人類可讀確認稿
 
-先核對每個證據主題的已確認歸屬，再合併列描述；同 repo 的多 module／分類仍合法。授權時直接展示同 plan 的完整 helper 輸出，保留 snapshot／intent、null、影響範圍及工時；不新增平行授權稿或改寫 helper。
+同一份 plan 產生工時／歸屬總覽表與逐列完整原文，由 helper 固定呈現；使用者直接閱讀 Markdown。`layout` 是只確認版型的試稿，`submit` 是等待本次提交授權的正式稿；接受試稿不授權送出。內部 `--preview` JSON、ID／null／snapshot／intent 與讀回契約保持相容，顯示名稱從已核實 options 依實際 ID 取得。
 
 ## 0.3.0：補新增、受控重試與偏好
 
@@ -27,7 +27,7 @@
 
 Python standard library，無 production dependency；CI 使用 Python 3.12。helper 預設 dry-run，正式寫入需 agent 理解當次授權及官方契約。日期、payload、外部 access 與操作限制見 [`helper.md`](references/helper.md)。resolved base URL 沿用外部 ERP access，不猜部署，API key 不進 CLI 或輸出；個人資料 plan 留在 repo 外，用後清理。
 
-組稿先逐主題核對已確認分類／參照及所屬 row，再合併 `description`；同 repo 可合法分多 modules 或分類。實際 `description` 預設採 repo 群組行＋短行純文字條列，保留 PR／issue 與核實交付狀態；同一 RD 立案書合併後仍保留各 repo。直接展示同一 plan 的 helper `--preview` 完整輸出，包含 snapshot／intent、全部業務欄位及 null、影響範圍全文與工時；官方 label 另作補充。由外部 `erp` 取得完整官方 data 後，`--readback` 純本地比對原 plan 的新舊列、全文與 todos，不依列排序。兩者不讀 credential／呼叫 API；helper 保留合法非條列原文，不改寫已授權文案。命令及限制見 [`helper.md`](references/helper.md#本地-preview-與-readback)。
+組稿先逐主題核對已確認分類／參照及所屬 row，再合併 `description`；同 repo 可合法分多 modules 或分類。實際 `description` 預設採 repo 群組行＋短行純文字條列，保留 PR／issue 與核實交付狀態；同一 RD 立案書合併後仍保留各 repo。使用者看到同一 preview 資料產生的 `--preview-markdown submit --display-options <options.json>` 全文，含總覽表、逐列主旨／內容／待辦與既有列影響範圍；內部 JSON 保留 snapshot／intent／ID／null。只試版型時使用 `layout`，不構成提交授權。由外部 `erp` 取得完整官方 data 後，`--readback` 純本地比對原 plan 的新舊列、全文與 todos，不依列排序。兩者不讀 credential／呼叫 API；helper 保留合法非條列原文，不改寫已授權文案。命令及限制見 [`helper.md`](references/helper.md#本地-preview-與-readback)。
 
 從 repo 根執行：
 
@@ -41,6 +41,6 @@ npm run validate
 ## 維護入口
 
 - `SKILL.md`：按操作分流的流程及完成條件。
-- `scripts/daily_report.py`：正式 context／detail、完整 preview／本地 readback、append／replace、intent／retry 與 scoped transport。
+- `scripts/daily_report.py`：正式 context／detail、JSON／Markdown preview／本地 readback、append／replace、intent／retry 與 scoped transport。
 - `scripts/project_repo_mapping.py`：獨立日期／shape 驗證與 scoped create／update，維護權限及完整 list 核對由 agent 執行。
 - [`tests/README.md`](tests/README.md)：測試 seam、red→green 與 mutation list；`references/`：按分支載入的 plan／授權／偏好契約。

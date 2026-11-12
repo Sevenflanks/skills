@@ -1,0 +1,10 @@
+{
+  "projects": [{"id": 7, "value": "7", "code": "P-7", "label": "營運系統"}],
+  "modules": {
+    "7": [
+      {"id": 71, "value": "71", "code": null, "label": "帳務"},
+      {"id": 72, "value": "72", "code": null, "label": "出勤"}
+    ]
+  },
+  "mandateCharters": [{"id": 81, "value": "81", "code": "RC-81", "label": "工具研發"}]
+}
