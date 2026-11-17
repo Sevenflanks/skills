@@ -3,6 +3,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -24,7 +25,7 @@ class SourceModes(unittest.TestCase):
                            CodexRoot=str(self.root / 'forbidden-session'),
                            OpenCodeLogRoot=str(self.root / 'forbidden-session'),
                            OpenCodeStorageRoot=str(self.root / 'forbidden-session'))
-        # A malformed session is readable. Default GitHub must never probe or parse it.
+        # Malformed-input coverage is separate from the observed access boundary below.
         (self.root / 'forbidden-session').mkdir()
         (self.root / 'forbidden-session' / 'history.jsonl').write_text('not-json', encoding='utf-8')
 
@@ -92,6 +93,80 @@ class SourceModes(unittest.TestCase):
         self.assertEqual(erp['repos'][0]['prs'][0]['headRefName'], 'feature/import')
         self.assertEqual(erp['repos'][0]['issues'][0]['number'], 3)
         self.assertEqual(erp['repos'][0]['sessionEvidence'], [])
+
+    def test_default_refuses_and_records_session_access_with_same_positive_observer(self):
+        import test_collector_efficiency as legacy
+        helper = legacy.CollectorEfficiency()
+        helper.setUp()
+        self.addCleanup(helper.doCleanups)
+        helper.write('fixture.json', json.dumps(helper.fixture))
+        opencode = helper.root / 'bin/opencode.ps1'
+        original = opencode.read_text(encoding='utf-8')
+        boundary = r'''
+[IO.File]::AppendAllText($env:DWL67_ACCESS_LOG, "opencode-query`n")
+if ($env:DWL67_ALLOW_SESSION -ne '1') { throw 'unexpected-session-access' }
+'''
+        opencode.write_text(original.replace('$f = Get-Content', boundary + '\n$f = Get-Content', 1), encoding='utf-8')
+        codex = helper.root / 'codex'
+        rollout = codex / 'sessions/2026/10/08/one.jsonl'
+        helper.write(str(rollout.relative_to(helper.root)), '\n'.join(json.dumps(e) for e in [
+            dict(type='session_meta', payload=dict(id='observed-codex', cwd=str(helper.root / 'repo-a'))),
+            dict(type='event_msg', timestamp='2026-10-08T03:00:00Z',
+                 payload=dict(type='user_message', message='完成可觀測的 Session 工作'))]))
+        with sqlite3.connect(codex / 'state_5.sqlite') as db:
+            db.execute('create table threads(id text primary key, rollout_path text, cwd text, created_at integer, updated_at integer, created_at_ms integer, updated_at_ms integer, archived integer, cli_version text, source text)')
+            for column in ('created_at', 'updated_at', 'created_at_ms', 'updated_at_ms'):
+                db.execute(f'create index idx_threads_{column} on threads({column},id)')
+            db.execute('insert into threads values(?,?,?,?,?,?,?,?,?,?)',
+                       ('observed-codex', str(rollout), str(helper.root / 'repo-a'), 1791424800,
+                        1791424800, None, None, 0, '0.164.0-alpha.11.1', 'cli'))
+        # CPython's process-wide audit hook observes real file/SQLite reads in the
+        # actual adapter process; no collector function or result is substituted.
+        audit = helper.root / 'audit'
+        audit.mkdir()
+        (audit / 'sitecustomize.py').write_text('''import os, sys
+from urllib.parse import urlsplit
+from urllib.request import url2pathname
+root = os.path.normcase(os.path.abspath(os.environ['DWL67_CODEX_ROOT']))
+def observe(event, args):
+    if event not in ('open', 'os.listdir', 'os.scandir', 'sqlite3.connect') or not args or not isinstance(args[0], (str, bytes)):
+        return
+    path = os.fsdecode(args[0])
+    if path.startswith('file:'):
+        path = url2pathname(urlsplit(path).path)
+    path = os.path.normcase(os.path.abspath(path))
+    if path == root or path.startswith(root + os.sep):
+        with open(os.environ['DWL67_ACCESS_LOG'], 'a', encoding='utf-8') as log:
+            log.write('codex-' + event + '\\n')
+        if os.environ.get('DWL67_ALLOW_SESSION') != '1':
+            raise PermissionError('unexpected-session-access')
+sys.addaudithook(observe)
+''', encoding='utf-8')
+        access_log = helper.root / 'session-access.log'
+        self.env = dict(helper.env, PYTHONPATH=str(audit), DWL67_ACCESS_LOG=str(access_log),
+                        DWL67_CODEX_ROOT=str(codex), DWL67_ALLOW_SESSION='0')
+        self.config.update(From='2026-10-08T00:00:00+08:00', To='2026-10-09T00:00:00+08:00',
+                           CodexRoot=str(codex), OpenCodeLogRoot=str(helper.root / 'missing-log'),
+                           OpenCodeStorageRoot=str(helper.root / 'missing-storage'), Repositories=[])
+        for kind, query in [('pr', 'is:pr author:owner is:merged merged:2026-10-07..2026-10-09'),
+                            ('issue', 'is:issue author:owner created:2026-10-07..2026-10-09')]:
+            self.response('search/issues', dict(items=[], total_count=0, incomplete_results=False),
+                          q=query, per_page=100, page=1)
+        for fail in (False, True):
+            with self.subTest(provider_failure=fail):
+                if fail:
+                    self.responses[0]['status'] = 401
+                data = self.run_cli()
+                self.assertEqual(data['meta']['evidenceSource'], 'github')
+                self.assertFalse(access_log.exists(), 'default must not attempt Session access, even if errors are swallowed')
+        self.env['DWL67_ALLOW_SESSION'] = '1'
+        positive = self.run_cli(config={'EvidenceSource': 'session'})
+        observed = access_log.read_text(encoding='utf-8').splitlines()
+        self.assertIn('opencode-query', observed)
+        self.assertIn('codex-sqlite3.connect', observed)
+        self.assertIn('codex-open', observed)
+        evidence = [e for r in positive['repos'] for e in r['sessionEvidence']]
+        self.assertEqual({e['sessionId'] for e in evidence}, {'s1', 'observed-codex'})
 
     def test_midnight_author_and_current_state_do_not_backdate_work(self):
         self.search('pr', [self.candidate(n) for n in (7, 8, 9, 10)])
@@ -310,10 +385,16 @@ class SourceModes(unittest.TestCase):
         helper.setUp()
         self.addCleanup(helper.doCleanups)
         helper.fixture['rows'] = [helper.row('s1', 'repo-a'), helper.row('s2', 'repo-b', '另一個 worktree 工作')]
+        shared_pr = helper.pr(7, branch='feature/one', oid='a' * 40)
+        shared_pr.update(url='https://github.com/acme/app/pull/7', author={'login': 'owner'},
+                         mergedAt='2026-10-08T03:00:00Z', closedAt='2026-10-08T03:00:00Z')
+        helper.fixture['prs'] = [shared_pr]
         helper.write('fixture.json', json.dumps(helper.fixture))
         # Only external git/gh/OpenCode processes are substituted, as in the established suite.
         script = helper.root / 'bin/git.ps1'
         script.write_text(script.read_text(encoding='utf-8').replace('synthetic/project', 'acme/app'), encoding='utf-8')
+        gh = helper.root / 'bin/gh.ps1'
+        gh.write_text(gh.read_text(encoding='utf-8').replace('"login":"synthetic-user"', '"login":"owner"'), encoding='utf-8')
         self.env = helper.env
         self.config.update(From='2026-10-08T00:00:00+08:00', To='2026-10-09T00:00:00+08:00',
                            CodexRoot=str(helper.codex_root), OpenCodeLogRoot=str(helper.root / 'missing-log'),
@@ -327,8 +408,12 @@ class SourceModes(unittest.TestCase):
         self.response('repos/acme/app/pulls/7', self.pr(merged='2026-10-08T03:00:00Z', body='完成匯入'))
         combined = self.run_cli(config={'EvidenceSource': 'combined'})
         self.assertTrue(combined['meta']['canGenerateLog'])
+        self.assertEqual(combined['meta']['collectionStatus'], 'success')
         self.assertEqual(len(combined['repos']), 1)
+        self.assertEqual([p['number'] for p in combined['repos'][0]['prs']], [7])
         self.assertEqual(combined['repos'][0]['prs'][0]['number'], 7)
+        self.assertEqual(combined['repos'][0]['prs'][0]['body'], '完成匯入')
+        self.assertIn('commit-match', combined['repos'][0]['prs'][0]['reportEvidence'])
         self.assertEqual(combined['repos'][0]['sessionEvidence'][0]['sessionId'], 's1')
         self.assertEqual([e['sessionId'] for e in combined['repos'][0]['sessionEvidence']], ['s1', 's2'])
         self.assertEqual(combined['meta']['sources']['opencode']['readStatus'], 'success')
@@ -404,6 +489,36 @@ class SourceModes(unittest.TestCase):
         data = self.run_cli(config=dict(From='2026-10-31T00:00:00-04:00', To='2026-11-03T00:00:00-05:00',
                                        Timezone='America/New_York', ManualInputPath=str(path)))
         self.assertEqual([e['date'] for e in data['repos'][0]['manualEvidence']], ['2026-11-01', '2026-11-02'])
+
+    def test_new_source_stages_record_execution_cache_failure_and_probe_skips(self):
+        git = shutil.which('git')
+        if not git:
+            self.skipTest('Git required for real repo discovery boundary')
+        repo = self.root / 'repository'
+        subprocess.run([git, 'init', '-q', str(repo)], check=True, capture_output=True, timeout=30)
+        subprocess.run([git, '-C', str(repo), 'remote', 'add', 'origin', 'https://github.com/acme/app.git'],
+                       check=True, capture_output=True, timeout=30)
+        self.search('pr', [self.candidate(7)])
+        self.search('issue', [self.candidate(3, 'issues')])
+        self.response('repos/acme/app/pulls/7', self.pr())
+        self.response('repos/acme/app/issues/3', self.issue())
+        data = self.run_cli(config={'ScanRoots': [str(repo)]})
+        stages = data['meta']['diagnostics']['stages']
+        for name, calls in [('sourceAdapter', 1), ('json', 2), ('repoDiscovery', 1), ('git', 1), ('github', 5), ('output', 1)]:
+            with self.subTest(stage=name):
+                self.assertEqual(stages[name]['calls'], calls)
+                self.assertIsNotNone(stages[name]['durationMs'])
+                self.assertGreaterEqual(stages[name]['durationMs'], 0)
+        self.assertEqual(stages['github']['cacheHits'], 1)
+        probe = json.loads((self.root / 'probe.json').read_text(encoding='utf-8'))
+        for name in ('sourceAdapter', 'repoDiscovery', 'git', 'github'):
+            self.assertEqual(probe['meta']['diagnostics']['stages'][name], dict(durationMs=None, calls=None, cacheHits=None))
+        self.responses[0]['status'] = 401
+        failed = self.run_cli(config={'ScanRoots': [str(repo)]})
+        self.assertEqual(failed['meta']['collectionStatus'], 'read-failed')
+        self.assertEqual(failed['meta']['diagnostics']['stages']['github']['calls'], 1)
+        self.assertIsNotNone(failed['meta']['diagnostics']['stages']['github']['durationMs'])
+        self.assertEqual(failed['meta']['diagnostics']['stages']['git']['calls'], None)
 
 
 if __name__ == '__main__':

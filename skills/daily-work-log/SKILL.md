@@ -104,7 +104,7 @@ pwsh -NoProfile -File "<path-to-skill>\scripts\capture-daily-work-log.ps1" -Mode
 在參數 JSON 覆寫範圍與來源；省略 From／To 時由 probe 決定當天，collect 自動固定：
 
 ```json
-{"From":"2026-05-29T00:00:00+08:00","To":"2026-05-29T23:59:59+08:00","Timezone":"Asia/Taipei","EvidenceSource":"github","SourceMode":"mixed","ScanRoots":["<scan-root>"]}
+{"From":"2026-05-29T00:00:00+08:00","To":"2026-05-30T00:00:00+08:00","Timezone":"Asia/Taipei","EvidenceSource":"github","SourceMode":"mixed","ScanRoots":["<scan-root>"]}
 ```
 
 ## Collector JSON shape

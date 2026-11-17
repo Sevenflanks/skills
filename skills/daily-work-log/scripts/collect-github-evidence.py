@@ -9,6 +9,8 @@ import shutil
 import subprocess
 import sys
 import time
+import uuid
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlencode
@@ -19,7 +21,32 @@ class SourceError(Exception):
     pass
 
 
-def read_json(path):
+class Diagnostics:
+    def __init__(self):
+        self.started = time.time()
+        self.stages = {name: dict(durationMs=None, calls=None, cacheHits=None) for name in
+                       ('sourceAdapter', 'json', 'repoDiscovery', 'git', 'github', 'output')}
+
+    @contextmanager
+    def track(self, name, cached=False):
+        stage = self.stages[name]
+        if stage['calls'] is None:
+            stage.update(durationMs=0, calls=0, cacheHits=0)
+        stage['cacheHits' if cached else 'calls'] += 1
+        started = time.perf_counter()
+        try:
+            yield
+        finally:
+            stage['durationMs'] += (time.perf_counter() - started) * 1000
+
+    def snapshot(self, session=None):
+        return dict(schemaVersion=1, totalDurationMs=round(max(0, time.time() - self.started) * 1000, 3),
+                    stages={name: dict(stage, durationMs=round(stage['durationMs'], 3)
+                                       if stage['durationMs'] is not None else None)
+                            for name, stage in self.stages.items()}, session=session)
+
+
+def read_json(path, diagnostics):
     def unique(pairs):
         result = {}
         for key, value in pairs:
@@ -27,7 +54,10 @@ def read_json(path):
                 raise SourceError('duplicate-json-key')
             result[key] = value
         return result
-    return json.loads(Path(path).read_text(encoding='utf-8-sig'), object_pairs_hook=unique)
+    with diagnostics.track('sourceAdapter'):
+        text = Path(path).read_text(encoding='utf-8-sig')
+        with diagnostics.track('json'):
+            return json.loads(text, object_pairs_hook=unique)
 
 
 def now():
@@ -62,26 +92,22 @@ def canonical(value):
 
 
 class Provider:
-    def __init__(self, path=None):
-        self.responses = read_json(path).get('responses') if path else None
+    def __init__(self, diagnostics, path=None):
+        self.diagnostics = diagnostics
+        self.responses = read_json(path, diagnostics).get('responses') if path else None
         if path and not isinstance(self.responses, list):
             raise SourceError('invalid-provider-capture')
         self.cache = {}
         self.requests = []
-        self.hits = 0
-        self.duration_ms = 0
 
     def get(self, path, **parameters):
-        started = time.perf_counter()
-        try:
+        key = json.dumps([path, parameters], sort_keys=True)
+        with self.diagnostics.track('github', cached=key in self.cache):
             return self._get(path, **parameters)
-        finally:
-            self.duration_ms += (time.perf_counter() - started) * 1000
 
     def _get(self, path, **parameters):
         key = json.dumps([path, parameters], sort_keys=True)
         if key in self.cache:
-            self.hits += 1
             return self.cache[key]
         self.requests.append(dict(path=path, parameters=parameters))
         if self.responses is not None:
@@ -102,7 +128,8 @@ class Provider:
                 # 外部錯誤可能反射私有內容；raw 與 aggregate 都只保留安全錯誤碼。
                 raise SourceError('provider-request-failed')
             try:
-                data = json.loads(result.stdout)
+                with self.diagnostics.track('json'):
+                    data = json.loads(result.stdout)
             except ValueError:
                 raise SourceError('provider-invalid-json') from None
         if not isinstance(data, (dict, list)):
@@ -111,7 +138,7 @@ class Provider:
         return data
 
 
-def local_repos(config, warnings):
+def local_repos(config, warnings, diagnostics):
     roots = list(config.get('ScanRoots') or [])
     if not roots and config.get('Repositories'):
         return {}
@@ -128,8 +155,9 @@ def local_repos(config, warnings):
         marker = path / '.git'
         if marker.exists():
             try:
-                result = subprocess.run(['git', '-C', str(path), 'remote', 'get-url', 'origin'],
-                                        capture_output=True, encoding='utf-8')
+                with diagnostics.track('git'):
+                    result = subprocess.run(['git', '-C', str(path), 'remote', 'get-url', 'origin'],
+                                            capture_output=True, encoding='utf-8')
                 repo = canonical(result.stdout.strip()) if result.returncode == 0 else None
                 if repo:
                     found.setdefault(repo, []).append(str(path))
@@ -157,8 +185,7 @@ def local_repos(config, warnings):
     return found
 
 
-def compose(config):
-    wall_started = config.get('collectorStartedAtEpoch', time.time())
+def compose(config, diagnostics):
     mode = config.get('EvidenceSource', 'github')
     probe = bool(config.get('ProbeOnly'))
     tzname = config.get('Timezone', 'Asia/Taipei')
@@ -204,6 +231,22 @@ def compose(config):
                 seen.add(signature)
                 kept.append(item)
         return kept
+    def evidence_list(value):
+        # 舊 Session 的 reportEvidence 是 basis 字串；保留它，與新來源的結構化證據共存。
+        return value if isinstance(value, list) else ([] if value is None else [value])
+    def merge_prs(items):
+        kept = {}
+        for item in items:
+            key = item.get('number')
+            if key not in kept:
+                kept[key] = dict(item)
+                continue
+            existing = kept[key]
+            existing['reportEvidence'] = distinct(evidence_list(existing.get('reportEvidence')) +
+                                                   evidence_list(item.get('reportEvidence')))
+            existing['evidenceSources'] = distinct(existing.get('evidenceSources', ['session']) +
+                                                    item.get('evidenceSources', ['session']))
+        return list(kept.values())
     for index, repo in enumerate(session.get('repos', [])):
         identity = canonical(repo.get('githubRepo'))
         if requested_scope and identity not in requested_scope:
@@ -219,8 +262,9 @@ def compose(config):
         else:
             # 同 canonical repo 的多個 worktree 都是有效證據，不能用最後一個覆蓋前者。
             existing = repos[key]
-            for field in ('commits', 'prs', 'sessionEvidence', 'warnings', 'source'):
+            for field in ('commits', 'sessionEvidence', 'warnings', 'source'):
                 existing[field] = distinct(existing.get(field, []) + repo.get(field, []))
+            existing['prs'] = merge_prs(existing.get('prs', []) + repo.get('prs', []))
             existing['localPaths'] = distinct(existing['localPaths'] + ([repo['path']] if repo.get('path') else []))
     def repo_for(repo, project=None):
         key = repo or 'manual:' + (project or 'unresolved')
@@ -241,7 +285,8 @@ def compose(config):
                 item['reportEvent'] = existing['reportEvent']
                 item['reportEventAt'] = existing['reportEventAt']
             if field == 'prs':
-                item['reportEvidence'] = distinct(existing.get('reportEvidence', []) + item.get('reportEvidence', []))
+                item['reportEvidence'] = distinct(evidence_list(existing.get('reportEvidence')) +
+                                                   evidence_list(item.get('reportEvidence')))
                 item['evidenceSources'] = distinct(existing.get('evidenceSources', ['session']) + ['github'])
             existing.update(item)
             return existing
@@ -258,12 +303,13 @@ def compose(config):
         return start <= date_value(value, default_tz) < end
     if selected_github:
         try:
-            provider = Provider(config.get('GitHubInputPath'))
+            provider = Provider(diagnostics, config.get('GitHubInputPath'))
             viewer = provider.get('user').get('login')
             if not isinstance(viewer, str) or not re.fullmatch(r'[\w-]+', viewer):
                 raise SourceError('github-identity-unresolved')
             meta.update(ghViewer=viewer, ghAvailable=True)
-            repo_paths = local_repos(config, result['warnings'])
+            with diagnostics.track('repoDiscovery'):
+                repo_paths = local_repos(config, result['warnings'], diagnostics)
             requested = config.get('Repositories') or []
             scopes = []
             for value in requested:
@@ -411,7 +457,7 @@ def compose(config):
             sources['github']['readStatus'] = 'failed'
     if config.get('ManualInputPath'):
         try:
-            manual = read_json(config['ManualInputPath'])
+            manual = read_json(config['ManualInputPath'], diagnostics)
             if not isinstance(manual, list):
                 raise SourceError('invalid-manual-input')
             for index, item in enumerate(manual):
@@ -443,22 +489,27 @@ def compose(config):
         meta['collectionStatus'] = 'partial' if meta['canGenerateLog'] else 'scope-unresolved'
     if provider:
         sources['github']['requests'] = provider.requests
-    stages = {name: dict(durationMs=None, calls=None, cacheHits=None) for name in
-              ('sourceAdapter', 'json', 'repoDiscovery', 'git', 'github', 'output')}
-    if provider:
-        stages['github'] = dict(calls=len(provider.requests), cacheHits=provider.hits,
-                                durationMs=round(provider.duration_ms, 3))
-    meta['diagnostics'] = dict(schemaVersion=1, totalDurationMs=round(max(0, time.time() - wall_started) * 1000, 3),
-                               stages=stages, session=session.get('meta', {}).get('diagnostics'))
     return result
 
 
 if __name__ == '__main__':
+    diagnostics = Diagnostics()
+    config = {}
     try:
         # Native pipe 的 bytes 固定 UTF-8，避免 PYTHONIOENCODING 或 Windows locale 改寫私有證據。
-        config = json.loads(sys.stdin.buffer.read().decode('utf-8-sig'))
-        output = compose(config)
+        with diagnostics.track('json'):
+            config = json.loads(sys.stdin.buffer.read().decode('utf-8-sig'))
+        diagnostics.started = config.get('collectorStartedAtEpoch', diagnostics.started)
+        output = compose(config, diagnostics)
     except Exception as error:
         output = dict(meta=dict(canGenerateLog=False, collectionStatus='error'), repos=[], warnings=[],
                       errors=[str(error) if isinstance(error, SourceError) else 'invalid-source-input'])
-    sys.stdout.buffer.write((json.dumps(output, ensure_ascii=False, separators=(',', ':')) + '\n').encode('utf-8'))
+    # 只序列化大型證據一次；診斷 placeholder 在 output 計時結束後替換，避免遺漏自身階段。
+    marker = uuid.uuid4().hex
+    output['meta']['diagnostics'] = marker
+    with diagnostics.track('output'):
+        encoded = json.dumps(output, ensure_ascii=False, separators=(',', ':')).encode('utf-8')
+    session_diagnostics = ((config.get('sessionData') or {}).get('meta', {}).get('diagnostics')
+                           if isinstance(config, dict) else None)
+    final_diagnostics = json.dumps(diagnostics.snapshot(session_diagnostics), separators=(',', ':')).encode('utf-8')
+    sys.stdout.buffer.write(encoded.replace(('"' + marker + '"').encode('ascii'), final_diagnostics, 1) + b'\n')

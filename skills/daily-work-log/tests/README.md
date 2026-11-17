@@ -99,3 +99,10 @@ Standards 軸的 Session 文件導覽已改為同層 evidence-views.md 與 ../SK
 來源時區沿用原 PowerShell System.TimeZoneInfo 解析；native helper 將固定 From/To 與手動純日期的個別 offset 傳給共同 collector。Windows Python 無 IANA DB 不需要新增 tzdata dependency；使用 python -S＋空 PYTHONTZPATH 的受控外部入口核對負時區及跨 DST 的末日排除。初版 Python fixture 未轉送 pipeline input，其失敗只證明 fixture 錯誤；修正外部 stdin 協定後才觀察目前行為，不能用前次失敗宣稱已驗證時區缺陷。
 
 新增第四個 fresh consuming context：GitHub viewer fixture 回 401，agent 保留 github 模式與 partial，不切 Session、不重試 provider，仍用已確認歸屬的 user-provided 內容產生完整 manual-only ERP 預覽。PR #7 保留未核實狀態，沒有自造 MERGED；保留 existing1＋新工作6＋LEAVE1＝8，沒有 authorized/request。這補足失敗來源＋有效手動內容的實際 agent 分支，不擴稱全部降級／身分情境已通過。
+
+### #67 PR 審查第 1 輪
+
+- `test_new_source_stages_record_execution_cache_failure_and_probe_skips` 先 red（五個已執行 stage 是 null、probe 無 diagnostics），修正後 green。真實 git remote 子程序、capture JSON、一次 related Issue cache hit 與 401 失敗共同驗證六階段；probe 的未執行階段仍是 null。
+- `test_explicit_session_and_combined_keep_real_session_reader` 使用兩個真 Session worktree 的同一 PR；先因 scalar reportEvidence 合併而 partial，修正後同 canonical PR 一筆、兩個 Session、舊 commit-match 與新 GitHub 全文／證據均保留。
+- `test_default_refuses_and_records_session_access_with_same_positive_observer` 在外部 OpenCode CLI 記錄／拒絕查詢，在實際 Codex Python process 以標準 audit hook 記錄／拒絕 fixture 檔案與 SQLite 讀取；同一 observer 的明確 Session 正向對照必須讀到兩個來源。初版 observer 沒解析 SQLite file URI，正向對照失敗；修正 observer 後才成立，不把它當 production 缺陷。
+- 已實際執行自有 scripts 副本的 stealth-read mutation：在 github 路由前偷呼叫 Session、丟棄結果，仍保留 github 標記；預設成功與 401 兩案都因 access log 非空而 red，正常 scripts green。這補足前述僅偵測 source mismatch 的 mutation；觀測範圍是 OpenCode 查詢及 Codex process 的真實讀取，不宣稱是任意 PowerShell 檔案操作的 OS 全域稽核。

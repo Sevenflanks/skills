@@ -55,6 +55,8 @@ date、非空 result 必填；repo／project 可缺，先保留待確認專案�
 
 先 bounded index，再按 repo／session／原始 raw pointer 選讀；完整 ERP view 保留新 Issue、手動內容、歸屬依據及全文。unknown／partial／failed／empty／not-selected 分開。github coverage 保留 pages／limitHits／failures；requests 是私有 raw 的外部 request 記錄，index 不展開。Session 原日期／身分／scope 狀態另保留在 meta.sessionContext；有指定 Repositories 時 Session 也套用相同 canonical 範圍，未能識別的資料私下保留在 unresolvedRepositories，以 scopeUnresolved／警告揭露，不猜歸屬。Session diagnostics 保留在 composition diagnostics.session，totalDurationMs 是獨立 wall，重疊 stages 不相加。
 
+composition 的六 stage 記錄實際執行與失敗：sourceAdapter 是 provider／manual capture 的檔案讀取；json 是 bridge request、capture 或 live response 的解析；repoDiscovery 是 canonical repo 探索；git 是 remote 子程序；github 是 provider request（cacheHits 另計，不增加 calls）；output 是主 JSON 序列化，結束後才補小型診斷並寫 stdout。probe 未進入的來源／探索／git／github 保持 null；已執行但零次外部呼叫與未執行不同。totalDurationMs 包含 bridge 與 Session 子流程，原 Session 分段另見 diagnostics.session；各 stage 可重疊，不相加。
+
 完整流程耗時由 agent 記開始、稿件核對完成、使用者等待與 ERP 邊界；不把 collector 時間當端到端耗時，3 分 13 秒不是 assertion／timeout／SLA。清理需等草稿及最終稿交付；過程不回顯私人全文、原始錯誤或內部路徑。
 
 三種來源交同一份完整證據給 erp-daily-work-log。來源不改工時／請假、官方 context／options、分類、append／replace／output_only、完整 Markdown／JSON／intent、fresh snapshot、授權及完整讀回。來源或手動內容改變送出意圖時重新預覽並取得相應授權；單純重 preview 重用有效準備，真正 write 前才 fresh 核對。無自動或手動內容時不造日誌／工時。
