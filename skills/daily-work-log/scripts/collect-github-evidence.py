@@ -87,7 +87,9 @@ def date_value(value, tz):
 def canonical(value):
     if not isinstance(value, str):
         return None
-    match = re.fullmatch(r'(?:https://github.com/|git@github.com:)?([\w.-]+/[\w.-]+?)(?:\.git)?/?', value.strip())
+    # 與既有 Session remote parser 保留相同三種格式及精確 host；bare identity 供 repo scope／手動輸入。
+    match = re.fullmatch(r'(?:https://github\.com/|ssh://git@github\.com/|git@github\.com:)?'
+                         r'([A-Za-z0-9-]+/[A-Za-z0-9_.-]+?)(?:\.git)?/?', value.strip(), re.IGNORECASE)
     return match.group(1).lower() if match else None
 
 

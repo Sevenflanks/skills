@@ -114,3 +114,7 @@ Standards 軸的 Session 文件導覽已改為同層 evidence-views.md 與 ../SK
 新增第五個 fresh consuming-agent 實跑父子規格與獨立人工驗收：背景母規格 #1、當日子規格 #3 與 merged PR #7、獨立驗收 #5（發現 UTF-8 缺陷、未通過）及重複的手動實作補充。日誌分開實作3h與驗收1h，父子規格／PR不重複計功，#1／#3／#5 的當前 OPEN 不被 closing reference 覆寫；保留重驗與母規格未結案待辦。兩個主題經已確認 PROJECT7/module71 歸屬後，依 ERP 單日唯一性放同一4h列，description 仍分兩項、分工時與交付狀態；不是用共用 parent 推定驗收完成。RD81工具／SQL2h另列，保留 COMPANY1h與LEAVE1h，共8h。
 
 root 依固定 fixture 的字面日期、參照、工時、現存ID80、三個OPEN狀態、獨立未通過／重驗，以及同 plan 的完整 JSON／Markdown 核對通過。此案實際執行公開 capture/index/完整 view 與原樣 helper preview，沒有 authorized／真 request／永久偏好或mapping，全部 process 已結束。仍屬有界 smoke，未擴稱線上驗收或全部 evals。
+
+### #67 PR 審查第 3 輪
+
+`test_remote_formats_preserve_proxy_discovery_and_reject_lookalike_hosts` 經真實 git origin 與公開 GitHub capture，無指定 Repositories、全域本人搜尋為空，只有從已確認本機 repo 才能找到可信代理 PR。先觀察 ssh:// 與大小寫變體漏收為 no-activity，亦觀察 githubXcom 被誤識別為 GitHub；修正 canonical parser 後，既有 HTTPS／SCP／SSH 三格式及大小寫均找回相同代理 PR 與本人關聯根據，兩個相似 host 保持無成果且不擴大 repo 範圍。README 的 Codex 額度完整參數範例同步明選 Session、To 改次日午夜；SKILL 範例與常見錯誤表亦明確限定 Session 的 Git history／gh 補證規則，避免覆蓋 GitHub provider 與手動-only 契約。

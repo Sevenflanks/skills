@@ -246,22 +246,22 @@ Output: Run the PowerShell helper for today's range, inspect JSON warnings, then
 ```
 
 ```text
-Input: 我想補昨天的日報，範圍改成昨天 00:00 到 23:59，另外掃我的專案根目錄底下 repo 補強。
-Output: Run the helper with explicit From/To plus `-SourceMode mixed -ScanRoots "<scan-root>"`, then summarize the resulting JSON into grouped bullets.
+Input: 我想補昨天整天的日報，另外掃我的專案根目錄底下 repo 補強。
+Output: 保持預設 GitHub，From 設昨天午夜、To 設今天午夜；用 `-SourceMode mixed -ScanRoots "<scan-root>"` 補 canonical repo 辨識，不因此讀 Session 或 Git history，再依完整證據整理主題。
 ```
 
 ## Common mistakes
 
 | Mistake | Correct behavior |
 | --- | --- |
-| 只看目前 branch 的 commit | 一律使用 `git log --all`。 |
-| 直接從 commit message 猜 PR / issue 關聯 | 先收 git，再用 `gh` 補 PR 與 closing issues。 |
+| Session 補證只看目前 branch 的 commit | Session 分支使用 `git log --all`；GitHub 模式只辨識 remote／worktree，不把 Git history 當成果入口。 |
+| Session 補證直接從 commit message 猜 PR / issue 關聯 | 在 Session 分支收 Git 證據，再用 `gh` 核對 PR 與關聯 Issue；GitHub 模式沿已選 provider 的正式回應判定。 |
 | helper 腳本同時輸出 JSON 與說明文字 | `stdout` 保持 pure JSON；人類摘要由 skill 產生。 |
 | DB 回傳空陣列時繼續讀 log 湊 repo | DB 成功且回傳 `[]` 代表 session discovery 沒有 repo，不 fallback。 |
 | DB 查詢失敗就停止 session discovery | 依序 fallback 到 `storage/directory-readme`，再讀 OpenCode logs，並保留 warning。 |
 | 看見非 git repo 就忽略 | 明講「今日有 session，非 git repo」。 |
-| `gh` 失敗時假裝沒有 PR | 預設停止並建議安裝或登入 `gh`；若使用者強烈堅持才保留 warning 並在最終輸出說明未補證。 |
-| `gh` 不存在或未登入時直接降級產生日報 | 先停止並建議安裝 `gh` 或執行 `gh auth login`；只有使用者強烈堅持才降級繼續。 |
+| Session 的 `gh` 補證失敗時假裝沒有 PR | 沿用原認證／明確降級規則：停止缺乏依據的自動補證，建議安裝或登入；當次明確堅持降級才保留 warning 及未補證狀態，不放寬作者。已核對手動內容按來源契約處理。 |
+| 把本機 `gh` 不存在或未登入當成所有 GitHub provider 失效 | 依當次實際 provider 判斷；足夠 connector 仍可用。所選來源失敗揭露缺口，不當空結果、不自動切 Session；有效手動內容仍可組稿。 |
 | 一律用資料夾名稱當分組標題 | 優先使用 `githubRepo` 的 GitHub repo name，缺失時才 fallback 到 repo folder name。 |
 | 把相鄰 commit 片段拆成多條半句 | 合併成一條能單獨理解的日誌句；若無法說清楚就不要列。 |
 | 把同一 repo 的 commit 幾乎逐條照抄 | 先歸納成 2-5 條主題句，再保留最重要的 PR / issue。 |

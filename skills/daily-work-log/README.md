@@ -113,8 +113,9 @@ Windows PowerShell 5.1 的預設 redirect 會產生 UTF-16LE；bundled `capture-
 
 ```powershell
 $parameters = @{
+  EvidenceSource = 'session'
   From = '2026-05-29T00:00:00+08:00'
-  To = '2026-05-29T23:59:59+08:00'
+  To = '2026-05-30T00:00:00+08:00'
   Timezone = 'Asia/Taipei'
   CodexTotalBytes = 128MB  # PowerShell 的 MB 為 1,048,576 bytes，即 MiB。
   CodexFileBytes = 16MB

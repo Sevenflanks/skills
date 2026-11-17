@@ -559,6 +559,44 @@ sys.addaudithook(observe)
                 self.assertEqual(data['meta']['sources']['github']['readStatus'],
                                  'empty' if expected == 'combined' else 'not-selected')
 
+    def test_remote_formats_preserve_proxy_discovery_and_reject_lookalike_hosts(self):
+        git = shutil.which('git')
+        if not git:
+            self.skipTest('Git required for real origin boundary')
+        repo = self.root / 'repository'
+        subprocess.run([git, 'init', '-q', str(repo)], check=True, capture_output=True, timeout=30)
+        subprocess.run([git, '-C', str(repo), 'remote', 'add', 'origin', 'ssh://git@github.com/acme/app.git'],
+                       check=True, capture_output=True, timeout=30)
+        for query in ('is:pr author:owner is:merged merged:2026-11-15..2026-11-17',
+                      'is:issue author:owner created:2026-11-15..2026-11-17'):
+            self.response('search/issues', dict(items=[], total_count=0, incomplete_results=False),
+                          q=query, per_page=100, page=1)
+        self.search('pr', [self.candidate(7)])
+        self.search('issue', [])
+        self.response('repos/acme/app/pulls/7', self.pr(user='agent[bot]'))
+        self.response('repos/acme/app/issues/3', self.issue())
+        config = dict(Repositories=[], ScanRoots=[str(repo)], ProxyLogins=['agent[bot]'])
+        for remote in ('ssh://git@github.com/acme/app.git', 'git@github.com:acme/app.git',
+                       'https://github.com/acme/app.git', 'SSH://git@GitHub.Com/AcMe/App.git'):
+            with self.subTest(remote=remote):
+                subprocess.run([git, '-C', str(repo), 'remote', 'set-url', 'origin', remote],
+                               check=True, capture_output=True, timeout=30)
+                data = self.run_cli(config=config)
+                self.assertEqual(data['meta']['collectionStatus'], 'success')
+                self.assertEqual(data['meta']['repositoryScope']['confirmed'], ['acme/app'])
+                self.assertEqual([p['number'] for p in data['repos'][0]['prs']], [7])
+                self.assertEqual(data['repos'][0]['prs'][0]['attribution'], dict(
+                    kind='confirmed-agent-and-request', login='owner', agent='agent[bot]',
+                    evidenceUrls=['https://github.com/acme/app/issues/3']))
+        for remote in ('https://githubXcom/acme/app.git', 'ssh://git@github.com.example/acme/app.git'):
+            with self.subTest(lookalike=remote):
+                subprocess.run([git, '-C', str(repo), 'remote', 'set-url', 'origin', remote],
+                               check=True, capture_output=True, timeout=30)
+                data = self.run_cli(config=config)
+                self.assertEqual(data['meta']['collectionStatus'], 'no-activity')
+                self.assertEqual(data['meta']['repositoryScope']['confirmed'], [])
+                self.assertEqual(data['repos'], [])
+
 
 if __name__ == '__main__':
     unittest.main()
