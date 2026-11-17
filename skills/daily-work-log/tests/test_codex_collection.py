@@ -64,8 +64,8 @@ class CodexCollection(unittest.TestCase):
         self.history.execute('insert into thread_items values(?,?,?,?,?,?,?,?,?,?)', (sid, turn, iid, 1, time, json.dumps(data), 'agentMessage', 1, time, time))
         self.history.commit()
 
-    def collect(self, *extra, unavailable_commands=()):
-        args = [PWSH, '-NoProfile', '-File', str(SCRIPTS / 'collect-daily-work-log.ps1'), '-From', '2026-05-29T00:00:00+08:00', '-To', '2026-05-29T23:59:59+08:00', '-CodexRoot', str(self.home), '-OpenCodeLogRoot', str(self.root / 'logs'), '-OpenCodeStorageRoot', str(self.root / 'storage'), '-ScanRoots', str(self.repo), *extra]
+    def collect(self, *extra, unavailable_commands=(), to='2026-05-30T00:00:00+08:00'):
+        args = [PWSH, '-NoProfile', '-File', str(SCRIPTS / 'collect-daily-work-log.ps1'), '-EvidenceSource', 'session', '-From', '2026-05-29T00:00:00+08:00', '-To', to, '-CodexRoot', str(self.home), '-OpenCodeLogRoot', str(self.root / 'logs'), '-OpenCodeStorageRoot', str(self.root / 'storage'), '-ScanRoots', str(self.repo), *extra]
         if unavailable_commands:
             # Replace only external discovery; the published collector and legacy reader still run.
             quote = lambda value: "'" + str(value).replace("'", "''") + "'"
@@ -101,6 +101,14 @@ class CodexCollection(unittest.TestCase):
         self.assertEqual(data['meta']['sources']['codex']['adapters']['state']['status'], 'success')
         self.assertFalse(data['meta']['sources']['codex']['coverage']['complete'])
         self.assertEqual(data['meta']['sources']['codex']['adapters']['exact']['sessions'][0]['reason'], 'projection-not-completeness-proof')
+
+    def test_public_session_range_excludes_exact_to_boundary(self):
+        self.rollout(messages=[self.event('inside', time='2026-05-29T03:00:00Z'),
+                               self.event('next-day', time='2026-05-29T16:00:00Z')])
+        self.item('sql-inside')
+        self.item('sql-next-day', time=1780070400000, iid='sql2')
+        data = self.collect(to='2026-05-30T00:00:00+08:00')
+        self.assertEqual({e['text'] for e in data['repos'][0]['sessionEvidence']}, {'inside', 'sql-inside'})
 
     def test_version_is_diagnostic_only_including_absent_column_and_mixed_candidates(self):
         for sid in ('known', 'different', 'absent', 'unknown'):
@@ -259,7 +267,7 @@ class CodexCollection(unittest.TestCase):
         self.assertNotIn('excluded-', json.dumps(data))
         self.assertFalse(source['coverage']['complete'])
 
-    def test_agent_mail_count_uses_inclusive_range_and_original_records(self):
+    def test_agent_mail_count_uses_report_day_and_original_records(self):
         times = ['2026-05-28T15:59:59Z', '2026-05-28T16:00:00Z',
                  '2026-05-29T02:00:00Z', '2026-05-29T15:59:59Z', '2026-05-29T16:00:00Z']
         paths = []

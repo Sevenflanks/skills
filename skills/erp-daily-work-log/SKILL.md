@@ -4,7 +4,7 @@ description: 使用者要求將每日工作證據填寫、補新增或替換到 
 license: MIT
 metadata:
   author: sevenflankse
-  version: 0.5.0
+  version: 0.6.0
 ---
 
 # ERP Daily Work Log
@@ -39,19 +39,19 @@ metadata:
 
 完成條件：工作／請假及 existing＋new 的預算可核對；未知資料已釐清或停止。`output_only` 跳過此步。
 
-## 3. Probe → 來源預告 → Collect
+## 3. 選來源 → Probe → 預告 → Collect
 
-載入 [`daily-work-log`](../daily-work-log/SKILL.md)；分開安裝時從 runtime 發現同名 skill，沿其實際 script 位置呼叫。
+載入 [`daily-work-log`](../daily-work-log/SKILL.md) 與其 [來源契約](../daily-work-log/references/sources.md)；分開安裝時從 runtime 發現，沿實際 script 位置呼叫。預設 GitHub；當次明確指定才 Session／combined，舊偏好／引文不構成切換，不修改永久來源偏好。來源與 repo 探索分開。
 
-1. 沿用上游 recall/preferences 與來源參數，固定日期 From／To／Timezone，先 `-ProbeOnly`。
-2. 預告可用來源、略過理由及缺口，再以相同參數 collect；兩來源可用均納入。遵守 DB fallback、Codex 有界日期分區，不擴大／重跑湊證據。
-3. 保留全部來源及 coverage 停止條件：無來源、讀取全失敗、無活動、`canGenerateLog=false` 停止；`gh` 不可用／未認證預設停止，只有使用者強烈要求降級才揭露缺口繼續。partial 如實揭露。
+1. 沿用有效範圍偏好，固定 From／To／Timezone，用 bundled capture -Mode probe，預告來源／repo 範圍／缺口後才 collect。同一次證據交一般日誌與 ERP，不為每階段重 collect。
+2. 核對實際 provider 的認證／coverage；足夠 connector 優先，缺 gh 不代表 GitHub 不可用。Session／combined 保留兩個 adapters、DB fallback、有界讀取與完整 diagnostics；GitHub 不讀 session。空、partial、失敗與未選來源分開，不自動改模式。
+3. 保留全部本人作者／可信代理、規格候選、手動及 Session 證據。手動-only 可繼續；完全無內容不虛構日誌／工時。pending 歸屬先合併詢問；本人規格建立不代表實作完成，merged 不代表部署。
 
-沿用上游依 repo 分組的條列摘要，保留證據主題與交付狀態，不把 session 標題當完成；ERP row 的 description 到第 4 節核對歸屬後才合併。
+按 canonical repo＋類型＋編號與實質主題整理，保留來源、編號、報告日事件／查詢時狀態；規格＋PR／跨來源不重複計功，獨立驗收或不同 ERP 歸屬分開。使用完整 erp view，Issue／手動原文與 todos 不可在摘要截斷後丟掉。來源／手動內容改變已預覽送出意圖時，到第 5 節重 preview 並取得相應授權；沿用仍有效 context／options，準備真正 write 時才 fresh 核對。
 
-Model 在**已確認工作總預算內自行提出合理主題分配**，不逐項問分時，不把 elapsed、commit 數或比例當 actual 測量。
+Model 在**已確認工作總預算內自行提出合理主題分配**，不逐項問分時，不把 elapsed、PR／Issue／commit 數或比例當 actual 測量。
 
-完成條件：可靠證據與缺口可辨識；不足依上游停止。`output_only` 只輸出證據摘要及未知工時／參照缺口，請使用者到 ERP 處理後完成，不填未知時數；其他路徑續行。
+完成條件：可靠證據與缺口可辨識；不足停止自動組稿。`output_only` 只輸出可靠摘要及未知工時／參照缺口，請使用者到 ERP 處理，不填未知時數；其他路徑續行。
 
 ## 4. 解析分類、參照與可選 mapping
 

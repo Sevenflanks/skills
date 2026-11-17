@@ -21,11 +21,120 @@ param(
   [double]$CodexQuerySeconds = 15,
   [ValidateRange(65536, 8388608)]
   [int]$CodexExactLineBytes = 1MB,
-  [switch]$ProbeOnly
+  [switch]$ProbeOnly,
+  [ValidateSet('github', 'session', 'combined')]
+  [string]$EvidenceSource = 'github',
+  [string[]]$Repositories = @(),
+  [string[]]$ProxyLogins = @(),
+  [string]$GitHubInputPath,
+  [string]$ManualInputPath
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+function Resolve-TimeZoneInfo {
+  param([string]$TimezoneId)
+
+  $ianaToWindows = @{
+    'Asia/Taipei' = 'Taipei Standard Time'
+  }
+
+  foreach ($candidate in @($TimezoneId, $ianaToWindows[$TimezoneId])) {
+    if ([string]::IsNullOrWhiteSpace($candidate)) {
+      continue
+    }
+
+    try {
+      return [System.TimeZoneInfo]::FindSystemTimeZoneById($candidate)
+    }
+    catch {
+      continue
+    }
+  }
+
+  throw ("Unsupported timezone: {0}" -f $TimezoneId)
+}
+
+function Resolve-DateRange {
+  param(
+    [AllowNull()]
+    [Nullable[datetimeoffset]]$FromInput,
+    [AllowNull()]
+    [Nullable[datetimeoffset]]$ToInput,
+    [string]$TimezoneId
+  )
+
+  if ($null -ne $FromInput -and $null -ne $ToInput) {
+    return [ordered]@{ From = $FromInput; To = $ToInput }
+  }
+
+  $timeZoneInfo = Resolve-TimeZoneInfo -TimezoneId $TimezoneId
+  $now = [System.TimeZoneInfo]::ConvertTime([datetimeoffset]::UtcNow, $timeZoneInfo)
+  $startLocal = [datetime]::new($now.Year, $now.Month, $now.Day, 0, 0, 0, [System.DateTimeKind]::Unspecified)
+  $startOffset = $timeZoneInfo.GetUtcOffset($startLocal)
+  $start = [datetimeoffset]::new($startLocal, $startOffset)
+  if ($FromInput) { $start = $FromInput }
+  $nextLocal = ([System.TimeZoneInfo]::ConvertTime($start, $timeZoneInfo)).Date.AddDays(1)
+  $end = [datetimeoffset]::new($nextLocal, $timeZoneInfo.GetUtcOffset($nextLocal))
+  if ($ToInput) { $end = $ToInput }
+
+  return [ordered]@{ From = $start; To = $end }
+}
+
+# SourceMode 保留原 repo 探索語意；只有 EvidenceSource=session 才進入既有 adapters。
+# GitHub 預設在這裡提早分流，連 session probe 都不觸及。
+$EvidenceSource = $EvidenceSource.ToLowerInvariant()
+$SourceMode = $SourceMode.ToLowerInvariant()
+if ($EvidenceSource -ne 'session' -or $ManualInputPath -or $Repositories.Count -gt 0) {
+  try {
+    $config = @{ collectorStartedAtEpoch = [datetimeoffset]::UtcNow.ToUnixTimeMilliseconds() / 1000.0 }
+    foreach ($key in $PSBoundParameters.Keys) {
+      $config[$key] = $PSBoundParameters[$key]
+      if ($key -in @('From','To')) { $config[$key] = $PSBoundParameters[$key].ToString('o') }
+      if ($key -eq 'ProbeOnly') { $config[$key] = [bool]$ProbeOnly }
+    }
+    $config.EvidenceSource = $EvidenceSource
+    $config.SourceMode = $SourceMode
+    # 共用 Session 已有的系統時區解析；Windows Python 沒有 IANA DB 時也不新增 dependency。
+    $sourceRange = Resolve-DateRange -FromInput $From -ToInput $To -TimezoneId $Timezone
+    $config.From = $sourceRange.From.ToString('o')
+    $config.To = $sourceRange.To.ToString('o')
+    $zone = Resolve-TimeZoneInfo -TimezoneId $Timezone
+    $config.systemTimezone = @{ offsetMinutes = $zone.GetUtcOffset($sourceRange.From).TotalMinutes; midnights = @{} }
+    if ($ManualInputPath -and -not $ProbeOnly) {
+      try {
+        $manualItems = [IO.File]::ReadAllText($ManualInputPath) | ConvertFrom-Json -AsHashtable -Depth 100 -NoEnumerate
+        if ($manualItems -is [array]) {
+          foreach ($item in $manualItems) {
+            if ($item -is [Collections.IDictionary] -and $item['date'] -is [string] -and $item['date'] -match '^\d{4}-\d{2}-\d{2}$') {
+              $date = [datetime]::ParseExact($item['date'], 'yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture)
+              $config.systemTimezone.midnights[$item['date']] = ([datetimeoffset]::new($date, $zone.GetUtcOffset($date))).ToString('o')
+            }
+          }
+        }
+      }
+      catch { } # 手動來源的讀取／內容錯誤由共同 collector 分開回報，不阻斷已成功的 GitHub 證據。
+    }
+    if ($EvidenceSource -in @('session','combined')) {
+      $sessionParameters = @{}
+      foreach ($key in $PSBoundParameters.Keys) {
+        if ($key -notin @('EvidenceSource','GitHubInputPath','ManualInputPath','Repositories','ProxyLogins')) { $sessionParameters[$key] = $PSBoundParameters[$key] }
+      }
+      $sessionParameters.EvidenceSource = 'session'
+      $sessionParameters.From = $sourceRange.From
+      $sessionParameters.To = $sourceRange.To
+      $sessionParameters.Timezone = $Timezone
+      $sessionRaw = & $PSCommandPath @sessionParameters
+      $config.sessionData = ($sessionRaw -join [Environment]::NewLine) | ConvertFrom-Json -AsHashtable -Depth 100
+    }
+    $config | ConvertTo-Json -Depth 100 -Compress | & python -B (Join-Path $PSScriptRoot 'collect-github-evidence.py')
+    if ($LASTEXITCODE -ne 0) { throw 'Source composition failed.' }
+  }
+  catch {
+    @{meta=@{canGenerateLog=$false;collectionStatus='error'};repos=@();warnings=@();errors=@('source-composition-failed')} | ConvertTo-Json -Depth 100 -Compress
+  }
+  return
+}
 $script:GitRepoRootCache = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
 $script:NoisyDirectoryNames = [System.Collections.Generic.HashSet[string]]::new(
   [string[]]@('node_modules', '.output', 'dist', 'build', 'target', '.gradle', '.mvn', '.nuxt', '.next'),
@@ -83,6 +192,7 @@ function ConvertFrom-CollectionJson {
 function Write-CollectionPayload {
   param([Parameter(ValueFromPipeline)]$Payload)
   process {
+    $Payload.meta['evidenceSource'] = 'session'
     $clock = Start-CollectionStage 'output'
     # 只序列化大型 evidence 一次；output 計時到主 JSON 完成，不包含最後的診斷編碼／stdout 傳輸。
     $token = '__dwl_diagnostics_' + [guid]::NewGuid().ToString('N')
@@ -669,55 +779,6 @@ function Copy-SessionEvidenceForSource {
   }
 
   return [pscustomobject]$copy
-}
-
-function Resolve-TimeZoneInfo {
-  param([string]$TimezoneId)
-
-  $ianaToWindows = @{
-    'Asia/Taipei' = 'Taipei Standard Time'
-  }
-
-  foreach ($candidate in @($TimezoneId, $ianaToWindows[$TimezoneId])) {
-    if ([string]::IsNullOrWhiteSpace($candidate)) {
-      continue
-    }
-
-    try {
-      return [System.TimeZoneInfo]::FindSystemTimeZoneById($candidate)
-    }
-    catch {
-      continue
-    }
-  }
-
-  throw ("Unsupported timezone: {0}" -f $TimezoneId)
-}
-
-function Resolve-DateRange {
-  param(
-    [AllowNull()]
-    [Nullable[datetimeoffset]]$FromInput,
-    [AllowNull()]
-    [Nullable[datetimeoffset]]$ToInput,
-    [string]$TimezoneId
-  )
-
-  if ($null -ne $FromInput -and $null -ne $ToInput) {
-    return [ordered]@{ From = $FromInput; To = $ToInput }
-  }
-
-  $timeZoneInfo = Resolve-TimeZoneInfo -TimezoneId $TimezoneId
-  $now = [System.TimeZoneInfo]::ConvertTime([datetimeoffset]::UtcNow, $timeZoneInfo)
-  $startLocal = [datetime]::new($now.Year, $now.Month, $now.Day, 0, 0, 0, [System.DateTimeKind]::Unspecified)
-  $startOffset = $timeZoneInfo.GetUtcOffset($startLocal)
-  $start = [datetimeoffset]::new($startLocal, $startOffset)
-  $end = $start.AddDays(1).AddTicks(-1)
-
-  if ($FromInput) { $start = $FromInput }
-  if ($ToInput) { $end = $ToInput }
-
-  return [ordered]@{ From = $start; To = $end }
 }
 
 function ConvertTo-EpochMilliseconds {
@@ -2319,6 +2380,9 @@ try {
   $range = Resolve-DateRange -FromInput $From -ToInput $To -TimezoneId $Timezone
   $resolvedFrom = $range.From
   $resolvedTo = $range.To
+  if ($resolvedTo -le $resolvedFrom) { throw 'To must be later than From.' }
+  # 公開區間改採半開；原 adapters 仍以 inclusive upper bound 讀取，集中換算避免漏改 SQL／JSONL。
+  $adapterTo = $resolvedTo.AddTicks(-1)
 
   $sources = Measure-CollectionStage 'sourceAdapter' { Get-SourceProbe }
   if ($ProbeOnly) {
@@ -2350,7 +2414,7 @@ try {
     $script:OpenCodeReadFailures = 0
     $script:OpenCodeActivityCount = 0
     try {
-      foreach ($candidate in @(Measure-CollectionStage 'sourceAdapter' { Get-SessionDirectories -FromRange $resolvedFrom -ToRange $resolvedTo -TimezoneId $Timezone -OverrideLogRoot $OpenCodeLogRoot -OverrideStorageRoot $OpenCodeStorageRoot -Warnings $warnings })) {
+      foreach ($candidate in @(Measure-CollectionStage 'sourceAdapter' { Get-SessionDirectories -FromRange $resolvedFrom -ToRange $adapterTo -TimezoneId $Timezone -OverrideLogRoot $OpenCodeLogRoot -OverrideStorageRoot $OpenCodeStorageRoot -Warnings $warnings })) {
         $sessionCandidates.Add($candidate)
       }
       # 空入口／空 log 只證明讀完，不能救回其他紀錄全失敗；DB 成功 [] 仍由成功旗標保留權威。
@@ -2366,7 +2430,7 @@ try {
   if ($sources.codex.available) {
     # 各來源自行承擔讀取失敗，避免一個 reader 的例外阻斷另一個可用來源。
     try {
-      foreach ($candidate in @(Measure-CollectionStage 'sourceAdapter' { Get-CodexSessionDirectories -Source $sources.codex -FromRange $resolvedFrom -ToRange $resolvedTo -Warnings $warnings })) {
+      foreach ($candidate in @(Measure-CollectionStage 'sourceAdapter' { Get-CodexSessionDirectories -Source $sources.codex -FromRange $resolvedFrom -ToRange $adapterTo -Warnings $warnings })) {
         $sessionCandidates.Add($candidate)
       }
     }
@@ -2497,7 +2561,7 @@ try {
     }
 
     try {
-      $commits = Get-CommitData -RepositoryPath $repoPath -FromRange $resolvedFrom -ToRange $resolvedTo -CurrentIdentity $currentIdentity
+      $commits = Get-CommitData -RepositoryPath $repoPath -FromRange $resolvedFrom -ToRange $adapterTo -CurrentIdentity $currentIdentity
     }
     catch {
       Add-WarningMessage -List $repoWarnings -Message $_.Exception.Message
@@ -2513,7 +2577,7 @@ try {
     }
 
     if ($ghAvailable) {
-      $prs = Get-GhContext -RepositoryPath $repoPath -GithubRepo $githubRepo -FromRange $resolvedFrom -ToRange $resolvedTo -Commits $commits -SessionEvidence @($item.sessionEvidence) -Warnings $repoWarnings
+      $prs = Get-GhContext -RepositoryPath $repoPath -GithubRepo $githubRepo -FromRange $resolvedFrom -ToRange $adapterTo -Commits $commits -SessionEvidence @($item.sessionEvidence) -Warnings $repoWarnings
     }
 
     $repos.Add([ordered]@{

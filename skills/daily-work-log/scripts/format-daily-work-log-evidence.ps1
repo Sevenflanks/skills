@@ -185,7 +185,7 @@ end {
 
   function Get-IndexMeta {
     param($Meta)
-    $result = Select-IndexScalars $Meta @('generatedAt','timezone','from','to','sourceMode','probeOnly','collectionStatus','canGenerateLog','ghAvailable','ghViewer','authorScope')
+    $result = Select-IndexScalars $Meta @('generatedAt','timezone','from','to','sourceMode','evidenceSource','probeOnly','collectionStatus','canGenerateLog','ghAvailable','ghViewer','authorScope','scopeUnresolved')
     # 新診斷 schema 尚未適配時仍可完整選讀，index 不展開未知 metadata。
     $result.detailRef = New-RawReference $(if ($collector.PSObject.Properties['meta']) { '/meta' } else { '' })
     if ($null -ne $Meta -and $Meta.PSObject.Properties['diagnostics']) {
@@ -210,6 +210,12 @@ end {
       $pointer = "/meta/sources/$(ConvertTo-PointerToken $property.Name)"
       $entry = Select-IndexScalars $source @('available','cliAvailable','readStatus','reason')
       $entry.detailRef = New-RawReference $pointer
+      if ($property.Name -eq 'github') {
+        $coverage = Get-PropertyValue $source 'coverage'
+        $entry.coverage = Select-IndexScalars $coverage @('complete','pages')
+        $entry.coverage.limitHits = New-ArrayIndex $coverage 'limitHits' "$pointer/coverage"
+        $entry.coverage.failures = New-ArrayIndex $coverage 'failures' "$pointer/coverage"
+      }
       if ($property.Name -in @('opencode','codex') -and $null -ne $source) {
         $entry.entries = New-ArrayIndex $source 'entries' $pointer
         $entry.unknownTimeEvents = Get-PropertyValue $source 'unknownTimeEvents'
@@ -413,6 +419,7 @@ end {
           name = Get-PropertyValue $repo 'name'; githubRepo = Get-PropertyValue $repo 'githubRepo'
           source = Get-PropertyValue $repo 'source'; isGitRepo = Get-PropertyValue $repo 'isGitRepo'
           commits = Get-KnownCount $repo 'commits'; prs = Get-KnownCount $repo 'prs'; sessions = if ($SessionId) { $selectedOffsets.Count } else { Get-KnownCount $repo 'sessionEvidence' }
+          issues = Get-KnownCount $repo 'issues'; manual = Get-KnownCount $repo 'manualEvidence'; pendingAttribution = Get-KnownCount $repo 'pendingAttribution'
           warnings = @(ConvertTo-Array (Get-PropertyValue $repo 'warnings')); detailRef = New-RawReference "/repos/$repoIndex"
         })
         continue
@@ -440,6 +447,9 @@ end {
           isGitRepo = Get-PropertyValue -Object $repo -Name 'isGitRepo'
           commits = @(ConvertTo-Array -Value (Get-PropertyValue -Object $repo -Name 'commits'))
           prs = @(ConvertTo-Array -Value (Get-PropertyValue -Object $repo -Name 'prs'))
+          issues = @(ConvertTo-Array (Get-PropertyValue $repo 'issues'))
+          manualEvidence = @(ConvertTo-Array (Get-PropertyValue $repo 'manualEvidence'))
+          pendingAttribution = @(ConvertTo-Array (Get-PropertyValue $repo 'pendingAttribution'))
           sessionEvidence = @(foreach ($i in $selectedOffsets) { $allEvidence[$i] })
           warnings = @(ConvertTo-Array -Value (Get-PropertyValue -Object $repo -Name 'warnings'))
         })
@@ -492,6 +502,9 @@ end {
         shownCommits = @($summaryCommits | Select-Object -First $MaxCommitsPerRepo)
         prs = @($prTexts)
         lowSignalPrRefs = @($lowSignalPrRefs)
+        issues = @(ConvertTo-Array (Get-PropertyValue $repo 'issues'))
+        manualEvidence = @(ConvertTo-Array (Get-PropertyValue $repo 'manualEvidence'))
+        pendingAttribution = @(ConvertTo-Array (Get-PropertyValue $repo 'pendingAttribution'))
         # 主題合併需要全部來源證據；截斷前五筆會讓另一來源或續行消失。
         sessionEvidence = $summaryEvidence
         warnings = @($repoWarnings)

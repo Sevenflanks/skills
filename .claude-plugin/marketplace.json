@@ -21,8 +21,8 @@
     {
       "name": "daily-work-log",
       "source": "skills/daily-work-log",
-      "description": "固定 capture／repo／session／raw pointer 選讀，合併 OpenCode／Codex 與 Git／GitHub 證據；保留必要資料能力 gate、分段診斷、有界補報補證及來源缺口。",
-      "version": "0.9.1",
+      "description": "預設 GitHub 本人交付與新規格，明確 Session／合併及手動補充，保留完整證據、歸屬與來源診斷。",
+      "version": "1.0.0",
       "keywords": [
         "work-log",
         "daily-report",
@@ -37,8 +37,8 @@
     {
       "name": "erp-daily-work-log",
       "source": "skills/erp-daily-work-log",
-      "description": "依工作證據與 canonical repo／issue 狀態填寫 ERP 日誌；只刷新失效補證並保留 preview／授權流程。",
-      "version": "0.5.0",
+      "description": "整合三種來源與手動證據至 ERP，保留假勤、歸屬、完整預覽、append／replace、獨立授權及完整讀回。",
+      "version": "0.6.0",
       "keywords": ["erp", "work-log", "daily-report", "python", "authorization"]
     },
     {

@@ -1,5 +1,7 @@
 # ERP 日誌：確認後儲存專案 mapping 與依工作內容選模組
 
+> 現行契約更新（#66／#67）：以 skills/erp-daily-work-log/SKILL.md 為準。GitHub 預設，明確 Session／combined 及手動內容均可；首次／補新增走 append（合計含 existing，次日 10:00 不阻擋），只有明確 replace 受期限與覆蓋確認限制。所需 operation 不可用才 output_only；不是 replace-only。下列初版設計與歷史驗證保留，與此衝突的逾期一律停止／不重試敘述已由現行受控 retry 契約取代。
+
 ## 已確認範圍
 
 - 新功能延續 `erp-daily-work-log`。原本整日請假 stop、逾期 output_only、來源不足停止、獨立覆蓋及提交授權、完整讀回與不自動重試規則均保留。

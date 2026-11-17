@@ -67,3 +67,7 @@ python -B skills/erp-daily-work-log/scripts/daily_report.py --plan skills/erp-da
 ## 0.5.0 bounded smoke（#64）
 
 本次用一個乾淨 consuming-agent context，只提供新 skill／必要 reference 與既有合成 plan/options，未提供 eval answers。實際執行 layout Markdown 及內部 JSON，產出完整總覽、4 筆新列、1 筆保留列與五項工時；主 agent 檢視實際輸出，末尾只問版型。第二輪回覆「可以，採用這個版型」後，agent 只確認版型並停止，沒有把它轉成提交授權，也沒有 ERP／mapping／preference write。原 plan／payload／intent 未變，process 已結束。這是 case56 的兩輪 bounded smoke，非完整55／56或正式 ERP 端到端通過；未 exercise consuming-agent 的 replace、錯 options／省欄及正式提交後 fresh context／readback 分支。helper 自動化另有獨立覆蓋，不能代替這些未跑的模型分支。實際合成輸出、命令與界線隨本次 PR 保存。
+
+## #67 來源整合
+
+新增三種來源／手動與預覽變更情境。2026-11-17 三個 fresh consuming contexts 使用合成 context/options、公開採集入口與真實 preview CLI，GitHub／Session／combined 均產出相同業務契約的 plan/JSON/完整 Markdown，未授權零真 ERP request。另以手動原文/todos 變更與版型接受，觀察新 intent／重 preview、不重新 collect與不提交。完整 bounded 結果、fixture 修正與未驗證分支見 daily-work-log/tests/README.md；這不代表全套 eval 或線上 ERP 驗收通過。

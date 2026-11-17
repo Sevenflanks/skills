@@ -1,5 +1,7 @@
 # ERP 工作日誌自動填寫：已確認需求
 
+> 現行契約更新（#66／#67）：以 skills/erp-daily-work-log/SKILL.md 為準。GitHub 預設，明確 Session／combined 及手動內容均可；首次／補新增走 append（合計含 existing，次日 10:00 不阻擋），只有明確 replace 受期限與覆蓋確認限制。所需 operation 不可用才 output_only；不是 replace-only。下列初版設計與歷史驗證保留，與此衝突的逾期一律停止／不重試敘述已由現行受控 retry 契約取代。
+
 本文件是此次跨 repo 實作的需求依據；ERP 契約仍以部署環境的官方 OpenAPI 為準。
 
 ## 範圍

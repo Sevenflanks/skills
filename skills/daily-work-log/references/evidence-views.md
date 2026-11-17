@@ -2,6 +2,8 @@
 
 先完成 probe → 對話來源預告，再正式 collect；工具 collect timeout 沿用 600000 ms。來源 guard、無活動停止、Codex 有界額度與無自動重跑規則照常適用。以下支援 Windows PowerShell 5.1 或 PowerShell 7 作為呼叫端，collector／formatter 一律在 **pwsh 7+** 執行。
 
+來源先依 [sources.md](sources.md) 選 EvidenceSource（預設 GitHub）；其參數可加入下方 `$parameters`。Session-only recipes 的參數明填 EvidenceSource=session，SourceMode 不啟用 Session。GitHub／手動新增 issues／manualEvidence／pendingAttribution 在 ERP 視圖完整保留，index 只列計數與原始 repo pointer。
+
 ## 1. 明確 UTF-8 capture，JSON 參數走檔案
 
 PS5.1 的 `>`／`Out-File` 預設是 UTF-16LE。固定使用 bundled `scripts/capture-daily-work-log.ps1`：PS5.1／7 呼叫端只傳路徑，helper 在 pwsh 7+ child 讀 UTF-8 JSON 參數並寫 BOM-less UTF-8；成功時不印 raw stdout。無須每輪撰寫 capture 或 Python 選讀程式，也不改全域 encoding。`Mode` 明確選 `probe`、`collect`、`format`，一次只執行一次，不自動重試。
@@ -152,6 +154,8 @@ SQL exact／legacy 日期 fallback 的 `coverage.excludedAgentMessages` 是範�
 ### Collector 分段量測與補報狀態
 
 `meta.diagnostics.schemaVersion=1` 提供六個固定 stages：`sourceAdapter`、`json`、`repoDiscovery`、`git`、`github`、`output`，各有 `durationMs`／`calls`／`cacheHits`。未執行維持 `null`，不是量到零；失敗／提前返回保留已知計量。Calls 是該 stage 的 instrumented operation 次數，不全等於 native process 或網路呼叫。Stage 可巢狀／重疊，**不可加總**；`totalDurationMs` 由獨立 wall clock 取得。`output` 到主 evidence JSON 序列化完成為止，不含末尾 diagnostics 編碼／置換與 stdout 傳輸；total 同樣不是完整 capture／摘要／ERP 的 end-to-end 耗時。診斷僅固定 aggregate，不含私人內容、命令、路徑或 credentials；index 保留 v1 固定 scalars，未知 schema 由 raw pointer 選讀。
+
+以下補證／hash 規則只適用 Session 分支；GitHub 主來源依 sources.md 的事件入口。
 
 PR 候選先比明確 PR 編號／branch（cheap match），已能判斷就省略 details；未匹配的適用候選仍保留 commit hash fallback 與錯誤語意。同輪 viewer／PR list／details cache 沿用，worktree 關聯各自判斷。Aggregate 展開只重用同次正規化 exact path（含空結果），每個來源仍保留 session evidence／warnings／coverage；不以祖先前綴猜 repo。
 
