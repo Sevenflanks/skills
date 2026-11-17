@@ -34,7 +34,7 @@ def now():
     return datetime.now(timezone.utc).isoformat()
 
 
-def tz_for(name):
+def tz_for(name, system=None):
     try:
         return ZoneInfo(name)
     except ZoneInfoNotFoundError:
@@ -42,6 +42,8 @@ def tz_for(name):
             return timezone(timedelta(hours=8))
         if name in ('UTC', 'Etc/UTC'):
             return timezone.utc
+        if system and isinstance(system.get('offsetMinutes'), (int, float)):
+            return timezone(timedelta(minutes=system['offsetMinutes']))
         raise SourceError('timezone-unavailable') from None
 
 
@@ -160,7 +162,7 @@ def compose(config):
     mode = config.get('EvidenceSource', 'github')
     probe = bool(config.get('ProbeOnly'))
     tzname = config.get('Timezone', 'Asia/Taipei')
-    tz = tz_for(tzname)
+    tz = tz_for(tzname, config.get('systemTimezone'))
     start = date_value(config['From'], tz) if config.get('From') else datetime.now(tz).replace(hour=0, minute=0, second=0, microsecond=0)
     end = date_value(config['To'], tz) if config.get('To') else start + timedelta(days=1)
     if end <= start:
@@ -180,7 +182,8 @@ def compose(config):
     meta = dict(generatedAt=now(), from_=start.isoformat(), to=end.isoformat(), timezone=tzname,
                 evidenceSource=mode, sourceMode=config.get('SourceMode', 'session'), probeOnly=probe,
                 sources=sources, canGenerateLog=False, ghAvailable=session.get('meta', {}).get('ghAvailable', False),
-                ghViewer=session.get('meta', {}).get('ghViewer'), authorScope='current')
+                ghViewer=session.get('meta', {}).get('ghViewer'),
+                authorScope=session.get('meta', {}).get('authorScope', 'current'))
     meta['from'] = meta.pop('from_')
     if session.get('meta'):
         meta['sessionContext'] = {key: session['meta'].get(key) for key in
@@ -311,7 +314,7 @@ def compose(config):
                         except (SourceError, KeyError, TypeError, ValueError) as error:
                             failure(str(error) if isinstance(error, SourceError) else 'invalid-search-response')
                             break
-            def issue_record(repo, number, entrance=False):
+            def issue_record(repo, number, related=False):
                 data = provider.get(f'repos/{repo}/issues/{number}')
                 if data.get('number') != number or data.get('html_url', '').lower() != f'https://github.com/{repo}/issues/{number}':
                     raise SourceError('issue-identity-mismatch')
@@ -319,8 +322,9 @@ def compose(config):
                             url=data['html_url'], author=(data.get('user') or {}).get('login'), state=str(data.get('state', 'unknown')).upper(),
                             createdAt=data.get('created_at'), closedAt=data.get('closed_at'), stateObservedAt=meta['generatedAt'],
                             commentCount=data.get('comments', 0),
-                            reportEvent='specification-created' if entrance else 'related-context',
-                            reportEventAt=data.get('created_at') if entrance else None, source='github')
+                            reportEvent='related-context', reportEventAt=None, source='github')
+                if related:
+                    item['relatedToPr'] = True
                 return add_item(repo, 'issues', item)
             proxy_logins = {x.lower() for x in config.get('ProxyLogins', [])}
             for repo, kind, number in candidates:
@@ -330,7 +334,7 @@ def compose(config):
                         # 規格的語意由 consuming agent 依完整內容判斷；不可用固定字詞／label 漏掉合法規格。
                         if item['author'] and item['author'].lower() == viewer.lower() and within(item['createdAt']) and (item.get('body') or '').strip():
                             item.update(reportEvent='specification-created', reportEventAt=item['createdAt'], specificationCandidate=True)
-                        else:
+                        elif not item.get('relatedToPr'):
                             repos[repo]['issues'].remove(item)
                         continue
                     data = provider.get(f'repos/{repo}/pulls/{number}')
@@ -348,7 +352,7 @@ def compose(config):
                         if not issue_repo:
                             continue
                         try:
-                            related.append((issue_repo, issue_record(issue_repo, issue_num)))
+                            related.append((issue_repo, issue_record(issue_repo, issue_num, related=True)))
                         except (SourceError, KeyError, TypeError, ValueError):
                             failure('related-issue-unverified')
                     if not author or author.lower() != viewer.lower():
@@ -413,7 +417,8 @@ def compose(config):
             for index, item in enumerate(manual):
                 if not isinstance(item, dict) or not isinstance(item.get('result'), str) or not item['result'].strip() or not item.get('date'):
                     raise SourceError('manual-date-and-result-required')
-                if not within(item['date'], tz):
+                manual_time = (config.get('systemTimezone') or {}).get('midnights', {}).get(item['date'], item['date'])
+                if not within(manual_time, tz):
                     continue
                 repo = canonical(item.get('repo'))
                 if item.get('repo') and not repo:
@@ -428,7 +433,7 @@ def compose(config):
             result['warnings'].append(str(error) if isinstance(error, SourceError) else 'manual-input-invalid')
     for repo in repos.values():
         # 關聯 Issue 是背景，不能讓沒有本人成果的搜尋結果通過稿件 gate。
-        if repo.get('prs') or repo.get('sessionEvidence') or repo.get('manualEvidence') or any(
+        if repo.get('prs') or repo.get('sessionEvidence') or repo.get('manualEvidence') or repo.get('commits') or any(
                 i.get('reportEvent') == 'specification-created' for i in repo.get('issues', [])):
             meta['canGenerateLog'] = True
     result['repos'] = list(repos.values())

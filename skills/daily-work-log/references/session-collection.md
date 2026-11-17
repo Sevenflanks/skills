@@ -15,7 +15,7 @@
    - If the current identity cannot be resolved, the helper warns and falls back to all authors instead of silently pretending current-user filtering happened.
 
 3. **先 probe 並預告來源**
-   - 依下方 invocation 使用 `scripts/capture-daily-work-log.ps1 -Mode probe`，將本次 `From`／`To`／`Timezone`、來源入口覆寫與 repo mode 寫入 UTF-8 JSON 參數檔。
+   - 依 [固定 capture invocation](evidence-views.md#1-明確-utf-8-capturejson-參數走檔案) 使用 `scripts/capture-daily-work-log.ps1 -Mode probe`，將本次 `From`／`To`／`Timezone`、來源入口覆寫與 repo mode 寫入 UTF-8 JSON 參數檔。
    - 讀取 `meta.sources.opencode`／`codex` 的 `available`、`cliAvailable`、`reason`、`entries`，在對話先預告本次使用的來源與每個略過理由，例如：「本次合併 OpenCode 與 Codex；Codex CLI 不存在，但本機紀錄可讀。」
    - probe 只檢查已知紀錄入口與 command 存在；不掃完整歷史、不啟動 CLI、不讀 auth、config 或 secrets。入口可讀不代表有當日活動，也不保證正式讀取成功。
    - 任一來源有可讀本機紀錄，即使沒有 CLI 也可使用。OpenCode CLI 可供非互動式 DB 查詢；Codex 只有 CLI、沒有可讀紀錄時略過。
@@ -27,9 +27,9 @@
    - 呼叫正式 collect 時，工具支援等待 timeout 設定就設為 **600000 ms**；這是工具設定，不是 script 參數，也不是效能 SLA。若工具不支援，揭露實際等待限制，不以重跑補足。
    - 逾時或未取得有效 JSON 時停止並回報，不自動重跑；工具 timeout 不改變既有來源 guard 或停止條件。
    - 工具等待 timeout 與資料讀取額度分開；Codex 的預設總額度／單檔額度仍依「Codex 有界涵蓋」辦理。
-    - Codex adapter 需要 Python 3.11+；只對本機 Codex state／history 做唯讀 SQL。完整 runtime、capability 與 fallback 契約見 [`references/evidence-views.md`](references/evidence-views.md#codex-能力與-canonical-evidence)。
+    - Codex adapter 需要 Python 3.11+；只對本機 Codex state／history 做唯讀 SQL。完整 runtime、capability 與 fallback 契約見 [`references/evidence-views.md`](evidence-views.md#codex-能力與-canonical-evidence)。
    - collector 合併 event／response 鏡像、同 session ID 續行及父子 session 的精確重播，保留 `sessionIds`／`files`／`timestamps`；不推測自然語意主題。
-    - OpenCode DB 成功且非空時，依下方「OpenCode repo discovery」補充 structured bash workdir；fallback logs 才使用 `permission=external_directory`／`read`／`read-only` touched path。
+    - OpenCode DB 成功且非空時，依 [OpenCode repo discovery](../SKILL.md#opencode-repo-discoverysessioncombined)補充 structured bash workdir；fallback logs 才使用 `permission=external_directory`／`read`／`read-only` touched path。
    - In `session` mode, if a session path is a safe aggregate directory rather than a git repo, the collector expands nested git repos / worktrees using fast `.git` marker discovery.
    - The default author scope is the current user. Commits and PRs from other authors are excluded unless they are release / deploy bot commits with PR-chain evidence back to current-user work.
    - If a repo has session evidence but no current-user commits, keep it in the final report as one short agent-written session summary when evidence is sufficient; do not invent details.
@@ -51,4 +51,3 @@
     - 有效 repo／worktree 即使沒有當日本人 commit，仍由 `origin` remote 解析 canonical `githubRepo`。remote 缺失／無法確認時揭露缺口；`name` 只作顯示 fallback，不反推 mapping，也不從已刪 worktree 或父目錄猜 repo。
     - 分類／resolver 優先重用已有可靠當日 branch／PR 證據；可查 remote 就先查，不把可自行確認的 identity 轉問使用者。補報不以目前 checkout 代替當日 branch；無當日 branch 或多義時，只詢問未解的歸屬。
     - resolver 回傳原因未明的 HTTP 400／`http_error` 時，回報「解析失敗，原因未知」並停止同類 branch 嘗試；不稱為 missing mapping、不逐 branch 猜結果，也不因此新增永久 mapping。
-

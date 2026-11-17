@@ -32,6 +32,55 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+function Resolve-TimeZoneInfo {
+  param([string]$TimezoneId)
+
+  $ianaToWindows = @{
+    'Asia/Taipei' = 'Taipei Standard Time'
+  }
+
+  foreach ($candidate in @($TimezoneId, $ianaToWindows[$TimezoneId])) {
+    if ([string]::IsNullOrWhiteSpace($candidate)) {
+      continue
+    }
+
+    try {
+      return [System.TimeZoneInfo]::FindSystemTimeZoneById($candidate)
+    }
+    catch {
+      continue
+    }
+  }
+
+  throw ("Unsupported timezone: {0}" -f $TimezoneId)
+}
+
+function Resolve-DateRange {
+  param(
+    [AllowNull()]
+    [Nullable[datetimeoffset]]$FromInput,
+    [AllowNull()]
+    [Nullable[datetimeoffset]]$ToInput,
+    [string]$TimezoneId
+  )
+
+  if ($null -ne $FromInput -and $null -ne $ToInput) {
+    return [ordered]@{ From = $FromInput; To = $ToInput }
+  }
+
+  $timeZoneInfo = Resolve-TimeZoneInfo -TimezoneId $TimezoneId
+  $now = [System.TimeZoneInfo]::ConvertTime([datetimeoffset]::UtcNow, $timeZoneInfo)
+  $startLocal = [datetime]::new($now.Year, $now.Month, $now.Day, 0, 0, 0, [System.DateTimeKind]::Unspecified)
+  $startOffset = $timeZoneInfo.GetUtcOffset($startLocal)
+  $start = [datetimeoffset]::new($startLocal, $startOffset)
+  if ($FromInput) { $start = $FromInput }
+  $nextLocal = ([System.TimeZoneInfo]::ConvertTime($start, $timeZoneInfo)).Date.AddDays(1)
+  $end = [datetimeoffset]::new($nextLocal, $timeZoneInfo.GetUtcOffset($nextLocal))
+  if ($ToInput) { $end = $ToInput }
+
+  return [ordered]@{ From = $start; To = $end }
+}
+
 # SourceMode 保留原 repo 探索語意；只有 EvidenceSource=session 才進入既有 adapters。
 # GitHub 預設在這裡提早分流，連 session probe 都不觸及。
 if ($EvidenceSource -ne 'session' -or $ManualInputPath -or $Repositories.Count -gt 0) {
@@ -43,12 +92,35 @@ if ($EvidenceSource -ne 'session' -or $ManualInputPath -or $Repositories.Count -
       if ($key -eq 'ProbeOnly') { $config[$key] = [bool]$ProbeOnly }
     }
     $config.EvidenceSource = $EvidenceSource
+    # 共用 Session 已有的系統時區解析；Windows Python 沒有 IANA DB 時也不新增 dependency。
+    $sourceRange = Resolve-DateRange -FromInput $From -ToInput $To -TimezoneId $Timezone
+    $config.From = $sourceRange.From.ToString('o')
+    $config.To = $sourceRange.To.ToString('o')
+    $zone = Resolve-TimeZoneInfo -TimezoneId $Timezone
+    $config.systemTimezone = @{ offsetMinutes = $zone.GetUtcOffset($sourceRange.From).TotalMinutes; midnights = @{} }
+    if ($ManualInputPath -and -not $ProbeOnly) {
+      try {
+        $manualItems = [IO.File]::ReadAllText($ManualInputPath) | ConvertFrom-Json -AsHashtable -Depth 100 -NoEnumerate
+        if ($manualItems -is [array]) {
+          foreach ($item in $manualItems) {
+            if ($item -is [Collections.IDictionary] -and $item['date'] -is [string] -and $item['date'] -match '^\d{4}-\d{2}-\d{2}$') {
+              $date = [datetime]::ParseExact($item['date'], 'yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture)
+              $config.systemTimezone.midnights[$item['date']] = ([datetimeoffset]::new($date, $zone.GetUtcOffset($date))).ToString('o')
+            }
+          }
+        }
+      }
+      catch { } # 手動來源的讀取／內容錯誤由共同 collector 分開回報，不阻斷已成功的 GitHub 證據。
+    }
     if ($EvidenceSource -in @('session','combined')) {
       $sessionParameters = @{}
       foreach ($key in $PSBoundParameters.Keys) {
         if ($key -notin @('EvidenceSource','GitHubInputPath','ManualInputPath','Repositories','ProxyLogins')) { $sessionParameters[$key] = $PSBoundParameters[$key] }
       }
       $sessionParameters.EvidenceSource = 'session'
+      $sessionParameters.From = $sourceRange.From
+      $sessionParameters.To = $sourceRange.To
+      $sessionParameters.Timezone = $Timezone
       $sessionRaw = & $PSCommandPath @sessionParameters
       $config.sessionData = ($sessionRaw -join [Environment]::NewLine) | ConvertFrom-Json -AsHashtable -Depth 100
     }
@@ -704,55 +776,6 @@ function Copy-SessionEvidenceForSource {
   }
 
   return [pscustomobject]$copy
-}
-
-function Resolve-TimeZoneInfo {
-  param([string]$TimezoneId)
-
-  $ianaToWindows = @{
-    'Asia/Taipei' = 'Taipei Standard Time'
-  }
-
-  foreach ($candidate in @($TimezoneId, $ianaToWindows[$TimezoneId])) {
-    if ([string]::IsNullOrWhiteSpace($candidate)) {
-      continue
-    }
-
-    try {
-      return [System.TimeZoneInfo]::FindSystemTimeZoneById($candidate)
-    }
-    catch {
-      continue
-    }
-  }
-
-  throw ("Unsupported timezone: {0}" -f $TimezoneId)
-}
-
-function Resolve-DateRange {
-  param(
-    [AllowNull()]
-    [Nullable[datetimeoffset]]$FromInput,
-    [AllowNull()]
-    [Nullable[datetimeoffset]]$ToInput,
-    [string]$TimezoneId
-  )
-
-  if ($null -ne $FromInput -and $null -ne $ToInput) {
-    return [ordered]@{ From = $FromInput; To = $ToInput }
-  }
-
-  $timeZoneInfo = Resolve-TimeZoneInfo -TimezoneId $TimezoneId
-  $now = [System.TimeZoneInfo]::ConvertTime([datetimeoffset]::UtcNow, $timeZoneInfo)
-  $startLocal = [datetime]::new($now.Year, $now.Month, $now.Day, 0, 0, 0, [System.DateTimeKind]::Unspecified)
-  $startOffset = $timeZoneInfo.GetUtcOffset($startLocal)
-  $start = [datetimeoffset]::new($startLocal, $startOffset)
-  if ($FromInput) { $start = $FromInput }
-  $nextLocal = ([System.TimeZoneInfo]::ConvertTime($start, $timeZoneInfo)).Date.AddDays(1)
-  $end = [datetimeoffset]::new($nextLocal, $timeZoneInfo.GetUtcOffset($nextLocal))
-  if ($ToInput) { $end = $ToInput }
-
-  return [ordered]@{ From = $start; To = $end }
 }
 
 function ConvertTo-EpochMilliseconds {

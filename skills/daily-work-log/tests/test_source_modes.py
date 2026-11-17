@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -94,7 +95,7 @@ class SourceModes(unittest.TestCase):
 
     def test_midnight_author_and_current_state_do_not_backdate_work(self):
         self.search('pr', [self.candidate(n) for n in (7, 8, 9, 10)])
-        self.search('issue', [self.candidate(4, 'issues')])
+        self.search('issue', [self.candidate(3, 'issues'), self.candidate(4, 'issues')])
         self.response('repos/acme/app/pulls/7', self.pr(merged='2026-11-15T16:00:00Z'))
         self.response('repos/acme/app/pulls/8', self.pr(8, merged='2026-11-16T16:00:00Z'))
         self.response('repos/acme/app/pulls/9', self.pr(9, user='other', body='Unrelated work'))
@@ -104,6 +105,7 @@ class SourceModes(unittest.TestCase):
         data, erp = self.run_cli(view='erp')
         self.assertEqual([p['number'] for p in erp['repos'][0]['prs']], [7])
         issues = {i['number']: i for i in erp['repos'][0]['issues']}
+        self.assertEqual(sorted(issues), [3, 4])
         self.assertEqual(issues[4]['reportEvent'], 'specification-created')
         self.assertEqual(issues[3]['reportEvent'], 'related-context')
         self.assertEqual(issues[3]['state'], 'OPEN')
@@ -349,10 +351,59 @@ class SourceModes(unittest.TestCase):
                       q='repo:acme/app is:issue author:owner created:2026-11-16..2026-11-18', per_page=100, page=1)
         manual = self.root / 'manual.json'
         manual.write_text(json.dumps([dict(date='2026-11-16', repo='acme/app', result='當日維運')]), encoding='utf-8')
-        data = self.run_cli(config=dict(From='2026-11-16T00:00:00-05:00', To='2026-11-17T00:00:00-05:00',
-                                       Timezone='America/New_York', ManualInputPath=str(manual)))
+        for timezone_database in (True, False):
+            with self.subTest(timezone_database=timezone_database):
+                if not timezone_database:
+                    self.without_timezone_database()
+                data = self.run_cli(config=dict(From='2026-11-16T00:00:00-05:00', To='2026-11-17T00:00:00-05:00',
+                                               Timezone='America/New_York', ManualInputPath=str(manual)))
+                self.assertTrue(data['meta']['canGenerateLog'])
+                self.assertEqual(data['repos'][0]['manualEvidence'][0]['date'], '2026-11-16')
+
+    def without_timezone_database(self):
+        bin_path = self.root / 'bin'
+        bin_path.mkdir()
+        python = sys.executable.replace("'", "''")
+        (bin_path / 'python.ps1').write_text(
+            'param([Parameter(ValueFromPipeline=$true)][string]$InputJson, '
+            '[Parameter(ValueFromRemainingArguments=$true)][string[]]$Arguments)\n'
+            'begin { $lines = [Collections.Generic.List[string]]::new() }\n'
+            'process { $lines.Add($InputJson) }\n'
+            f"end {{ ($lines -join [Environment]::NewLine) | & '{python}' -S @Arguments; exit $LASTEXITCODE }}\n", encoding='utf-8')
+        self.env = dict(os.environ, PATH=str(bin_path) + os.pathsep + os.environ['PATH'],
+                        PYTHONTZPATH=str(self.root / 'missing-timezone-database'))
+
+    def test_scoped_session_scan_keeps_commits_only_work_eligible(self):
+        import test_collector_efficiency as legacy
+        helper = legacy.CollectorEfficiency()
+        helper.setUp()
+        self.addCleanup(helper.doCleanups)
+        helper.fixture['rows'] = []
+        helper.write('fixture.json', json.dumps(helper.fixture))
+        script = helper.root / 'bin/git.ps1'
+        script.write_text(script.read_text(encoding='utf-8').replace('synthetic/project', 'acme/app'), encoding='utf-8')
+        self.env = helper.env
+        data = self.run_cli(config=dict(EvidenceSource='session', SourceMode='scan', ScanRoots=[str(helper.root / 'repo-a')],
+            From='2026-10-08T00:00:00+08:00', To='2026-10-09T00:00:00+08:00',
+            OpenCodeLogRoot=str(helper.root / 'missing-log'), OpenCodeStorageRoot=str(helper.root / 'missing-storage'),
+            CodexRoot=str(helper.codex_root)))
         self.assertTrue(data['meta']['canGenerateLog'])
-        self.assertEqual(data['repos'][0]['manualEvidence'][0]['date'], '2026-11-16')
+        self.assertEqual(data['repos'][0]['sessionEvidence'], [])
+        self.assertEqual(data['repos'][0]['prs'], [])
+        self.assertEqual(data['repos'][0]['commits'][0]['hash'], 'a' * 40)
+
+    def test_system_timezone_fallback_uses_each_manual_days_dst_offset(self):
+        self.without_timezone_database()
+        for kind, query in [('pr', 'repo:acme/app is:pr is:merged merged:2026-10-31..2026-11-04'),
+                            ('issue', 'repo:acme/app is:issue author:owner created:2026-10-31..2026-11-04')]:
+            self.response('search/issues', dict(items=[], total_count=0, incomplete_results=False),
+                          q=query, per_page=100, page=1)
+        path = self.root / 'manual.json'
+        path.write_text(json.dumps([dict(date=d, repo='acme/app', result=d) for d in
+                                   ('2026-11-01', '2026-11-02', '2026-11-03')]), encoding='utf-8')
+        data = self.run_cli(config=dict(From='2026-10-31T00:00:00-04:00', To='2026-11-03T00:00:00-05:00',
+                                       Timezone='America/New_York', ManualInputPath=str(path)))
+        self.assertEqual([e['date'] for e in data['repos'][0]['manualEvidence']], ['2026-11-01', '2026-11-02'])
 
 
 if __name__ == '__main__':

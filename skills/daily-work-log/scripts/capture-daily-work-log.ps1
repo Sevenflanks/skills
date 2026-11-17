@@ -53,7 +53,7 @@ try {
       if (-not $ProbePath) { throw 'Collect requires an existing ProbePath; run probe and announce sources first.' }
       $probeText = [IO.File]::ReadAllText($ProbePath)
       $probe = $probeText | ConvertFrom-Json -AsHashtable -Depth 100
-      if ($probe.meta.probeOnly -ne $true -or @($probe.errors).Count -gt 0) { throw 'ProbePath must contain a successful probe result.' }
+      if (@($probe.errors).Count -gt 0 -or $probe.meta.probeOnly -ne $true) { throw 'ProbePath must contain a successful probe result.' }
       if ($probe.meta.ContainsKey('evidenceSource')) {
         $selectedSource = if ($arguments.ContainsKey('EvidenceSource')) { [string]$arguments.EvidenceSource } else { 'github' }
         if ($selectedSource -cne $probe.meta.evidenceSource) { throw 'Collect source differs from the probe; run a new probe and announce the new selection.' }

@@ -91,3 +91,11 @@ python -B -m unittest discover -s skills/daily-work-log/tests -p test_codex_coll
 GitHub context 再接手動內容／todos 變更與「版型採用」：產生新 intent 及完整正式預覽，沒有重新 collect／存偏好／送出 request。主 agent 另以獨立字面預期核對三份 plan 的日期、分類、modules／RD、既有 ID80與工時，以及 followup intent 不同。
 
 Session／combined fixture 初輪因複製後 directory 仍指舊暫存而有 gap，測試 owner 修正合成路徑後重跑，原失敗產物保留；不是 production 修正。這是 bounded smoke，不是全部 evals 通過：完整 source-switch 對話、全部身分／權限分支、各 provider 的真實認證與線上 GitHub／ERP、正式寫入及部署均未以本輪 smoke 驗證。既有 helper transport/readback suites 另記錄，不用它們替代模型行為。
+
+### #67 內部審查修正
+
+Standards 軸的 Session 文件導覽已改為同層 evidence-views.md 與 ../SKILL.md；Spec 軸兩案均經公開 CLI 先 red 再 green：寬日期搜尋不再刪掉 PR 已引用的前日 Issue，commits-only 的 scoped Session scan 保留組稿資格。
+
+來源時區沿用原 PowerShell System.TimeZoneInfo 解析；native helper 將固定 From/To 與手動純日期的個別 offset 傳給共同 collector。Windows Python 無 IANA DB 不需要新增 tzdata dependency；使用 python -S＋空 PYTHONTZPATH 的受控外部入口核對負時區及跨 DST 的末日排除。初版 Python fixture 未轉送 pipeline input，其失敗只證明 fixture 錯誤；修正外部 stdin 協定後才觀察目前行為，不能用前次失敗宣稱已驗證時區缺陷。
+
+新增第四個 fresh consuming context：GitHub viewer fixture 回 401，agent 保留 github 模式與 partial，不切 Session、不重試 provider，仍用已確認歸屬的 user-provided 內容產生完整 manual-only ERP 預覽。PR #7 保留未核實狀態，沒有自造 MERGED；保留 existing1＋新工作6＋LEAVE1＝8，沒有 authorized/request。這補足失敗來源＋有效手動內容的實際 agent 分支，不擴稱全部降級／身分情境已通過。

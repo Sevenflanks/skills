@@ -35,7 +35,7 @@ CLI live provider 使用 `gh api` 執行同一組 endpoint。gh 缺失不代表 
 
 ## 日期、本人與主題
 
-預設 Asia/Taipei，From 含、To 不含。PR 入口看 mergedAt／官方 merged_at，新規格 Issue 看 createdAt／created_at，updatedAt 不構成當日工作。補報分開 reportEventAt 與 stateObservedAt；規格發布、已合併、部署與真實驗收是不同狀態。Issue 作者與內容是候選；agent 依可辨識需求、範圍或驗收判斷，不強制 label 或標題模板。
+預設 Asia/Taipei，From 含、To 不含。公開入口共用既有 System.TimeZoneInfo 固定範圍；Python 沒有 IANA DB 時沿用 native offset 與每個手動日期的獨立 offset，跨 DST 不用起日 offset 猜全部日期，也不安裝 tzdata。PR 入口看 mergedAt／官方 merged_at，新規格 Issue 看 createdAt／created_at，updatedAt 不構成當日工作。補報分開 reportEventAt 與 stateObservedAt；規格發布、已合併、部署與真實驗收是不同狀態。Issue 作者與內容是候選；agent 依可辨識需求、範圍或驗收判斷，不強制 label 或標題模板。
 
 本人 PR 是 author=viewer，或當次已確認代理 login 且有本人需求／派工關聯。僅 merged-by、assignee、reviewer、同 repo、姓名或相似標題不夠；pendingAttribution 需合併釐清，不能直接入稿。例行 release／deploy／升版還要可辨識的本人實際工作關聯。代理代開未合併規格若缺本人建立證據只保留候選，不冒充本人新建。
 
