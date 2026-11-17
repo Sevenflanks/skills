@@ -106,3 +106,11 @@ Standards 軸的 Session 文件導覽已改為同層 evidence-views.md 與 ../SK
 - `test_explicit_session_and_combined_keep_real_session_reader` 使用兩個真 Session worktree 的同一 PR；先因 scalar reportEvidence 合併而 partial，修正後同 canonical PR 一筆、兩個 Session、舊 commit-match 與新 GitHub 全文／證據均保留。
 - `test_default_refuses_and_records_session_access_with_same_positive_observer` 在外部 OpenCode CLI 記錄／拒絕查詢，在實際 Codex Python process 以標準 audit hook 記錄／拒絕 fixture 檔案與 SQLite 讀取；同一 observer 的明確 Session 正向對照必須讀到兩個來源。初版 observer 沒解析 SQLite file URI，正向對照失敗；修正 observer 後才成立，不把它當 production 缺陷。
 - 已實際執行自有 scripts 副本的 stealth-read mutation：在 github 路由前偷呼叫 Session、丟棄結果，仍保留 github 標記；預設成功與 401 兩案都因 access log 非空而 red，正常 scripts green。這補足前述僅偵測 source mismatch 的 mutation；觀測範圍是 OpenCode 查詢及 Codex process 的真實讀取，不宣稱是任意 PowerShell 檔案操作的 OS 全域稽核。
+
+### #67 PR 審查第 2 輪
+
+公開 capture 大小寫回歸先觀察合法 `GitHub` 拼法錯誤回報無可用來源，再核對 `GitHub`／`SESSION`／`Combined` 均取到正確證據，`ScAn` 遞迴找到下層 repo、`MiXeD` 保留 Session。模式在公開邊界正規化，真正改來源的 probe guard 仍拒絕。Windows 路徑斷言使用 Path 的平台相等語意，不要求同一實體目錄的大小寫顯示形式一致。
+
+新增第五個 fresh consuming-agent 實跑父子規格與獨立人工驗收：背景母規格 #1、當日子規格 #3 與 merged PR #7、獨立驗收 #5（發現 UTF-8 缺陷、未通過）及重複的手動實作補充。日誌分開實作3h與驗收1h，父子規格／PR不重複計功，#1／#3／#5 的當前 OPEN 不被 closing reference 覆寫；保留重驗與母規格未結案待辦。兩個主題經已確認 PROJECT7/module71 歸屬後，依 ERP 單日唯一性放同一4h列，description 仍分兩項、分工時與交付狀態；不是用共用 parent 推定驗收完成。RD81工具／SQL2h另列，保留 COMPANY1h與LEAVE1h，共8h。
+
+root 依固定 fixture 的字面日期、參照、工時、現存ID80、三個OPEN狀態、獨立未通過／重驗，以及同 plan 的完整 JSON／Markdown 核對通過。此案實際執行公開 capture/index/完整 view 與原樣 helper preview，沒有 authorized／真 request／永久偏好或mapping，全部 process 已結束。仍屬有界 smoke，未擴稱線上驗收或全部 evals。

@@ -520,6 +520,45 @@ sys.addaudithook(observe)
         self.assertIsNotNone(failed['meta']['diagnostics']['stages']['github']['durationMs'])
         self.assertEqual(failed['meta']['diagnostics']['stages']['git']['calls'], None)
 
+    def test_mode_case_variants_keep_selected_sources_and_recursive_discovery(self):
+        git = shutil.which('git')
+        if not git:
+            self.skipTest('Git required for real repo discovery boundary')
+        repo = self.root / 'nested' / 'repository'
+        subprocess.run([git, 'init', '-q', str(repo)], check=True, capture_output=True, timeout=30)
+        subprocess.run([git, '-C', str(repo), 'remote', 'add', 'origin', 'https://github.com/acme/app.git'],
+                       check=True, capture_output=True, timeout=30)
+        self.search('pr', [self.candidate(7)])
+        self.search('issue', [])
+        self.response('repos/acme/app/pulls/7', self.pr(body='匯入完成'))
+        github = self.run_cli(config=dict(EvidenceSource='GitHub', SourceMode='ScAn', ScanRoots=[str(self.root)]))
+        self.assertEqual(github['meta']['evidenceSource'], 'github')
+        self.assertEqual(github['repos'][0]['prs'][0]['number'], 7)
+        self.assertEqual([Path(p) for p in github['repos'][0]['localPaths']], [repo])
+        import test_collector_efficiency as legacy
+        helper = legacy.CollectorEfficiency()
+        helper.setUp()
+        self.addCleanup(helper.doCleanups)
+        helper.write('fixture.json', json.dumps(helper.fixture))
+        script = helper.root / 'bin/git.ps1'
+        script.write_text(script.read_text(encoding='utf-8').replace('synthetic/project', 'acme/app'), encoding='utf-8')
+        self.env = helper.env
+        self.config.update(From='2026-10-08T00:00:00+08:00', To='2026-10-09T00:00:00+08:00',
+                           CodexRoot=str(helper.codex_root), OpenCodeLogRoot=str(helper.root / 'missing-log'),
+                           OpenCodeStorageRoot=str(helper.root / 'missing-storage'))
+        self.responses = [dict(path='user', parameters={}, response={'login': 'owner'})]
+        for query in ('repo:acme/app is:pr is:merged merged:2026-10-07..2026-10-09',
+                      'repo:acme/app is:issue author:owner created:2026-10-07..2026-10-09'):
+            self.response('search/issues', dict(items=[], total_count=0, incomplete_results=False),
+                          q=query, per_page=100, page=1)
+        for selected, expected in [('SESSION', 'session'), ('Combined', 'combined')]:
+            with self.subTest(selected=selected):
+                data = self.run_cli(config=dict(EvidenceSource=selected, SourceMode='MiXeD'))
+                self.assertEqual(data['meta']['evidenceSource'], expected)
+                self.assertEqual(data['repos'][0]['sessionEvidence'][0]['sessionId'], 's1')
+                self.assertEqual(data['meta']['sources']['github']['readStatus'],
+                                 'empty' if expected == 'combined' else 'not-selected')
+
 
 if __name__ == '__main__':
     unittest.main()

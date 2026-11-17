@@ -83,6 +83,8 @@ function Resolve-DateRange {
 
 # SourceMode 保留原 repo 探索語意；只有 EvidenceSource=session 才進入既有 adapters。
 # GitHub 預設在這裡提早分流，連 session probe 都不觸及。
+$EvidenceSource = $EvidenceSource.ToLowerInvariant()
+$SourceMode = $SourceMode.ToLowerInvariant()
 if ($EvidenceSource -ne 'session' -or $ManualInputPath -or $Repositories.Count -gt 0) {
   try {
     $config = @{ collectorStartedAtEpoch = [datetimeoffset]::UtcNow.ToUnixTimeMilliseconds() / 1000.0 }
@@ -92,6 +94,7 @@ if ($EvidenceSource -ne 'session' -or $ManualInputPath -or $Repositories.Count -
       if ($key -eq 'ProbeOnly') { $config[$key] = [bool]$ProbeOnly }
     }
     $config.EvidenceSource = $EvidenceSource
+    $config.SourceMode = $SourceMode
     # 共用 Session 已有的系統時區解析；Windows Python 沒有 IANA DB 時也不新增 dependency。
     $sourceRange = Resolve-DateRange -FromInput $From -ToInput $To -TimezoneId $Timezone
     $config.From = $sourceRange.From.ToString('o')

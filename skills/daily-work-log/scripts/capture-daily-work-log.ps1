@@ -56,7 +56,7 @@ try {
       if (@($probe.errors).Count -gt 0 -or $probe.meta.probeOnly -ne $true) { throw 'ProbePath must contain a successful probe result.' }
       if ($probe.meta.ContainsKey('evidenceSource')) {
         $selectedSource = if ($arguments.ContainsKey('EvidenceSource')) { [string]$arguments.EvidenceSource } else { 'github' }
-        if ($selectedSource -cne $probe.meta.evidenceSource) { throw 'Collect source differs from the probe; run a new probe and announce the new selection.' }
+        if ($selectedSource.ToLowerInvariant() -cne ([string]$probe.meta.evidenceSource).ToLowerInvariant()) { throw 'Collect source differs from the probe; run a new probe and announce the new selection.' }
       }
       $available = @($probe.meta.sources.Values | Where-Object { $_.available -eq $true })
       if ($available.Count -eq 0) { throw 'No probe sources are available; stop without collection.' }
