@@ -1,42 +1,21 @@
 # daily-work-log
 
-`daily-work-log` 整理 OpenCode／Codex 活動、Git 跨 branch commits 與相關 GitHub PR／issue 證據。先以同一 collector 輕量 probe，由 agent 預告來源與略過原因，再正式蒐集並輸出適合貼上的主題分組日誌。Codex 使用 metadata 候選、SQLite history 精選及 exact JSONL 補證；`0.164.0-alpha.11.1` 是已核對的 reference contract，不是 runtime version gate。必要資料能力與 query safety 決定 adapter 可否讀取，所有涵蓋缺口均如實揭露。
+`daily-work-log` 預設整理 GitHub 本人當日 merged PR 與新規格 Issue。當次明確指定可選 Session（原 OpenCode／Codex＋Git／GitHub 補證）或 combined；三種模式皆可手動補充，交同一份完整證據給一般日誌與 ERP。
 
-## 解決的問題
+## 1.0.0 來源遷移
 
-當使用者要回顧「今天做了什麼」時，agent 很容易只看目前 branch、漏掉跨 repo 工作、或直接憑 commit message 猜 PR / issue 關聯。這個 skill 用固定 PowerShell helper 先產純 JSON，再由 skill 將資料壓成簡潔日誌，降低蒐集不一致與 shell 噪音。
+- 新增 EvidenceSource=github/session/combined，預設 github；舊 SourceMode=session/scan/mixed 保留 repo 探索含義。要維持原來源，明填 EvidenceSource=session。
+- GitHub 模式不讀 session 或 Git history。日期以半開區間的 mergedAt／createdAt，保留本人／可信代理依據、canonical repo 與遠端無 checkout；不固定 repo 或姓名。
+- 足夠的已連接 connector 優先，原始 API response capture 與 live gh 共用規則。空、失敗、partial、分頁上限分開；不自動切換來源，不無聲放寬作者。
+- 手動-only、規格候選、待確認代理及完整 ERP view 均保留；語意主題由 agent 去重，規格／merged／部署／驗收分開，不虛構工時。
 
-## 使用時機
+## 使用
 
-當任務需要：
+要求整理指定日期日誌即可。先讀 [SKILL.md](SKILL.md) 與 [來源及 provider 格式](references/sources.md)，透過 [固定 capture／選讀流程](references/evidence-views.md) probe → 來源預告 → collect → bounded index／完整證據 → 主題日誌；完成交付後清理私有暫存。同輪有效查詢重用，不每階段重 collect。切換 Session 時保留 [原 adapters／fallback／有界契約](references/session-collection.md)。
 
-- 依 OpenCode 或 Codex session 與 Git activity 整理指定日期的日誌。
-- 優先按 GitHub repo name 分組輸出工作內容，缺少 GitHub repo name 時才 fallback 到 repo 資料夾名稱。
-- 補上 PR 編號與 closing issue 關聯。
-- 在 Windows / PowerShell / OpenCode 環境中，以一致方式收集工作證據。
+GitHub 無符合項可明確改選來源或手動補充；有手動內容可繼續，完全沒有內容就說明缺口。ERP 歸屬、工時、完整預覽、授權與讀回仍由 erp-daily-work-log 的原契約處理。
 
-不適用於單一 commit、單一 PR、或純文字潤稿需求。
-
-## 主要流程
-
-1. 蒐集前只針對指定日期、使用者點名的 repo 與會影響本次 collection 的偏好 recall；沒有有用結果就停止搜尋並使用預設流程。沿用同任務仍有效的參數與查詢結果；handoff 本身不使它們失效。
-2. 用 bundled capture `-Mode probe`；只檢查已知紀錄入口與 CLI 是否存在，不掃歷史、不執行 CLI、不讀 auth／config。根據 JSON 在對話預告來源與略過理由，再以 `-Mode collect -ProbePath` 正式蒐集。Helper 要求成功 probe 的 `meta.probeOnly`／`sources`、空 errors 與 `from`／`to`／`timezone`，自動固定日界線。兩來源皆可用就合併。
-3. 若使用者未提供明確時間範圍，helper 會以 configured timezone 計算「今天」，預設為 `Asia/Taipei`。這裡指的是缺少明確時間範圍，不是任何空白輸入都自動觸發。若使用者需要其他 timezone、日期範圍、或掃描根目錄，應明確覆寫。
-4. OpenCode 先查 `opencode db --format json`；若 DB 不可用、查詢失敗、或 JSON 無效，才依序 fallback 到 `storage/directory-readme` 與 OpenCode logs。沒有 CLI 但本機紀錄可讀仍可用。
-5. 若 DB 查詢成功且回傳空陣列 `[]`，代表沒有 session repo 證據，這個結果具權威性，不再 fallback 到檔案來源。
-6. 若 DB 失敗且 `storage/directory-readme` 沒有找到任何可解析 git repo / worktree root 的路徑，繼續 fallback 到 OpenCode logs；log fallback 會納入可解析成 git repo / worktree root 的 `permission=external_directory`、`permission=read`、`permission=read-only` touched path 證據。
-7. `session` discovery 可將安全的彙總目錄展開成巢狀 git repo / worktree。
-8. 預設 `authorScope` 是 `current`；若無法解析 identity，helper 會提出 warning 並 fallback 到 all authors。
-9. 目前使用者過濾採用寬鬆 identity matching；`release` / `deploy` bot commit 只有在 PR-chain 證據連回目前使用者工作時才保留。
-10. 有 session evidence 但沒有目前使用者 commit 的 repo，仍由有效 `origin` remote 解析 canonical `githubRepo`，保留 `sessionEvidence` 與無 commit 缺口。缺失／無法確認 remote 時不猜 mapping，資料夾名稱只作顯示 fallback。
-11. 讓 helper 只輸出純 JSON，不混入說明文字。PowerShell collector 不產生自然語言摘要；agent 只能從 `sessionEvidence` 寫一條短摘要。
-12. 由 skill 檢查 JSON 內的 warning / error / `ghAvailable` / `ghViewer` 狀態；若 `gh` 不可用或未登入，預設先停止並建議安裝 GitHub CLI 或執行 `gh auth login`。
-13. 只納入可解析成 git repo 或 worktree root 的路徑，其他缺口要透過 warning 或最終註記說清楚。
-14. 依 `githubRepo` 的 GitHub repo name 分組，若缺少 `githubRepo` 才 fallback 到 repo 資料夾名稱，並將內容壓成簡短工作日誌條列。
-15. 只有使用者強烈堅持在沒有可用或已登入 `gh` 的環境繼續時，才產生降級日報並在最終輸出保留 PR / issue 補證缺口；repo 非 git、或今日有 session 但無 commit，也要保留資料缺口說明。
-16. 選定主題後、preview 前，對實際引用且影響成果／待辦的 issue，以可靠 canonical repo＋精確編號查當前 state。同 repo＋編號去重，跨 repo 同號分開查；PR closing reference／`issuesClosed` 只證明關聯。查詢失敗或無法判讀就保留 unknown 與缺口，不擴搜。補報要區分查詢時狀態與報告日成果，不能倒推歷史，也不能以狀態補查取代當日工作證據。
-
-本輪查詢與先前準備只在輸入仍有效時沿用；新證據或失效時只刷新受影響項。補證不擴大工作主題，也不代替當日工作證據。
+以下 consuming-agent 紀錄為各版本的歷史驗證，不作新版行為通過證據。#67 驗證記錄見 [tests/README.md](tests/README.md)。
 
 ## Consuming-agent smoke
 

@@ -21,9 +21,9 @@ function Session([string]$Id = 'parent', [string]$Parent = '', [string]$Time = '
     @{type='event_msg'; timestamp=$Time; payload=@{type='user_message'; message=$Text}}
   ) | ForEach-Object { $_ | ConvertTo-Json -Depth 8 -Compress }
 }
-function Collect([switch]$Probe, [string]$From = '2026-05-29T00:00:00+08:00', [string]$To = '2026-05-29T23:59:59+08:00', [string]$Label = '', [hashtable]$Limits = @{}, [string]$Zone = 'Asia/Taipei') {
+function Collect([switch]$Probe, [string]$From = '2026-05-29T00:00:00+08:00', [string]$To = '2026-05-30T00:00:00+08:00', [string]$Label = '', [hashtable]$Limits = @{}, [string]$Zone = 'Asia/Taipei') {
   $watch = [Diagnostics.Stopwatch]::StartNew()
-  $parameters = @{From=$From;To=$To;CodexRoot="$root\codex";OpenCodeLogRoot="$root\absent-log";OpenCodeStorageRoot="$root\absent-storage"}
+  $parameters = @{EvidenceSource='session';From=$From;To=$To;CodexRoot="$root\codex";OpenCodeLogRoot="$root\absent-log";OpenCodeStorageRoot="$root\absent-storage"}
   $parameters.Timezone = $Zone
   foreach ($key in $Limits.Keys) { $parameters[$key] = $Limits[$key] }
   if ($Probe) { $parameters.ProbeOnly = $true }

@@ -66,3 +66,28 @@ python -B -m unittest discover -s skills/daily-work-log/tests -p test_codex_coll
 - 全面接受 SCAN 或移除拒絕診斷：`test_unsafe_date_index_scan_reports_safe_branch_plan_and_keeps_bounded_fallback` 的狀態／branch／plan／隱私斷言會失敗；缺 index 診斷另由 `test_no_date_index_declares_gap_and_uses_only_bounded_date_fallback` 驗證。
 
 除已標示的 red→green，其餘 mutation 對應為程式路徑推論。每個 case 自有 temporary directory、固定日期與 isolated PATH；collector 子程序等待實際輸出，45 秒只作逾時上限，逾時會清除 process tree。測試結束關閉 fixture connection 並清除暫存目錄。
+
+## #67：來源整合的公開行為與能力保全
+
+`python -B -m unittest discover -s skills/daily-work-log/tests -p test_source_modes.py -v` 執行真實 capture probe／collect／format，外部 provider 只使用合成官方回應；`test_codex_collection.py -k exact_to_boundary` 經原 Session reader 觀察 To 當下事件被排除。既有 Session suites 現在明填 EvidenceSource=session，完整日的舊 To=23:59:59 移為次日 00:00；原 assertions 不因新預設而削弱。新增參數置於原參數之後以保留既有位置繫結；Windows Pester 的 scan roots 回歸會偵測此相容性。
+
+先前為 source CLI 缺參數而停止的初次 red 尚未觀察業務結果；之後已觀察 canGenerateLog false→true、Issue-only 遺漏→保留、代理留言歸屬 false→true、To 的 next-day/sql-next-day 多收→排除。早期獨立審查指出多 worktree 被覆蓋、manual 純日期 UTC 誤判、Session 範圍未套用與 capture 覆寫輸入；回歸先觀察 s2 覆蓋 s1、負時區當日 manual 漏失、probe 錯誤成功，再以相同公開入口核對修正。
+
+| Mutation／風險 | Detector | 證據 |
+| --- | --- | --- |
+| 預設恢復 Session | default_github_merged_pr_reaches_full_erp_without_session | 自有 helper 副本實際 mutation：capture 拒絕 probe/collect 來源不一致而 red；還原後 green，不宣稱定位到 session reader 內部 |
+| To 再含下一日邊界 | public_session_range_excludes_exact_to_boundary | 實際 red：多出 next-day、sql-next-day；修正後 green |
+| 固定規格字詞／label | issue_only_keeps_content_for_agent_without_requiring_template_words | 實際 red→green；規格語意仍由 consuming agent 確認 |
+| 缺第二頁／錯作者／錯代理／同號跨 repo | pagination_proxy、midnight_author、unknown_agent、same_number | 具體手工 fixture 結果斷言；除上述已執行項外是路徑推論 |
+| 完整 ERP 丟掉新內容或改 raw pointer | default_github、pagination_proxy、manual_only | 全文／attribution 精確 raw selection；路徑推論 |
+| 環境 I/O encoding 改變 UTF-8 | source_capture_keeps_utf8_under_non_utf8_python_io_override | 實際 cp950:strict 下 red→green，中文／emoji 路徑與原文不變 |
+
+每案自己的 TemporaryDirectory、固定事件與時區、精確 request/response、獨立 PATH；等待子程序實際結束，沒有 sleep 或私人資料。原 tests 的 Windows temp/opencode parent 必須存在；本機 runner 可設 TEMP/TMP 至自有 evidence root 並建立該 parent，不能將 fixture 建立失敗當程式失敗。junction 必須在允許建立 Windows junction 的環境跑，不略過 assertion。
+
+### Consuming-agent：本輪有界結果
+
+2026-11-17 三個 fresh contexts 實際執行新 skill 的公開入口與既有 ERP helper。預設 GitHub（含歷史 Session 引文）、明確 Session、明確 combined 均產出真實 plan、原樣 preview JSON 與完整正式 Markdown；GitHub 的 Session 狀態 not-selected，Session 與 combined 實際使用 OpenCode fixture，Codex 無紀錄。匯入 PR／Session／重複手動依主題合述，出勤新規格分至 PROJECT7/module72，匯入 module71；離線原型／SQL 歸 RD81並保留 repo 群組。existing1＋新工作6＋LEAVE1＝8，未傳 authorized、無真 ERP request。
+
+GitHub context 再接手動內容／todos 變更與「版型採用」：產生新 intent 及完整正式預覽，沒有重新 collect／存偏好／送出 request。主 agent 另以獨立字面預期核對三份 plan 的日期、分類、modules／RD、既有 ID80與工時，以及 followup intent 不同。
+
+Session／combined fixture 初輪因複製後 directory 仍指舊暫存而有 gap，測試 owner 修正合成路徑後重跑，原失敗產物保留；不是 production 修正。這是 bounded smoke，不是全部 evals 通過：完整 source-switch 對話、全部身分／權限分支、各 provider 的真實認證與線上 GitHub／ERP、正式寫入及部署均未以本輪 smoke 驗證。既有 helper transport/readback suites 另記錄，不用它們替代模型行為。

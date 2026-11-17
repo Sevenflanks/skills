@@ -1,15 +1,15 @@
 ---
 name: daily-work-log
-description: 整理每日工作日誌或跨 repo 今日工作時使用。先探測 OpenCode／Codex 可用來源並預告，再合併本機 session、跨 branch Git 與相關 GitHub PR／issue 證據，輸出主題分組日誌。
+description: 整理每日工作日誌或跨 repo 今日工作時使用。預設整理 GitHub 本人交付與新規格；明確指定時使用 Session 或合併模式，保留手動補充與完整證據視圖。
 license: MIT
 metadata:
   author: sevenflankse
-  version: 0.9.1
+  version: 1.0.0
 ---
 
 # Daily Work Log
 
-將本機 OpenCode／Codex 活動、跨 branch Git 與 GitHub PR 證據整理成精簡日誌。同一 PowerShell collector 先輸出 probe JSON，再輸出 collection JSON；來源預告與最終摘要由 agent 在對話提供。開始撰寫對話或摘要前，從 runtime 發現並載入 `i-have-adhd` skill，不依賴固定安裝路徑。
+將 GitHub、明確選用的 OpenCode／Codex 與手動工作證據整理成精簡日誌。同一 PowerShell collector 先輸出 probe JSON，再輸出 collection JSON；來源預告與最終摘要由 agent 在對話提供。開始撰寫對話或摘要前，從 runtime 發現並載入 `i-have-adhd` skill，不依賴固定安裝路徑。
 
 ## When to use
 
@@ -28,7 +28,9 @@ Do not use this skill when:
 
 ## Core rule
 
-以 collector JSON 作為證據，先 probe → 向使用者預告來源與略過原因 → 正式 collect。OpenCode 與 Codex 都可用時兩者合併，沒有來源優先順序。來源皆不可用或正式讀取皆失敗時停止，說明原因；不掃 Git／GitHub 湊日誌，也不輸出工作日誌。若 GitHub CLI 不可用或未認證，沿用既有預設停止規則；使用者強烈要求降級時才繼續並說明補證缺口。CLI 安裝或登入只能建議，不自動執行。
+以同一次 collector JSON 作證據：先選來源 → probe → 預告 → collect → 選讀 → 主題日誌。預設 `EvidenceSource=github`，只有當次明確指示才用 `session`／`combined`；歷史、引文、提到 session 及舊來源偏好不構成切換，不修改永久偏好。GitHub 空或失敗不自動改模式。有手動內容可整理；完全無內容就說明缺口，不造日誌／工時。
+
+來源、身分、日期、provider capture 與手動格式的完整契約見 [來源與整合](references/sources.md)。開始採集時載入該文；只有使用 Session／combined 時另讀 [Session 既有蒐集契約](references/session-collection.md)。
 
 ## Workflow
 
@@ -39,55 +41,28 @@ Do not use this skill when:
    - recall 不可用、失敗或沒有有用結果（含截斷／大型回傳未取得有效偏好）時，停止 recall 搜尋，不擴大範圍，直接使用預設 helper workflow；截斷 recall 不作成果證據。
    - Do not add project-specific rules to this skill; project-specific collection habits belong in memory.
 
-2. **Confirm scope and defaults**
-   - If the user does not specify a clear time range, default range is today in the configured timezone.
-   - This default is about missing explicit time range, not about auto-triggering on completely blank input.
-   - The helper defaults to `Asia/Taipei`; override `From`, `To`, or `Timezone` when the user needs another range or timezone.
-   - Allow overrides for `From`, `To`, repo source mode, or scan roots when the user asks.
-   - Default repo source mode is `session`; fallback or broader discovery can use `scan` or `mixed`.
-    - OpenCode 內部先用 `opencode db --format json`；Codex 先以 state metadata 的 lifespan overlap 定位候選，再以 history item 的實際時間精選，並以候選 session 的 exact JSONL 補證。兩來源可用時一併納入。
-   - If the DB command is unavailable, fails, or returns invalid JSON, fallback order is DB, then `storage/directory-readme`, then OpenCode logs.
-   - If the DB query succeeds and returns empty `[]`, treat that as authoritative for session discovery and do not fallback to file-based sources.
-   - Default `authorScope` is `current`; broad identity matching uses current-user git config and GitHub viewer evidence when available.
-   - If the current identity cannot be resolved, the helper warns and falls back to all authors instead of silently pretending current-user filtering happened.
+2. **固定來源、範圍與 provider**
+   - 日期預設今天、Asia/Taipei；單日 From=當地 00:00、To=次日 00:00（半開區間），保留明確期間／時區。
+   - 依 [來源契約](references/sources.md) 選 EvidenceSource；`SourceMode=session/scan/mixed` 仍只選 repo 探索，單傳舊參數不啟用 Session。
+   - 沿用指定 repo、適用範圍偏好與 scan roots。GitHub repo 可以沒有 checkout；folder 名稱不能推 mapping 或補報 branch。
+   - 使用足夠的已連接 GitHub provider；有 connector 時優先按來源契約建立同輪 response capture，否則用 gh。依實際 provider 核對認證，缺 gh 不代表 connector 失效。GitHub 身分不明就停止自動歸屬，不放寬成所有作者。
 
-3. **先 probe 並預告來源**
-   - 依下方 invocation 使用 `scripts/capture-daily-work-log.ps1 -Mode probe`，將本次 `From`／`To`／`Timezone`、來源入口覆寫與 repo mode 寫入 UTF-8 JSON 參數檔。
-   - 讀取 `meta.sources.opencode`／`codex` 的 `available`、`cliAvailable`、`reason`、`entries`，在對話先預告本次使用的來源與每個略過理由，例如：「本次合併 OpenCode 與 Codex；Codex CLI 不存在，但本機紀錄可讀。」
-   - probe 只檢查已知紀錄入口與 command 存在；不掃完整歷史、不啟動 CLI、不讀 auth、config 或 secrets。入口可讀不代表有當日活動，也不保證正式讀取成功。
-   - 任一來源有可讀本機紀錄，即使沒有 CLI 也可使用。OpenCode CLI 可供非互動式 DB 查詢；Codex 只有 CLI、沒有可讀紀錄時略過。
-   - 若兩者 `available=false`，說明各來源原因後結束。即使使用者要求 `scan`／`mixed` 也遵守此停止條件。
+3. **Probe → 預告 → Collect**
+   - 按 [evidence-views](references/evidence-views.md) 用同一參數檔、bundled capture `-Mode probe`，先選讀來源 available／readStatus／reason。GitHub 模式不探測 Session；Session 保留原 probe；combined 兩者都保留。
+   - 在對話預告所選來源、repo 範圍與缺口後，才 `-Mode collect -ProbePath`。同一次 probe 固定日期與 EvidenceSource；改模式先新 probe／預告。工具等待限制照實揭露，不因 timeout 自動重跑。
+   - Session／combined 沿用 [Session 契約](references/session-collection.md) 的全部有效 adapters、兩來源合併、有界讀取、DB fallback、續行／鏡像去重、coverage 及相容性草稿，不縮成舊檔讀取。
 
-4. **Run the bundled collector**
-   - 使用 bundled capture `-Mode collect -ProbePath <同次-probe.json>`，參數檔沿用 probe。Helper 要求 `meta.probeOnly=true`、`errors=[]`、至少一來源 available 與 `from`／`to`／`timezone`，自動固定 probe 日界線並拒絕明傳不一致範圍。先完成對話公告才呼叫 collect。
-   - Collector stdout 維持純 JSON；capture 直接寫私有 UTF-8 檔，成功時不印 raw stdout。兩來源皆可用時全數蒐集，collector 自身會重新檢查來源並阻擋無來源／讀取全失敗的呼叫。
-   - 呼叫正式 collect 時，工具支援等待 timeout 設定就設為 **600000 ms**；這是工具設定，不是 script 參數，也不是效能 SLA。若工具不支援，揭露實際等待限制，不以重跑補足。
-   - 逾時或未取得有效 JSON 時停止並回報，不自動重跑；工具 timeout 不改變既有來源 guard 或停止條件。
-   - 工具等待 timeout 與資料讀取額度分開；Codex 的預設總額度／單檔額度仍依「Codex 有界涵蓋」辦理。
-    - Codex adapter 需要 Python 3.11+；只對本機 Codex state／history 做唯讀 SQL。完整 runtime、capability 與 fallback 契約見 [`references/evidence-views.md`](references/evidence-views.md#codex-能力與-canonical-evidence)。
-   - collector 合併 event／response 鏡像、同 session ID 續行及父子 session 的精確重播，保留 `sessionIds`／`files`／`timestamps`；不推測自然語意主題。
-    - OpenCode DB 成功且非空時，依下方「OpenCode repo discovery」補充 structured bash workdir；fallback logs 才使用 `permission=external_directory`／`read`／`read-only` touched path。
-   - In `session` mode, if a session path is a safe aggregate directory rather than a git repo, the collector expands nested git repos / worktrees using fast `.git` marker discovery.
-   - The default author scope is the current user. Commits and PRs from other authors are excluded unless they are release / deploy bot commits with PR-chain evidence back to current-user work.
-   - If a repo has session evidence but no current-user commits, keep it in the final report as one short agent-written session summary when evidence is sufficient; do not invent details.
-   - The collector preserves session-derived evidence with source `session-expanded` when a safe aggregate directory contributes nested repo / worktree matches.
-   - The PowerShell collector does not generate natural-language summaries. The agent writes any one-line session summary from `sessionEvidence`.
+4. **檢查證據與缺口**
+   - 先讀 errors、canGenerateLog、collectionStatus 及各來源 readStatus／coverage。empty、failed、partial、not-selected 分開；分頁上限或部分 repo 失敗不能稱為完整涵蓋。無可用自動證據可提供明確切換或手動補充選項；有可核對手動內容可繼續。
+   - 保留本人作者與可信代理的依據；pendingAttribution 不自動入稿，必要歸屬合併詢問。僅 merged-by／assignee／reviewer／同 repo 或姓名不授予本人歸屬。例行 release／deploy／升版仍須可辨識的本人工作關聯。
+   - 新建 Issue 是候選規格：依需求、範圍或驗收內容辨識，涵蓋 PRD／工程規格／缺陷／人工驗收，不靠單一 label。規格發布不代表功能完成。保留報告日事件與查詢時狀態，之後合併／結案不能回溯。
+   - 實際 provider 失效時保留已成功證據與來源狀態，遵守明確降級／認證規則；無足夠證據停止自動組稿，不偷換模式或作者範圍。
 
-5. **Inspect collection gaps before writing the summary**
-   - 先檢查 `errors`、`meta.canGenerateLog`、`meta.collectionStatus` 與各 `readStatus`。`no-sources`／`read-failed` 停止；`no-activity` 說明來源可讀但沒有當日證據，不能稱為讀取失敗或產生空白工作日誌。
-   - `readStatus` 分別為 `unavailable`、`not-read`（probe）、`empty`、`success`、`partial`、`failed`。`partial`／`failed` 或略過來源要指出缺口；有其他成功來源可繼續，不宣稱資料完整。
-    - 檢查 Codex `coverage.complete=false`、日期／停止欄位、`limitHits`／`skipped` 及「Codex 有界涵蓋」診斷；即使 `success`、`empty` 或沒有未訪問日期，也只代表已選資料。有界空結果不能稱為「完整查過今天沒有工作」。若有 compatibility draft，依 Evidence views 先讀取並交付完整脫敏草稿，再進行任務結束清理。
-   - `canGenerateLog=false` 時只說明狀態與原因，不能憑記憶或額外掃描補成日誌。
-   - Check `meta.ghAvailable` and `meta.ghViewer`.
-   - If GitHub CLI is unavailable or not authenticated, stop before writing the daily log. Tell the user to install `gh` or run `gh auth login`, then rerun collection.
-   - Continue without GitHub evidence only when the user strongly insists on a degraded report. In that case, state the PR / issue supplement gap explicitly in the final notes.
-   - Check repo `warnings` and top-level `warnings` / `errors`.
-   - Note repos that are not git repos, repos with session activity but no commits, and repos with commits but no PR/issue supplement.
-   - Only include paths that resolve to git repo or worktree roots. Surface skipped or unresolved paths through warnings or final notes.
-    - PR 補證須連回該 worktree 當日 commit／branch／hash 或可靠 session 證據；同作者、同 repo、近期更新只作候選，不能全收。collector 沒有 commit 關聯時保留 session-only；必要手動補證也須記錄當日關聯及 Draft／實際交付狀態。
-    - 有效 repo／worktree 即使沒有當日本人 commit，仍由 `origin` remote 解析 canonical `githubRepo`。remote 缺失／無法確認時揭露缺口；`name` 只作顯示 fallback，不反推 mapping，也不從已刪 worktree 或父目錄猜 repo。
-    - 分類／resolver 優先重用已有可靠當日 branch／PR 證據；可查 remote 就先查，不把可自行確認的 identity 轉問使用者。補報不以目前 checkout 代替當日 branch；無當日 branch 或多義時，只詢問未解的歸屬。
-    - resolver 回傳原因未明的 HTTP 400／`http_error` 時，回報「解析失敗，原因未知」並停止同類 branch 嘗試；不稱為 missing mapping、不逐 branch 猜結果，也不因此新增永久 mapping。
+5. **選讀完整證據、整理工作主題**
+   - 用 bounded index 選必要 repo／session／原始 pointer；ERP 讀完整 erp view，不用 summary 截斷替代。Issue、手動內容、代理依據及完整 todos 都要保留。Session 有 compatibility draft 時先完整脫敏交付，再清理。
+   - 依 canonical repo＋類型＋編號識別；同號跨 repo 分開。同 repo／實質主題跨來源去重，保留相關編號與各自來源，不因共用 parent、repo 或相似標題強制合併。父子規格與實作可合述，獨立人工驗收與不同 ERP 歸屬仍分開。
+   - 手動內容保留 user-provided 來源，不冒稱 GitHub 已驗證；無 PR／非 git／缺 branch 皆可保留，只釐清必要歸屬，不猜 branch、不建立不完整 mapping。
+   - 重用同輪有效 viewer、repo、PR／Issue 查詢與 raw，不為每個階段重 collect。GitHub 模式只用 Git 唯讀辨識 remote／repo／worktree；不以 commit history 作第三種成果入口。
 
 6. **核對引用 issue 狀態後，依 GitHub repo 名稱彙整**
    - 選定工作日誌主題後、preview 或寫入前，核對每個會改變成果或 todo 的明確引用 issue 當前狀態。核對先使用同任務、同一 `(canonical repo, issue number)` 且仍有效的成功查詢；只有缺少證據、查詢失效或新證據影響該 issue 時，才以可靠 canonical `githubRepo` 對精確 issue 編號查詢。不因進入摘要或 handoff 重查。僅對相同 `(canonical repo, issue number)` 去重，不同 repo 的同號 issue 分開查。
@@ -129,23 +104,23 @@ pwsh -NoProfile -File "<path-to-skill>\scripts\capture-daily-work-log.ps1" -Mode
 在參數 JSON 覆寫範圍與來源；省略 From／To 時由 probe 決定當天，collect 自動固定：
 
 ```json
-{"From":"2026-05-29T00:00:00+08:00","To":"2026-05-29T23:59:59+08:00","Timezone":"Asia/Taipei","SourceMode":"mixed","ScanRoots":["<scan-root>"]}
+{"From":"2026-05-29T00:00:00+08:00","To":"2026-05-29T23:59:59+08:00","Timezone":"Asia/Taipei","EvidenceSource":"github","SourceMode":"mixed","ScanRoots":["<scan-root>"]}
 ```
 
 ## Collector JSON shape
 
 Treat collector JSON as source of truth:
 
-- `meta`: `generatedAt`, `timezone`, `from`, `to`, `sourceMode`, `scanRoots`, `probeOnly`, `sources`, `canGenerateLog`；正式 collection 另有 `collectionStatus`，進入 Git／GitHub 補證時保留 `ghAvailable`、`ghViewer`、`authorScope`、`currentIdentity`。
+- `meta`: `generatedAt`, `timezone`, `from`, `to`, `evidenceSource`, `sourceMode`, `scanRoots`, `probeOnly`, `sources`, `canGenerateLog`；正式 collection 另有 `collectionStatus`，進入 Git／GitHub 補證時保留 `ghAvailable`、`ghViewer`、`authorScope`、`currentIdentity`。
 - `warnings` / `errors`: global evidence gaps or failures.
-- `repos[]`: `name`, `path`, `source`, `isGitRepo`, optional `githubRepo`, optional `sessionEvidence`, `commits[]`, `prs[]`, `warnings[]`.
+- `repos[]`: `name`, `path`, `source`, `isGitRepo`, optional `githubRepo`, optional `sessionEvidence`, `commits[]`, `prs[]`, `issues[]`, `manualEvidence[]`, `pendingAttribution[]`, `warnings[]`.
 - `commits[]`: commit evidence from `git log --all`, including `authorEmail`; ignore stash noise before summarizing.
-- `prs[]`: PR evidence tied to commit / branch / hash relevance; preserve PR and issue numbers when useful.
+- `prs[]`：GitHub 模式依 mergedAt 與本人／代理依據；Session 依原 commit／branch／hash 補證。`issues[]` 區分規格建立候選與背景；保留全部原文與觀察時間。
 - PR `reportEvidence` 是報告範圍內的關聯依據；`stateObservedAt` 是目前狀態的觀察時間，不回溯成報告日成果。先 cheap PR／branch match，尚無法判斷的候選仍保留 hash fallback；精確補證涵蓋隔日更新／合併及可靠 session-only 引用。
 - `meta.diagnostics` schemaVersion 1：六 stages `sourceAdapter`／`json`／`repoDiscovery`／`git`／`github`／`output` 的 durationMs／calls／cacheHits；未執行為 null。Stage 重疊不可加總，totalDurationMs 是獨立 wall；output 到主 JSON 完成，不含末尾診斷 encoding／stdout。計量邊界與延後優化見 [references](references/evidence-views.md#collector-分段量測與補報狀態)。
 - `sessionEvidence[]`：`agent` 區分 `opencode`／`codex`；OpenCode 保留 DB／fallback session 欄位；Codex 保留有限長度 `title`、`role`、`sessionId`、`sessionIds[]`、`files[]`、`timestamps[]`。repo 去重不刪不同 session 證據。
 
-## OpenCode repo discovery
+## OpenCode repo discovery（Session／combined）
 
 - Session `directory`／`path` 與 fallback injected／log path 只接受明確 fully-qualified absolute 值；沒有來源 base 契約的 relative、drive-relative、root-relative 值略過並以既有 aggregate warning 揭露。不可依 collector CWD 或 session title 猜 repo。合法 drive／UNC absolute 沿用既有 resolver／安全 aggregate expansion 契約。
 - DB metadata 成功且非空時，只追加一次 `part JOIN session` query：沿用 session interval overlap，part `time_created` 另以 inclusive From／To 篩選。以 `json_valid` 保護個別壞 data，只投影 session ID／title／既有 session 時間、tool／workdir／part timestamp；不返回完整 `data`、commands、output 或對話。
@@ -205,7 +180,7 @@ Legacy 日期分區上限限制 filesystem 訪問與 transcript 讀取；日期�
 大型 collection 與 ERP 整理依 [`references/evidence-views.md`](references/evidence-views.md) 的可執行流程：bundled capture 將 raw 直接存入私有 task-local 暫存，再以 formatter `-InputPath $rawPath -View index` 讀狀態、計數與 pointers。用 `-GithubRepo`／`-SessionId` 篩選全部 worktree／來源續行；`-View sessions` 列 lineage 與原始位置，`-View raw -JsonPointer <pointer>` 精確讀同次 raw，不重編位置。`-View erp` 按需讀完整證據。若有草稿，另以 `-View compatibility` 讀完整內容，先在對話呈現脫敏草稿與目的地並註明未發布；完成實際交付後才清理。不可先把整份 raw 送入主上下文再壓縮。
 
 - 預設 `summary`：`shownCommits` 最多 8、PR 文字引用、全部 `sessionEvidence`、`meta`／warnings／errors。Codex 已知正常的 routine tool 僅顯示 status／exit／source IDs，`detailRef` 的 JSON pointer 指回同次 raw collector JSON（`-InputPath` 時另附檔名）；按需讀取，不重 collect。失敗、驗證、交付／成功 readback、需求與 structuredContent／_meta 保守完整展開，依內容及同 source/session/turn 證據判斷，不按同名工具合併工作。適合一般日報，但不保證 ERP 歸屬證據保真。
-- ERP 使用 `-View erp`：不套 commit 上限；以無縮排 JSON 保留每個 repo 的 `githubRepo`、`source`、`isGitRepo`、完整 commits（refs／branchHints）、PR（head／Draft／state／closing issues）、全部 session／續行、warnings 及完整頂層 meta／sources／coverage／errors。省略 repo `path`，缺值維持缺值；這仍是私有證據，不是公開用的去識別輸出。
+- ERP 使用 `-View erp`：不套 commit 上限；以無縮排 JSON 保留每個 repo 的 `githubRepo`、`source`、`isGitRepo`、完整 commits（refs／branchHints）、PR（head／Draft／state／closing issues／attribution）、Issue、手動內容、待確認歸屬、全部 session／續行、warnings 及完整頂層 meta／sources／coverage／errors。省略 repo `path`，缺值維持缺值；這仍是私有證據，不是公開用的去識別輸出。
 - 單次 collection 只解析一次 viewer，並共用同 canonical repo 的 PR list／detail 結果；每個 worktree 仍獨立依當日證據過濾。重用只活在此次執行，不跨任務保存。
 - 同輪只重用正規化 exact aggregate path 的展開（含空結果），各來源 session／warnings／coverage 保留；不以祖先前綴猜 repo。條件式並行／Git root batching 缺收益證據延後；五分鐘不作 CI gate 或 300 秒 timeout。
 
@@ -215,12 +190,14 @@ When a repo has many commits, summarize themes instead of dumping commits. Use c
 
 ## Required checks
 
+以下 Session／Git 補證 checks 只適用明確 Session 及 combined 的 Session 分支；GitHub 預設與手動資料依 sources.md 的日期／本人／coverage／provider 契約，不要求本機 repo 或 gh CLI。
+
 - Helper script output is valid JSON only.
-- 正式蒐集前已完成 probe 與對話來源預告；無來源或讀取全失敗時停止，不產生日誌。
+- 正式蒐集前已完成 probe 與對話來源預告；無可用證據且無手動內容時停止，不產生日誌。
 - CLI 不存在但紀錄可讀仍可用；所有可用來源一併蒐集，partial coverage 明講缺口。
 - Codex 優先使用 state metadata → history item → exact JSONL；SQL metadata 可含 archived 候選，fallback 才使用有界日期分區並略過 archive。事件依自身 timestamp，未選日期續行仍可能漏收；跨來源相同主題由 agent 合併。
 - When the user does not provide a clear time range, the helper resolves the range to today in the configured timezone.
-- Git history collection uses `git log --all`; do not limit to current branch.
+- Session Git history collection uses `git log --all`; do not limit to current branch.
 - `scan` / `mixed` repo discovery must cover git worktrees as well as normal repos.
 - `session` repo discovery must query `opencode db --format json` first.
 - DB fallback order is DB, then `storage/directory-readme`, then OpenCode logs, but DB success with empty `[]` is authoritative and does not fallback.

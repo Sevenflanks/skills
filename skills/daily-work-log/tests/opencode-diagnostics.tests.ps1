@@ -13,7 +13,7 @@ function Assert($Condition, [string]$Message) { if (-not $Condition) { throw $Me
 function Collect([string]$Mode, [switch]$Probe) {
   $env:DWL_DIAG_MODE = $Mode
   [IO.File]::WriteAllText("$root\queries.txt", '')
-  $arguments = @('-NoProfile','-File',$collector,'-From','2026-10-08T00:00:00+08:00','-To','2026-10-08T23:59:59.999+08:00',
+  $arguments = @('-NoProfile','-File',$collector,'-EvidenceSource','session','-From','2026-10-08T00:00:00+08:00','-To','2026-10-08T23:59:59.999+08:00',
     '-OpenCodeLogRoot',"$root\missing-log",'-OpenCodeStorageRoot',"$root\missing-storage",'-CodexRoot',"$root\missing-codex")
   if ($Probe) { $arguments += '-ProbeOnly' }
   $raw = & $pwsh @arguments

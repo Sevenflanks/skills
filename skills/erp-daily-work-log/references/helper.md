@@ -18,6 +18,8 @@
 
 可選 mapping 維護的獨立契約／plan／flags 見 [`mapping-save.md`](mapping-save.md)；缺維護 API 只停用永久儲存。report helper 僅按 `mode` 選固定 append／replace，不接受 mapping operation 或任意 endpoint。個人偏好的啟用、作用範圍、儲存 API 見 [`preferences.md`](preferences.md)，不放入 report payload。
 
+來源依上游 sources.md 的 GitHub／Session／combined 與手動契約；helper 不再要求來源是 session。所有來源仍使用同一 plan／preview／intent／payload／readback，改變送出內容就重新預覽並取得相應授權。
+
 ## 私有 plan
 
 保存在 repo／已安裝 skill 外的私有 task-local JSON，用後清理。`context` 直接放官方 `AjaxResponse.data` 的完整物件；外部 `erp` transport 的 envelope 依其規範取出，無須手動轉換打卡或假單：

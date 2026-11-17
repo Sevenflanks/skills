@@ -17,7 +17,9 @@ function Write-Fixture([string]$Path, [string]$Text) {
   [IO.File]::WriteAllText($Path, $Text)
 }
 function Collect {
-  $raw = & $pwsh -NoProfile -File $CollectorPath -From '2026-05-29T00:00:00+08:00' -To '2026-05-29T23:59:59+08:00' -OpenCodeLogRoot "$root\logs" -OpenCodeStorageRoot "$root\storage" -CodexRoot "$root\codex"
+  $sourceArgs = @{}
+  if (-not $BaselineRevision) { $sourceArgs.EvidenceSource = 'session' }
+  $raw = & $pwsh -NoProfile -File $CollectorPath @sourceArgs -From '2026-05-29T00:00:00+08:00' -To '2026-05-29T23:59:59+08:00' -OpenCodeLogRoot "$root\logs" -OpenCodeStorageRoot "$root\storage" -CodexRoot "$root\codex"
   Assert ($LASTEXITCODE -eq 0) 'collector process failed'
   $data = ($raw -join "`n") | ConvertFrom-Json
   Assert (@($data.errors).Count -eq 0) ('collector errors: ' + ($data.errors -join ';'))

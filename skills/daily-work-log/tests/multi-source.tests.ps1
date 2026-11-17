@@ -24,7 +24,7 @@ function Write-Fixture([string]$Path, [string]$Content) {
   [IO.File]::WriteAllText($Path, $Content)
 }
 function Invoke-Json([switch]$Probe, [string]$Mode = 'session') {
-  $args = @('-NoProfile', '-File', $collector, '-From', '2026-05-29T00:00:00+08:00', '-To', '2026-05-29T23:59:59+08:00',
+  $args = @('-NoProfile', '-File', $collector, '-EvidenceSource', 'session', '-From', '2026-05-29T00:00:00+08:00', '-To', '2026-05-29T23:59:59+08:00',
     '-OpenCodeLogRoot', "$root\logs", '-OpenCodeStorageRoot', "$root\storage", '-CodexRoot', "$root\codex", '-SourceMode', $Mode,
     '-ScanRoots', "$root\repo")
   if ($Probe) { $args += '-ProbeOnly' }

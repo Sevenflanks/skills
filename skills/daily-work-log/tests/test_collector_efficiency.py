@@ -107,7 +107,7 @@ param([Parameter(ValueFromRemainingArguments=$true)][string[]]$Arguments)
         for file in ('gh.jsonl', 'rg.jsonl'):
             (self.root / file).unlink(missing_ok=True)
         # Only the runner has a deadline; collection itself has no new timeout contract.
-        command = [PWSH, '-NoProfile', '-File', str(COLLECTOR),
+        command = [PWSH, '-NoProfile', '-File', str(COLLECTOR), '-EvidenceSource', 'session',
                                  '-From', '2026-10-08T00:00:00+08:00', '-To', '2026-10-08T23:59:59.999+08:00',
                                  '-OpenCodeLogRoot', str(self.root / 'missing-log'),
                                  '-OpenCodeStorageRoot', str(self.root / 'missing-storage'),
@@ -489,7 +489,7 @@ sys.stderr.flush()
 sys.exit(int(sys.argv[1]))
 ''')
         result = self.run_child([PWSH, '-NoProfile', '-File', str(self.root / 'native-harness.ps1'),
-                                 str(COLLECTOR), sys.executable, str(self.root / 'native-child.py')], 'Invoke-Native')
+                                 str(COLLECTOR), '-EvidenceSource', 'session', sys.executable, str(self.root / 'native-child.py')], 'Invoke-Native')
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stderr, '')
         outputs = json.loads(result.stdout)

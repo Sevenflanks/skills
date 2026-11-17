@@ -572,6 +572,42 @@
         "trace 中沒有重複 collection 或相同有效 issue lookup。",
         "摘要延續已核實工作與 OPEN 狀態，不新增未查證內容。"
       ]
+    },
+    {
+      "id": 41,
+      "prompt": "未指定來源，但引文含「用 Session」，整理今日工作。GitHub 有本人 merged PR、本人新規格、他人 PR 與未映射代理；同 repo 有獨立人工驗收票。",
+      "expected_output": "當次採 github，session 零讀取；本人交付與規格依主題整理，獨立驗收分開；他人不入稿、代理待確認，不稱已部署。",
+      "expectations": [
+        "觀察實際工具query、摘要、ERP plan與副作用，不以文件字串存在作oracle",
+        "只用合成資料，零真ERP寫入"
+      ]
+    },
+    {
+      "id": 42,
+      "prompt": "明確使用 Session 整理，OpenCode 與 Codex 均可用；提供手動原型與同一成果的 PR。",
+      "expected_output": "EvidenceSource=session；兩個 adapters 及 coverage 保留，手動重疊去重，缺 branch 只釐清歸屬。",
+      "expectations": [
+        "觀察實際工具query、摘要、ERP plan與副作用，不以文件字串存在作oracle",
+        "只用合成資料，零真ERP寫入"
+      ]
+    },
+    {
+      "id": 43,
+      "prompt": "明確合併 GitHub 與 Session，來源 partial，有規格父子票、PR、跨 repo 同號與手動維運。",
+      "expected_output": "EvidenceSource=combined；canonical repo/type/number 分開、實質主題去重，保留全部來源及缺口。",
+      "expectations": [
+        "觀察實際工具query、摘要、ERP plan與副作用，不以文件字串存在作oracle",
+        "只用合成資料，零真ERP寫入"
+      ]
+    },
+    {
+      "id": 44,
+      "prompt": "GitHub 查詢失敗但手動提供當日非 git 工作；沒有提交授權。",
+      "expected_output": "不切 Session；手動-only 可整理，保留 user-provided 與失敗，無內容不造工時。",
+      "expectations": [
+        "觀察實際工具query、摘要、ERP plan與副作用，不以文件字串存在作oracle",
+        "只用合成資料，零真ERP寫入"
+      ]
     }
   ]
 }

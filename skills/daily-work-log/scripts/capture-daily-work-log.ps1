@@ -42,7 +42,7 @@ try {
     }
   }
   finally { $parameterJson.Dispose() }
-  foreach ($inputFile in @($ParametersPath,$ScriptPath,$ProbePath,$PSCommandPath,$arguments['InputPath'])) {
+  foreach ($inputFile in @($ParametersPath,$ScriptPath,$ProbePath,$PSCommandPath,$arguments['InputPath'],$arguments['GitHubInputPath'],$arguments['ManualInputPath'])) {
     if ($inputFile -and $OutputPath -ieq $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath([string]$inputFile)) { throw 'OutputPath must not overwrite an input file.' }
   }
   if ($Mode -ne 'collect' -and $ProbePath) { throw 'ProbePath is only used by explicit collect mode.' }
@@ -54,6 +54,10 @@ try {
       $probeText = [IO.File]::ReadAllText($ProbePath)
       $probe = $probeText | ConvertFrom-Json -AsHashtable -Depth 100
       if ($probe.meta.probeOnly -ne $true -or @($probe.errors).Count -gt 0) { throw 'ProbePath must contain a successful probe result.' }
+      if ($probe.meta.ContainsKey('evidenceSource')) {
+        $selectedSource = if ($arguments.ContainsKey('EvidenceSource')) { [string]$arguments.EvidenceSource } else { 'github' }
+        if ($selectedSource -cne $probe.meta.evidenceSource) { throw 'Collect source differs from the probe; run a new probe and announce the new selection.' }
+      }
       $available = @($probe.meta.sources.Values | Where-Object { $_.available -eq $true })
       if ($available.Count -eq 0) { throw 'No probe sources are available; stop without collection.' }
       # Freeze the probe range, even across midnight; never infer a new reporting day in collect.

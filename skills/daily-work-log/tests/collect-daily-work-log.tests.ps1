@@ -412,18 +412,19 @@ function Invoke-CollectorJson {
       $env:DAILY_WORK_LOG_FAKE_GH_USER_MODE = $null
     }
     $env:DAILY_WORK_LOG_EXPECTED_FROM_MS = ([datetimeoffset]'2026-05-29T00:00:00+08:00').ToUniversalTime().ToUnixTimeMilliseconds().ToString()
-    $env:DAILY_WORK_LOG_EXPECTED_TO_MS = ([datetimeoffset]'2026-05-29T23:59:59+08:00').ToUniversalTime().ToUnixTimeMilliseconds().ToString()
+    $env:DAILY_WORK_LOG_EXPECTED_TO_MS = ([datetimeoffset]'2026-05-30T00:00:00+08:00').AddTicks(-1).ToUniversalTime().ToUnixTimeMilliseconds().ToString()
 
     $collectorArgs = @(
       '-NoProfile',
       '-File', $script:HelperPath,
+      '-EvidenceSource', 'session',
       '-SourceMode', $SourceMode,
       '-OpenCodeLogRoot', $TestRoot.LogRoot,
       '-OpenCodeStorageRoot', $TestRoot.StorageRoot,
       '-CodexRoot', (Join-Path $TestRoot.Root 'codex')
     )
     if (-not $UseDefaultRange) {
-      $collectorArgs += @('-From', '2026-05-29T00:00:00+08:00', '-To', '2026-05-29T23:59:59+08:00')
+      $collectorArgs += @('-From', '2026-05-29T00:00:00+08:00', '-To', '2026-05-30T00:00:00+08:00')
     }
     if (@($ScanRoots).Count -gt 0) {
       $collectorArgs += '-ScanRoots'

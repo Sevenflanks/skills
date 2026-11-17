@@ -12,6 +12,10 @@
 
 官方契約、認證、未知 state、必要資料與 collector 停止規則始終適用。主題選定後、完整 ERP preview 前，依 [`daily-work-log`](../daily-work-log/SKILL.md) 補查影響成果／待辦的明確引用 issue；有效準備可續用，失效時只刷新受影響項。只回報新發現及必要問題，減少重複 Checking 訊息；若補證改變日誌內容／意圖，才更新完整 preview 並重新授權。寫前 fresh context/options 與完整讀回照常保留。
 
+## 0.6.0：來源整合
+
+沿用 daily-work-log 的 GitHub 預設、明確 Session／combined 及手動-only。來源不改 ERP 工時、假勤、分類、既有列、append／replace、完整預覽／授權及讀回；Issue／手動缺 branch 只釐清必要歸屬。來源或手動內容改變送出意圖時重 preview；未授權仍零 request。完整 provider／證據契約見 [sources.md](../daily-work-log/references/sources.md)。本版不改 ERP API 或 production dependency。
+
 ## 0.5.0：人類可讀確認稿
 
 同一份 plan 產生工時／歸屬總覽表與逐列完整原文，由 helper 固定呈現；使用者直接閱讀 Markdown。`layout` 是只確認版型的試稿，`submit` 是等待本次提交授權的正式稿；接受試稿不授權送出。內部 `--preview` JSON、ID／null／snapshot／intent 與讀回契約保持相容，顯示名稱從已核實 options 依實際 ID 取得。
